@@ -1,0 +1,6 @@
+.mypy_cache/
+.pytest_cache/
+.claude/
+__pycache__/
+poetry.lock
+*.pyc

@@ -1,0 +1,23 @@
+[project]
+name = "pyfuse"
+version = "0.1.0"
+description = "Python Function Serializer - bundle Python functions into an exportable format"
+authors = [
+    {name = "Rémi Héneault",email = "remi@heneault.fr"}
+]
+license = {text = "AGPL"}
+requires-python = ">=3.13"
+dependencies = [
+]
+
+[dependency-groups]
+dev = [
+    "pytest (>=9.0.2,<10.0.0)",
+    "mypy (>=1.19.1,<2.0.0)",
+    "ipython (>=9.11.0,<10.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"

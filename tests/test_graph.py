@@ -1,0 +1,235 @@
+from __future__ import annotations
+
+import json
+import warnings
+from pathlib import Path
+
+import pytest
+
+from pyfuse._errors import PyFuseError
+from pyfuse._graph import FuseGraph
+from tests.conftest import create_module
+
+
+def _make_graph(tmp_path: Path) -> FuseGraph:
+    mod = create_module(
+        tmp_path,
+        "gmod",
+        (
+            "import csv\nimport json as js\n\n"
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "def parse(data):\n"
+            "    return csv.reader(data)\n\n"
+            "@trace\n"
+            "def transform(data):\n"
+            "    rows = parse(data)\n"
+            "    return js.dumps(rows)\n"
+        ),
+    )
+    return FuseGraph.default()
+
+
+def test_register_populates_graph(tmp_path: Path) -> None:
+    graph = _make_graph(tmp_path)
+    assert "gmod.parse" in graph.nodes
+    assert "gmod.transform" in graph.nodes
+
+
+def test_node_imports(tmp_path: Path) -> None:
+    graph = _make_graph(tmp_path)
+    parse_node = graph.nodes["gmod.parse"]
+    assert any(imp.bound_name == "csv" for imp in parse_node.imports)
+
+    transform_node = graph.nodes["gmod.transform"]
+    assert any(imp.bound_name == "js" for imp in transform_node.imports)
+
+
+def test_node_dependencies(tmp_path: Path) -> None:
+    graph = _make_graph(tmp_path)
+    transform_node = graph.nodes["gmod.transform"]
+    assert "gmod.parse" in transform_node.dependencies
+
+
+def test_serialize_full_graph(tmp_path: Path) -> None:
+    graph = _make_graph(tmp_path)
+    data = json.loads(graph.serialize())
+    assert "version" in data
+    assert "gmod.parse" in data["nodes"]
+    assert "gmod.transform" in data["nodes"]
+
+
+def test_serialize_subgraph(tmp_path: Path) -> None:
+    graph = _make_graph(tmp_path)
+    data = json.loads(graph.serialize("parse"))
+    assert "gmod.parse" in data["nodes"]
+    assert "gmod.transform" not in data["nodes"]
+
+
+def test_serialize_subgraph_with_deps(tmp_path: Path) -> None:
+    graph = _make_graph(tmp_path)
+    data = json.loads(graph.serialize("transform"))
+    assert "gmod.parse" in data["nodes"]
+    assert "gmod.transform" in data["nodes"]
+
+
+def test_deserialize_roundtrip(tmp_path: Path) -> None:
+    graph = _make_graph(tmp_path)
+    json_str = graph.serialize()
+    restored = FuseGraph.deserialize_graph(json_str)
+    assert set(restored.nodes.keys()) == set(graph.nodes.keys())
+    for qn in graph.nodes:
+        assert restored.nodes[qn].source == graph.nodes[qn].source
+        assert restored.nodes[qn].dependencies == graph.nodes[qn].dependencies
+
+
+def test_reconstruct_single_function(tmp_path: Path) -> None:
+    graph = _make_graph(tmp_path)
+    json_str = graph.serialize()
+    source = FuseGraph.reconstruct(json_str, "parse")
+    assert "import csv" in source
+    assert "def parse(data):" in source
+    assert "def transform" not in source
+
+
+def test_reconstruct_with_dependencies(tmp_path: Path) -> None:
+    graph = _make_graph(tmp_path)
+    json_str = graph.serialize()
+    source = FuseGraph.reconstruct(json_str, "transform")
+    assert "import csv" in source
+    assert "import json as js" in source
+    assert "def parse(data):" in source
+    assert "def transform(data):" in source
+    # parse must appear before transform
+    assert source.index("def parse") < source.index("def transform")
+
+
+def test_reconstruct_deduplicates_imports(tmp_path: Path) -> None:
+    mod = create_module(
+        tmp_path,
+        "dedup",
+        (
+            "import csv\n\n"
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "def a(x):\n    return csv.reader(x)\n\n"
+            "@trace\n"
+            "def b(x):\n    return csv.writer(a(x))\n"
+        ),
+    )
+    graph = FuseGraph.default()
+    json_str = graph.serialize()
+    source = FuseGraph.reconstruct(json_str, "b")
+    assert source.count("import csv") == 1
+
+
+def test_reconstruct_unknown_function_raises(tmp_path: Path) -> None:
+    graph = _make_graph(tmp_path)
+    json_str = graph.serialize()
+    try:
+        FuseGraph.reconstruct(json_str, "nonexistent")
+        assert False, "Expected KeyError"
+    except KeyError:
+        pass
+
+
+def test_register_sourceless_function_raises() -> None:
+    graph = FuseGraph()
+    with pytest.raises(PyFuseError, match="source code unavailable"):
+        graph.register(len)
+
+
+def test_register_exec_function_raises() -> None:
+    ns: dict[str, object] = {}
+    exec("def dynamic(): return 1", ns)  # noqa: S102
+    graph = FuseGraph()
+    with pytest.raises(PyFuseError, match="source code unavailable"):
+        graph.register(ns["dynamic"])  # type: ignore[arg-type]
+
+
+def test_auto_refresh_on_register(tmp_path: Path) -> None:
+    create_module(
+        tmp_path,
+        "autoref",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "def caller():\n    return callee()\n\n"
+            "@trace\n"
+            "def callee():\n    return 42\n"
+        ),
+    )
+    graph = FuseGraph.default()
+    assert "autoref.callee" in graph.nodes["autoref.caller"].dependencies
+
+
+def test_class_method_registration(tmp_path: Path) -> None:
+    create_module(
+        tmp_path,
+        "clsreg",
+        (
+            "from pyfuse import trace\n\n"
+            "class Parser:\n"
+            "    @trace\n"
+            "    def parse(self, data):\n"
+            "        return data.split(',')\n"
+        ),
+    )
+    graph = FuseGraph.default()
+    node = graph.nodes["clsreg.Parser.parse"]
+    assert node.name == "parse"
+    assert node.owner_class == "Parser"
+
+
+def test_class_method_reconstruction(tmp_path: Path) -> None:
+    create_module(
+        tmp_path,
+        "clsrecon",
+        (
+            "import csv\n\n"
+            "from pyfuse import trace\n\n"
+            "class Parser:\n"
+            "    @trace\n"
+            "    def helper(self, data):\n"
+            "        return csv.reader(data)\n\n"
+            "    @trace\n"
+            "    def parse(self, data):\n"
+            "        return self.helper(data)\n"
+        ),
+    )
+    graph = FuseGraph.default()
+    json_str = graph.serialize()
+    source = FuseGraph.reconstruct(json_str, "parse")
+    assert "class Parser:" in source
+    assert "    def helper(self, data):" in source
+    assert "    def parse(self, data):" in source
+    assert "import csv" in source
+    # helper should appear before parse within the class
+    assert source.index("def helper") < source.index("def parse")
+
+
+def test_nested_function_closure_warning(tmp_path: Path) -> None:
+    create_module(
+        tmp_path,
+        "closure_mod",
+        (
+            "from pyfuse import trace\n\n"
+            "def outer():\n"
+            "    x = 10\n"
+            "    @trace\n"
+            "    def inner():\n"
+            "        return x\n"
+            "    return inner\n"
+        ),
+    )
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        # Need to call outer() to trigger @trace on inner
+        import importlib
+        mod = importlib.import_module("closure_mod")
+        mod.outer()
+        closure_warnings = [
+            x for x in w if "captures variables" in str(x.message)
+        ]
+        assert len(closure_warnings) == 1
+        assert "x" in str(closure_warnings[0].message)
