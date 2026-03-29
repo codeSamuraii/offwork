@@ -48,6 +48,30 @@ def test_wrapper_inspect_getsource(tmp_path: Path) -> None:
     assert "def greet(name):" in source
 
 
+def test_static_typed_obj_method_no_execution(tmp_path: Path) -> None:
+    """obj.method() with type annotation is detected statically, no execution needed."""
+    mod = create_module(
+        tmp_path,
+        "staticobj",
+        (
+            "from pyfuse import trace\n\n"
+            "class Processor:\n"
+            "    @trace\n"
+            "    def step(self, x):\n"
+            "        return x.upper()\n\n"
+            "@trace\n"
+            "def run(proc: Processor, data: str) -> str:\n"
+            "    return proc.step(data)\n"
+        ),
+    )
+    # Do NOT call mod.run() -- dependency should be detected statically
+    graph = FuseGraph.default()
+    graph_json = graph.serialize()
+    data = json.loads(graph_json)
+    run_deps = data["nodes"]["staticobj.run"]["dependencies"]
+    assert "staticobj.Processor.step" in run_deps
+
+
 def test_runtime_dep_obj_method_call(tmp_path: Path) -> None:
     """obj.method() is detected as a runtime dependency."""
     mod = create_module(
@@ -209,6 +233,260 @@ def test_runtime_dep_obj_method_reconstruction(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Generator wrapping
+# ---------------------------------------------------------------------------
+
+
+def test_generator_body_dep_detected(tmp_path: Path) -> None:
+    """Traced calls inside a generator body are recorded during iteration."""
+    mod = create_module(
+        tmp_path,
+        "genbody",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "def helper(x):\n"
+            "    return x + 1\n\n"
+            "@trace\n"
+            "def gen_func(items):\n"
+            "    for item in items:\n"
+            "        yield helper(item)\n"
+        ),
+    )
+    assert list(mod.gen_func([1, 2, 3])) == [2, 3, 4]
+
+    graph = FuseGraph.default()
+    graph_json = graph.serialize()
+    data = json.loads(graph_json)
+    deps = data["nodes"]["genbody.gen_func"]["dependencies"]
+    assert "genbody.helper" in deps
+
+
+def test_generator_caller_dep_detected(tmp_path: Path) -> None:
+    """Caller of a generator function has the caller->gen edge recorded."""
+    mod = create_module(
+        tmp_path,
+        "gencaller",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "def gen_func(items):\n"
+            "    yield from items\n\n"
+            "@trace\n"
+            "def caller():\n"
+            "    return list(gen_func([1, 2, 3]))\n"
+        ),
+    )
+    assert mod.caller() == [1, 2, 3]
+
+    graph = FuseGraph.default()
+    graph_json = graph.serialize()
+    data = json.loads(graph_json)
+    deps = data["nodes"]["gencaller.caller"]["dependencies"]
+    assert "gencaller.gen_func" in deps
+
+
+def test_generator_send_maintains_context(tmp_path: Path) -> None:
+    """Dependencies are tracked when generator.send() is used."""
+    mod = create_module(
+        tmp_path,
+        "gensend",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "def transform(x):\n"
+            "    return x * 10\n\n"
+            "@trace\n"
+            "def accumulator():\n"
+            "    total = 0\n"
+            "    while True:\n"
+            "        value = yield total\n"
+            "        if value is None:\n"
+            "            break\n"
+            "        total += transform(value)\n"
+        ),
+    )
+    gen = mod.accumulator()
+    next(gen)  # prime the generator
+    gen.send(1)
+    gen.send(2)
+    try:
+        gen.send(None)
+    except StopIteration:
+        pass
+
+    graph = FuseGraph.default()
+    graph_json = graph.serialize()
+    data = json.loads(graph_json)
+    deps = data["nodes"]["gensend.accumulator"]["dependencies"]
+    assert "gensend.transform" in deps
+
+
+def test_generator_preserves_values(tmp_path: Path) -> None:
+    """Proxy generator yields the same values as the original."""
+    mod = create_module(
+        tmp_path,
+        "genvals",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "def countdown(n):\n"
+            "    while n > 0:\n"
+            "        yield n\n"
+            "        n -= 1\n"
+        ),
+    )
+    assert list(mod.countdown(5)) == [5, 4, 3, 2, 1]
+
+
+def test_generator_close_works(tmp_path: Path) -> None:
+    """Calling .close() on the proxy properly closes the underlying generator."""
+    mod = create_module(
+        tmp_path,
+        "genclose",
+        (
+            "from pyfuse import trace\n\n"
+            "closed = False\n\n"
+            "@trace\n"
+            "def infinite():\n"
+            "    global closed\n"
+            "    try:\n"
+            "        while True:\n"
+            "            yield 1\n"
+            "    finally:\n"
+            "        closed = True\n"
+        ),
+    )
+    gen = mod.infinite()
+    next(gen)
+    gen.close()
+    assert mod.closed is True
+
+
+def test_generator_reconstruction(tmp_path: Path) -> None:
+    """Generator with traced deps reconstructs correctly end-to-end."""
+    mod = create_module(
+        tmp_path,
+        "genrecon",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "def double(x):\n"
+            "    return x * 2\n\n"
+            "@trace\n"
+            "def gen_doubles(items):\n"
+            "    for item in items:\n"
+            "        yield double(item)\n"
+        ),
+    )
+    list(mod.gen_doubles([1, 2]))
+
+    source = reconstruct(serialize(), "gen_doubles")
+    assert "def double(x):" in source
+    assert "def gen_doubles(items):" in source
+
+
+def test_generator_throw_maintains_context(tmp_path: Path) -> None:
+    """Dependencies are tracked when generator.throw() is used."""
+    mod = create_module(
+        tmp_path,
+        "genthrow",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "def fallback(x):\n"
+            "    return x * -1\n\n"
+            "@trace\n"
+            "def resilient():\n"
+            "    while True:\n"
+            "        try:\n"
+            "            value = yield\n"
+            "        except ValueError:\n"
+            "            yield fallback(0)\n"
+        ),
+    )
+    gen = mod.resilient()
+    next(gen)  # prime
+    result = gen.throw(ValueError("bad"))
+    assert result == 0
+
+    graph = FuseGraph.default()
+    graph_json = graph.serialize()
+    data = json.loads(graph_json)
+    deps = data["nodes"]["genthrow.resilient"]["dependencies"]
+    assert "genthrow.fallback" in deps
+
+
+def test_generator_return_value(tmp_path: Path) -> None:
+    """Proxy preserves StopIteration.value from generator return."""
+    mod = create_module(
+        tmp_path,
+        "genret",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "def gen_with_return():\n"
+            "    yield 1\n"
+            "    yield 2\n"
+            "    return 'done'\n"
+        ),
+    )
+    gen = mod.gen_with_return()
+    assert next(gen) == 1
+    assert next(gen) == 2
+    try:
+        next(gen)
+        raise AssertionError("Should have raised StopIteration")
+    except StopIteration as e:
+        assert e.value == "done"
+
+
+def test_generator_nested_chain(tmp_path: Path) -> None:
+    """Nested generators: gen_outer -> gen_inner dependency tracked."""
+    mod = create_module(
+        tmp_path,
+        "genchain",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "def gen_inner():\n"
+            "    yield 1\n"
+            "    yield 2\n\n"
+            "@trace\n"
+            "def gen_outer():\n"
+            "    for val in gen_inner():\n"
+            "        yield val * 10\n"
+        ),
+    )
+    assert list(mod.gen_outer()) == [10, 20]
+
+    graph = FuseGraph.default()
+    graph_json = graph.serialize()
+    data = json.loads(graph_json)
+    deps = data["nodes"]["genchain.gen_outer"]["dependencies"]
+    assert "genchain.gen_inner" in deps
+
+
+def test_generator_wrapper_preserves_metadata(tmp_path: Path) -> None:
+    """Generator wrapper preserves __name__, __qualname__, and __wrapped__."""
+    mod = create_module(
+        tmp_path,
+        "genmeta",
+        (
+            "import inspect\n\n"
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "def my_gen(n):\n"
+            "    yield n\n"
+        ),
+    )
+    assert mod.my_gen.__name__ == "my_gen"
+    assert mod.my_gen.__qualname__ == "my_gen"
+    # __wrapped__ points to the original generator function
+    assert mod.inspect.isgeneratorfunction(mod.my_gen.__wrapped__)
+
+
+# ---------------------------------------------------------------------------
 # Closure variable capture
 # ---------------------------------------------------------------------------
 
@@ -314,3 +592,203 @@ def test_backward_compat_no_closure_vars() -> None:
     graph = FuseGraph.deserialize_graph(old_json)
     node = graph.nodes["mod.func"]
     assert node.closure_vars == {}
+    assert node.closure_func_refs == {}
+
+
+# ---------------------------------------------------------------------------
+# Closure variable validation
+# ---------------------------------------------------------------------------
+
+
+def test_closure_valid_repr_accepted(tmp_path: Path) -> None:
+    """A closure var with valid Python repr is captured normally."""
+    mod = create_module(
+        tmp_path,
+        "cvvalid",
+        (
+            "from pyfuse import trace\n\n"
+            "def outer():\n"
+            "    x = 42\n"
+            "    label = 'hello'\n"
+            "    @trace\n"
+            "    def inner():\n"
+            "        return label + str(x)\n"
+            "    return inner\n"
+        ),
+    )
+    mod.outer()
+    graph = FuseGraph.default()
+    node = graph.nodes["cvvalid.outer.<locals>.inner"]
+    assert node.closure_vars == {"x": "42", "label": "'hello'"}
+    assert node.closure_func_refs == {}
+
+
+def test_closure_traced_func_detected_as_dep(tmp_path: Path) -> None:
+    """Traced function captured as closure -> dependency, not in closure_vars."""
+    mod = create_module(
+        tmp_path,
+        "cvfunc",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "def helper(x):\n"
+            "    return x + 1\n\n"
+            "def outer():\n"
+            "    fn = helper\n"
+            "    @trace\n"
+            "    def inner(x):\n"
+            "        return fn(x)\n"
+            "    return inner\n"
+        ),
+    )
+    mod.outer()
+    graph = FuseGraph.default()
+    node = graph.nodes["cvfunc.outer.<locals>.inner"]
+    # fn should NOT be in closure_vars (repr is not valid Python)
+    assert "fn" not in node.closure_vars
+    # fn -> helper should be in closure_func_refs
+    assert node.closure_func_refs == {"fn": "cvfunc.helper"}
+    # helper should be in dependencies
+    assert "cvfunc.helper" in node.dependencies
+
+
+def test_closure_invalid_repr_non_traced_warns(tmp_path: Path) -> None:
+    """Non-traced object with invalid repr emits descriptive warning."""
+    import warnings as w
+
+    mod = create_module(
+        tmp_path,
+        "cvinvalid",
+        (
+            "import io\n\n"
+            "from pyfuse import trace\n\n"
+            "def outer():\n"
+            "    f = io.StringIO()\n"
+            "    @trace\n"
+            "    def inner():\n"
+            "        return f.read()\n"
+            "    return inner\n"
+        ),
+    )
+    with w.catch_warnings(record=True) as caught:
+        w.simplefilter("always")
+        mod.outer()
+
+    msgs = [str(c.message) for c in caught]
+    assert any("not valid Python" in m for m in msgs)
+
+
+def test_closure_func_refs_survive_refresh(tmp_path: Path) -> None:
+    """closure_func_refs are preserved after refresh()."""
+    mod = create_module(
+        tmp_path,
+        "cvrefresh",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "def helper(x):\n"
+            "    return x + 1\n\n"
+            "def outer():\n"
+            "    fn = helper\n"
+            "    @trace\n"
+            "    def inner(x):\n"
+            "        return fn(x)\n"
+            "    return inner\n"
+        ),
+    )
+    mod.outer()
+    graph = FuseGraph.default()
+    graph.refresh()  # explicit refresh
+    node = graph.nodes["cvrefresh.outer.<locals>.inner"]
+    assert "cvrefresh.helper" in node.dependencies
+    assert node.closure_func_refs == {"fn": "cvrefresh.helper"}
+
+
+def test_closure_func_refs_serialization_roundtrip(tmp_path: Path) -> None:
+    """closure_func_refs survive serialize/deserialize roundtrip."""
+    mod = create_module(
+        tmp_path,
+        "cvserial",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "def helper(x):\n"
+            "    return x + 1\n\n"
+            "def outer():\n"
+            "    fn = helper\n"
+            "    @trace\n"
+            "    def inner(x):\n"
+            "        return fn(x)\n"
+            "    return inner\n"
+        ),
+    )
+    mod.outer()
+    graph = FuseGraph.default()
+    json_str = graph.serialize()
+    restored = FuseGraph.deserialize_graph(json_str)
+    node = restored.nodes["cvserial.outer.<locals>.inner"]
+    assert node.closure_func_refs == {"fn": "cvserial.helper"}
+    assert "cvserial.helper" in node.dependencies
+
+
+def test_closure_func_ref_reconstructed_code_is_runnable(tmp_path: Path) -> None:
+    """Reconstructed code with closure func ref is hoisted and executable."""
+    mod = create_module(
+        tmp_path,
+        "cvfuncrun",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "def helper(x):\n"
+            "    return x + 1\n\n"
+            "def outer():\n"
+            "    fn = helper\n"
+            "    @trace\n"
+            "    def inner(x):\n"
+            "        return fn(x) * 2\n"
+            "    return inner\n"
+        ),
+    )
+    mod.outer()
+    source = reconstruct(serialize(), "inner")
+    # helper should be defined, inner should have fn=helper as kwonly param
+    assert "def helper(x):" in source
+    assert "fn=helper" in source
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    assert ns["inner"](4) == 10  # helper(4)=5, 5*2=10
+
+
+def test_closure_func_ref_end_to_end_pipeline(tmp_path: Path) -> None:
+    """Full pipeline: trace → serialize → reconstruct → exec with closure func ref."""
+    mod = create_module(
+        tmp_path,
+        "cvpipe",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "def add_one(x):\n"
+            "    return x + 1\n\n"
+            "@trace\n"
+            "def double(x):\n"
+            "    return x * 2\n\n"
+            "def make_pipeline():\n"
+            "    step1 = add_one\n"
+            "    step2 = double\n"
+            "    @trace\n"
+            "    def pipeline(x):\n"
+            "        return step2(step1(x))\n"
+            "    return pipeline\n"
+        ),
+    )
+    pipe = mod.make_pipeline()
+    pipe(3)  # trigger runtime tracing
+
+    source = reconstruct(serialize(), "pipeline")
+    assert "def add_one(x):" in source
+    assert "def double(x):" in source
+    assert "step1=add_one" in source
+    assert "step2=double" in source
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    assert ns["pipeline"](3) == 8  # add_one(3)=4, double(4)=8

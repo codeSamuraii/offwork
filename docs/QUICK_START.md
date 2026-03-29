@@ -119,6 +119,36 @@ class Pipeline:
         return self.step_a(x).lower()
 ```
 
+## Generator Functions
+
+`@trace` works on generator functions. Dependencies inside the generator body are captured during iteration:
+
+```python
+@trace
+def generate_items(items):
+    for item in items:
+        yield transform(item)  # dependency on transform() detected
+```
+
+## Object Method Calls
+
+When a function parameter has a type annotation, `obj.method()` calls are resolved statically -- no execution needed:
+
+```python
+class Processor:
+    @trace
+    def step(self, x):
+        return x.upper()
+
+@trace
+def run(proc: Processor, data: str) -> str:
+    return proc.step(data)  # dependency on Processor.step detected via annotation
+
+source = reconstruct(serialize(), "run")
+```
+
+Without annotations, the dependency is detected at runtime when the function is called. Adding type annotations is recommended for complete static analysis.
+
 ## Star Imports
 
 Star imports (`from os.path import *`) are resolved automatically. Only the names actually used by the function are included as explicit imports in the reconstructed code.

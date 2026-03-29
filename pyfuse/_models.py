@@ -31,6 +31,7 @@ class FunctionNode:
     dependencies: list[str] = field(default_factory=list)
     owner_class: str | None = None
     closure_vars: dict[str, str] = field(default_factory=dict)
+    closure_func_refs: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -44,6 +45,8 @@ class FunctionNode:
         }
         if self.closure_vars:
             d["closure_vars"] = dict(self.closure_vars)
+        if self.closure_func_refs:
+            d["closure_func_refs"] = dict(self.closure_func_refs)
         return d
 
     @classmethod
@@ -57,4 +60,5 @@ class FunctionNode:
             dependencies=data["dependencies"],
             owner_class=data.get("owner_class"),
             closure_vars=data.get("closure_vars", {}),
+            closure_func_refs=data.get("closure_func_refs", {}),
         )

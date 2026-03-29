@@ -124,7 +124,8 @@ def test_detect_traced_dependencies() -> None:
     assert deps == ["mod.helper"]
 
 
-def test_detect_dependencies_ignores_attribute_calls() -> None:
+def test_detect_dependencies_ignores_module_attribute_calls() -> None:
+    """requests.get() should not match a traced 'get' function (no class)."""
     registry = {
         "mod.get": FunctionNode(
             qualified_name="mod.get",
@@ -135,7 +136,6 @@ def test_detect_dependencies_ignores_attribute_calls() -> None:
     }
     source = "def main():\n    r = requests.get('url')\n    return r\n"
     deps = detect_traced_dependencies(source, "mod", registry)
-    # requests.get is an attribute call, not a bare Name call
     assert deps == []
 
 
@@ -229,3 +229,214 @@ def test_resolve_owner_class() -> None:
     assert _resolve_owner_class("outer.<locals>.inner") is None
     assert _resolve_owner_class("Outer.Inner.method") == "Outer.Inner"
     assert _resolve_owner_class("Cls.<locals>.nested") is None
+
+
+# ---------------------------------------------------------------------------
+# Type-annotation-based object method detection
+# ---------------------------------------------------------------------------
+
+
+def test_detect_typed_obj_method_call() -> None:
+    """obj.method() resolved via type annotation on the parameter."""
+    registry = {
+        "mod.Processor.step": FunctionNode(
+            qualified_name="mod.Processor.step",
+            name="step",
+            module="mod",
+            source="def step(self, x): return x",
+            owner_class="Processor",
+        ),
+    }
+    source = "def run(proc: Processor, data):\n    return proc.step(data)\n"
+    deps = detect_traced_dependencies(source, "mod", registry)
+    assert "mod.Processor.step" in deps
+
+
+def test_detect_typed_obj_method_optional() -> None:
+    """Processor | None annotation still resolves the method."""
+    registry = {
+        "mod.Processor.step": FunctionNode(
+            qualified_name="mod.Processor.step",
+            name="step",
+            module="mod",
+            source="def step(self, x): return x",
+            owner_class="Processor",
+        ),
+    }
+    source = "def run(proc: Processor | None):\n    return proc.step(1)\n"
+    deps = detect_traced_dependencies(source, "mod", registry)
+    assert "mod.Processor.step" in deps
+
+
+def test_detect_untyped_obj_method_unambiguous() -> None:
+    """No annotation, but only one class has the method -> inferred."""
+    registry = {
+        "mod.Worker.execute": FunctionNode(
+            qualified_name="mod.Worker.execute",
+            name="execute",
+            module="mod",
+            source="def execute(self): pass",
+            owner_class="Worker",
+        ),
+    }
+    source = "def run(w):\n    return w.execute()\n"
+    deps = detect_traced_dependencies(source, "mod", registry)
+    assert "mod.Worker.execute" in deps
+
+
+def test_detect_untyped_obj_method_ambiguous() -> None:
+    """Two classes have the same method, no annotation -> NOT resolved."""
+    registry = {
+        "mod.A.run": FunctionNode(
+            qualified_name="mod.A.run",
+            name="run",
+            module="mod",
+            source="def run(self): pass",
+            owner_class="A",
+        ),
+        "mod.B.run": FunctionNode(
+            qualified_name="mod.B.run",
+            name="run",
+            module="mod",
+            source="def run(self): pass",
+            owner_class="B",
+        ),
+    }
+    source = "def caller(obj):\n    return obj.run()\n"
+    deps = detect_traced_dependencies(source, "mod", registry)
+    assert deps == []
+
+
+def test_detect_typed_obj_method_unknown_type() -> None:
+    """Type annotation doesn't match any class in registry -> not resolved."""
+    registry = {
+        "mod.Processor.step": FunctionNode(
+            qualified_name="mod.Processor.step",
+            name="step",
+            module="mod",
+            source="def step(self, x): return x",
+            owner_class="Processor",
+        ),
+    }
+    source = "def run(proc: UnknownType):\n    return proc.step(1)\n"
+    deps = detect_traced_dependencies(source, "mod", registry)
+    assert deps == []
+
+
+def test_detect_typed_obj_method_no_duplicate_with_self() -> None:
+    """self.method() and obj.method() don't produce duplicate deps."""
+    registry = {
+        "mod.MyClass.helper": FunctionNode(
+            qualified_name="mod.MyClass.helper",
+            name="helper",
+            module="mod",
+            source="def helper(self): pass",
+            owner_class="MyClass",
+        ),
+    }
+    source = (
+        "def process(self, obj: MyClass):\n"
+        "    self.helper()\n"
+        "    obj.helper()\n"
+    )
+    deps = detect_traced_dependencies(
+        source, "mod", registry, owner_class="MyClass"
+    )
+    assert deps == ["mod.MyClass.helper"]
+
+
+def test_detect_typed_obj_method_generic_list() -> None:
+    """list[Processor] annotation resolves the method."""
+    registry = {
+        "mod.Processor.step": FunctionNode(
+            qualified_name="mod.Processor.step",
+            name="step",
+            module="mod",
+            source="def step(self, x): return x",
+            owner_class="Processor",
+        ),
+    }
+    source = (
+        "def run(procs: list[Processor]):\n"
+        "    for p in procs:\n"
+        "        p.step(1)\n"
+    )
+    deps = detect_traced_dependencies(source, "mod", registry)
+    assert "mod.Processor.step" in deps
+
+
+def test_detect_typed_obj_method_dict_value() -> None:
+    """dict[str, Processor] annotation resolves the method."""
+    registry = {
+        "mod.Processor.step": FunctionNode(
+            qualified_name="mod.Processor.step",
+            name="step",
+            module="mod",
+            source="def step(self, x): return x",
+            owner_class="Processor",
+        ),
+    }
+    source = (
+        "def run(mapping: dict[str, Processor]):\n"
+        "    mapping['key'].step(1)\n"
+    )
+    deps = detect_traced_dependencies(source, "mod", registry)
+    assert "mod.Processor.step" in deps
+
+
+def test_detect_multiple_typed_params() -> None:
+    """Multiple typed params with different methods are all resolved."""
+    registry = {
+        "mod.Reader.read": FunctionNode(
+            qualified_name="mod.Reader.read",
+            name="read",
+            module="mod",
+            source="def read(self): pass",
+            owner_class="Reader",
+        ),
+        "mod.Writer.write": FunctionNode(
+            qualified_name="mod.Writer.write",
+            name="write",
+            module="mod",
+            source="def write(self, data): pass",
+            owner_class="Writer",
+        ),
+    }
+    source = (
+        "def orchestrate(r: Reader, w: Writer):\n"
+        "    data = r.read()\n"
+        "    w.write(data)\n"
+    )
+    deps = detect_traced_dependencies(source, "mod", registry)
+    assert "mod.Reader.read" in deps
+    assert "mod.Writer.write" in deps
+
+
+def test_detect_typed_obj_method_e2e_reconstruction(tmp_path: Path) -> None:
+    """End-to-end: typed obj.method() detected statically, reconstructed, executable."""
+    from pyfuse import reconstruct, serialize
+
+    mod = create_module(
+        tmp_path,
+        "typede2e",
+        (
+            "from pyfuse import trace\n\n"
+            "class Calculator:\n"
+            "    @trace\n"
+            "    def add(self, a, b):\n"
+            "        return a + b\n\n"
+            "@trace\n"
+            "def compute(calc: Calculator, x, y):\n"
+            "    return calc.add(x, y)\n"
+        ),
+    )
+    # Do NOT call compute -- static detection only
+    source = reconstruct(serialize(), "compute")
+    assert "class Calculator:" in source
+    assert "def add(self, a, b):" in source
+    assert "def compute(" in source
+    # Execute the reconstructed code
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    calc = ns["Calculator"]()  # type: ignore[operator]
+    assert ns["compute"](calc, 3, 4) == 7  # type: ignore[operator]

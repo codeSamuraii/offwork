@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import ast
 import functools
 import inspect
 import json
+import logging
 import threading
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from graphlib import TopologicalSorter
 from typing import Self, TypeVar
+
+logger = logging.getLogger(__name__)
 
 from pyfuse._analyzer import (
     _resolve_owner_class,
@@ -16,6 +20,7 @@ from pyfuse._analyzer import (
     get_function_source,
     get_module_imports,
     get_used_names,
+    hoist_closure_func_refs,
     hoist_closure_vars,
 )
 from pyfuse._errors import PyFuseError
@@ -59,6 +64,25 @@ class FuseGraph:
         """Wrap func to record runtime caller-callee edges."""
         qualified_name = f"{func.__module__}.{func.__qualname__}"
 
+        if inspect.isgeneratorfunction(func):
+            logger.debug("Creating generator wrapper for %s", qualified_name)
+
+            @functools.wraps(func)
+            def gen_wrapper(*args: object, **kwargs: object) -> object:
+                stack = self._get_call_stack()
+                if stack and stack[-1] != qualified_name:
+                    with self._lock:
+                        self._runtime_deps.setdefault(stack[-1], set()).add(
+                            qualified_name
+                        )
+                gen = func(*args, **kwargs)
+                return self._proxy_generator(gen, qualified_name)
+
+            gen_wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
+            return gen_wrapper  # type: ignore[return-value]
+
+        logger.debug("Creating wrapper for %s", qualified_name)
+
         @functools.wraps(func)
         def wrapper(*args: object, **kwargs: object) -> object:
             stack = self._get_call_stack()
@@ -76,6 +100,46 @@ class FuseGraph:
         wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
         return wrapper  # type: ignore[return-value]
 
+    def _proxy_generator(
+        self,
+        gen: Generator[object, object, object],
+        qualified_name: str,
+    ) -> Generator[object, object, object]:
+        """Wrap a generator to maintain call stack context during iteration."""
+        stack = self._get_call_stack()
+        stack.append(qualified_name)
+        try:
+            value = next(gen)
+        except StopIteration as e:
+            return e.value
+        finally:
+            stack.pop()
+
+        while True:
+            try:
+                sent = yield value
+            except GeneratorExit:
+                gen.close()
+                return  # type: ignore[return-value]
+            except BaseException as exc:
+                stack = self._get_call_stack()
+                stack.append(qualified_name)
+                try:
+                    value = gen.throw(exc)
+                except StopIteration as e:
+                    return e.value
+                finally:
+                    stack.pop()
+            else:
+                stack = self._get_call_stack()
+                stack.append(qualified_name)
+                try:
+                    value = gen.send(sent)
+                except StopIteration as e:
+                    return e.value
+                finally:
+                    stack.pop()
+
     @property
     def nodes(self) -> dict[str, FunctionNode]:
         return dict(self._nodes)
@@ -87,11 +151,15 @@ class FuseGraph:
             original = original.__wrapped__  # type: ignore[attr-defined]
 
         qualified_name = f"{original.__module__}.{original.__qualname__}"
+        logger.info("Registering %s", qualified_name)
 
         try:
             source = get_function_source(original)
             all_imports = get_module_imports(original)
         except (OSError, TypeError) as exc:
+            logger.info(
+                "Cannot register %s: source unavailable", qualified_name
+            )
             raise PyFuseError(
                 f"Cannot trace function '{original.__qualname__}': source code "
                 "unavailable. Functions must be defined in .py source files."
@@ -102,17 +170,44 @@ class FuseGraph:
         owner_class = _resolve_owner_class(original.__qualname__)
 
         closure_vars: dict[str, str] = {}
+        closure_func_refs: dict[str, str] = {}
         if original.__code__.co_freevars:
             cv = inspect.getclosurevars(original)
             for name, value in cv.nonlocals.items():
                 try:
-                    closure_vars[name] = repr(value)
+                    repr_value = repr(value)
                 except Exception:
                     warnings.warn(
                         f"Cannot repr closure variable '{name}' in "
                         f"'{original.__qualname__}'",
                         stacklevel=3,
                     )
+                    continue
+
+                try:
+                    ast.parse(repr_value, mode="eval")
+                    closure_vars[name] = repr_value
+                except SyntaxError:
+                    if getattr(value, "__pyfuse_traced__", False):
+                        unwrapped = value
+                        while hasattr(unwrapped, "__wrapped__"):
+                            unwrapped = unwrapped.__wrapped__
+                        ref_qname = (
+                            f"{unwrapped.__module__}.{unwrapped.__qualname__}"
+                        )
+                        closure_func_refs[name] = ref_qname
+                        logger.debug(
+                            "Closure var '%s' is traced function %s",
+                            name,
+                            ref_qname,
+                        )
+                    else:
+                        warnings.warn(
+                            f"Closure variable '{name}' in "
+                            f"'{original.__qualname__}' has repr that is not "
+                            f"valid Python: {repr_value!r}",
+                            stacklevel=3,
+                        )
 
         dependencies = [
             d for d in detect_traced_dependencies(
@@ -120,6 +215,10 @@ class FuseGraph:
             )
             if d != qualified_name
         ]
+        for ref_qname in closure_func_refs.values():
+            if ref_qname != qualified_name and ref_qname not in dependencies:
+                dependencies.append(ref_qname)
+
         node = FunctionNode(
             qualified_name=qualified_name,
             name=original.__name__,
@@ -129,9 +228,20 @@ class FuseGraph:
             dependencies=dependencies,
             owner_class=owner_class,
             closure_vars=closure_vars,
+            closure_func_refs=closure_func_refs,
         )
         self._nodes[qualified_name] = node
         self._funcs[qualified_name] = original
+
+        logger.debug(
+            "Registered %s: %d imports, %d deps, %d closure vars, "
+            "%d closure func refs",
+            qualified_name,
+            len(imports),
+            len(dependencies),
+            len(closure_vars),
+            len(closure_func_refs),
+        )
         self.refresh()
 
     def refresh(self) -> None:
@@ -145,6 +255,9 @@ class FuseGraph:
                 )
                 if d != qname
             ]
+            for ref_qname in node.closure_func_refs.values():
+                if ref_qname != qname and ref_qname not in deps:
+                    deps.append(ref_qname)
             self._nodes[qname] = FunctionNode(
                 qualified_name=node.qualified_name,
                 name=node.name,
@@ -154,6 +267,7 @@ class FuseGraph:
                 dependencies=deps,
                 owner_class=node.owner_class,
                 closure_vars=node.closure_vars,
+                closure_func_refs=node.closure_func_refs,
             )
 
     def _collect_subgraph(self, root_names: list[str]) -> dict[str, FunctionNode]:
@@ -181,6 +295,7 @@ class FuseGraph:
         """Merge runtime-discovered dependencies into node dependency lists."""
         with self._lock:
             pending = dict(self._runtime_deps)
+        added = 0
         for caller_qname, callees in pending.items():
             node = self._nodes.get(caller_qname)
             if node is None:
@@ -188,8 +303,16 @@ class FuseGraph:
             existing = set(node.dependencies)
             # Only add deps that point to known nodes
             new = {c for c in callees if c in self._nodes}
-            if new - existing:
+            new_edges = new - existing
+            if new_edges:
                 node.dependencies = sorted(existing | new)
+                added += len(new_edges)
+                for dep in sorted(new_edges):
+                    logger.debug(
+                        "Runtime dep: %s -> %s", caller_qname, dep
+                    )
+        if added:
+            logger.info("Merged %d runtime dependency edges", added)
 
     def serialize(self, *funcs: Callable[..., object] | str) -> str:
         self._merge_runtime_deps()
@@ -197,8 +320,14 @@ class FuseGraph:
         if funcs:
             root_names = [self._resolve_name(f) for f in funcs]
             subgraph = self._collect_subgraph(root_names)
+            logger.info(
+                "Serializing subgraph: %d/%d nodes",
+                len(subgraph),
+                len(self._nodes),
+            )
         else:
             subgraph = dict(self._nodes)
+            logger.info("Serializing full graph: %d nodes", len(subgraph))
 
         data = {
             "version": _VERSION,
@@ -239,11 +368,18 @@ class FuseGraph:
             needed[qn] = nodes[qn]
             stack.extend(nodes[qn].dependencies)
 
+        logger.info(
+            "Reconstructing %s: %d dependencies",
+            target_qname,
+            len(needed) - 1,
+        )
+
         # Topological sort
         sorter: TopologicalSorter[str] = TopologicalSorter()
         for qn, node in needed.items():
             sorter.add(qn, *[d for d in node.dependencies if d in needed])
         order = list(sorter.static_order())
+        logger.debug("Topological order: %s", order)
 
         # Collect and deduplicate imports
         seen_statements: dict[str, None] = {}
@@ -270,6 +406,10 @@ class FuseGraph:
             source = node.source
             if node.closure_vars:
                 source = hoist_closure_vars(source, node.closure_vars)
+            if node.closure_func_refs:
+                source = hoist_closure_func_refs(
+                    source, node.closure_func_refs, needed
+                )
             if node.owner_class is None:
                 parts.append(source.rstrip())
             elif node.owner_class not in emitted_classes:
@@ -282,6 +422,10 @@ class FuseGraph:
                     if member_node.closure_vars:
                         member_src = hoist_closure_vars(
                             member_src, member_node.closure_vars
+                        )
+                    if member_node.closure_func_refs:
+                        member_src = hoist_closure_func_refs(
+                            member_src, member_node.closure_func_refs, needed
                         )
                     member_src = member_src.rstrip()
                     indented = "\n".join(
