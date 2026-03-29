@@ -40,6 +40,7 @@ Represents one function in the dependency graph:
 | `imports` | `list[ImportInfo]` -- only the imports this function uses |
 | `dependencies` | `list[str]` -- qualified names of other traced functions |
 | `owner_class` | `"ClassName"` for methods, `None` for standalone functions |
+| `closure_vars` | `dict[str, str]` -- captured closure variable `repr()` values (empty for non-closures) |
 
 ## How `@trace` Works
 
@@ -53,13 +54,15 @@ When `@trace` is applied to a function at decoration time:
 
 4. **Import filtering** -- The module's imports are intersected with the function's used names. Only imports whose `bound_name` appears in the function body are kept.
 
-5. **Dependency detection** -- The function's AST is walked for `ast.Call` nodes:
+5. **Static dependency detection** -- The function's AST is walked for `ast.Call` nodes:
    - Bare calls like `helper()` are matched against registered function names.
    - `self.method()` / `cls.method()` calls are matched against methods in the same `owner_class`.
 
-6. **Auto-refresh** -- After registration, all previously registered nodes are re-analyzed. This ensures dependencies are resolved regardless of decoration order.
+6. **Closure capture** -- If the function has free variables (`co_freevars`), their values are captured via `inspect.getclosurevars()` and stored as `repr()` strings in the node's `closure_vars` dict.
 
-The decorator returns the original function unchanged -- no wrapper, no runtime overhead.
+7. **Auto-refresh** -- After registration, all previously registered nodes are re-analyzed. This ensures dependencies are resolved regardless of decoration order.
+
+8. **Wrapper creation** -- The decorator returns a thin `functools.wraps` wrapper that records runtime caller-callee edges (see [Runtime Tracing](#runtime-tracing) below).
 
 ## Star Import Resolution
 
@@ -136,12 +139,40 @@ Methods are identified by their `__qualname__`:
 
 During reconstruction, methods with the same `owner_class` are grouped and wrapped in a `class` block. Intra-class dependencies (`self.method()`, `cls.method()`) are detected by matching `ast.Attribute` calls where the receiver is `self` or `cls`.
 
+## Runtime Tracing
+
+Static analysis cannot resolve calls on arbitrary variables (`obj.method()`) because the type of `obj` is unknown at analysis time. pyfuse supplements static analysis with always-on runtime tracing to capture these dependencies.
+
+### Mechanism
+
+`@trace` returns a thin `functools.wraps` wrapper instead of the original function. The wrapper:
+
+1. Checks a thread-local call stack maintained by the `FuseGraph` instance.
+2. If the stack is non-empty and the top entry differs from the current function, records a runtime dependency edge (caller -> callee).
+3. Pushes the current function's qualified name onto the stack.
+4. Calls the original function.
+5. Pops the stack in a `finally` block.
+
+Self-calls (recursion) are filtered out to prevent cycles.
+
+### Why this captures `obj.method()`
+
+Since `@trace` is applied at class definition time, the wrapper replaces the method in the class dict. Any call to `instance.method()` dispatches through the wrapper, regardless of how the instance is referenced -- whether via `self`, a local variable, a function parameter, or any other expression.
+
+### Merging with static analysis
+
+Runtime-discovered dependencies are accumulated in `FuseGraph._runtime_deps`. When `serialize()` is called, these are merged (unioned) with the statically detected dependencies before building the subgraph. This ensures the serialized graph is always the most complete picture.
+
+### Thread safety
+
+Each thread gets its own call stack via `threading.local()`. The shared `_runtime_deps` dict is guarded by a `threading.Lock`.
+
 ## Nested Function Handling
 
 Nested functions (those with `<locals>` in their `__qualname__`) are supported:
 - Source extraction and dedenting work normally.
 - They are emitted as top-level functions during reconstruction.
-- If the function captures variables from an enclosing scope (`co_freevars` is non-empty), a warning is emitted at registration time since the closure context cannot be reconstructed.
+- If the function captures variables from an enclosing scope (`co_freevars` is non-empty), their values are captured at registration time via `inspect.getclosurevars()` and stored as `repr()` strings. During reconstruction, these are hoisted as keyword-only parameters with default values, producing runnable code.
 
 ## Dependency Graph Properties
 
@@ -152,7 +183,22 @@ Nested functions (those with `<locals>` in their `__qualname__`) are supported:
 
 ## Limitations
 
-- Only `self.X()` / `cls.X()` method calls are detected as class dependencies. Calls like `obj.method()` on arbitrary variables cannot be resolved statically.
-- Nested functions that capture closure variables will reconstruct as top-level functions without the captured context.
-- Functions must be defined in `.py` source files. Builtins, `exec`'d functions, and REPL definitions raise `PyFuseError`.
-- `from . import *` (relative star imports) are not supported.
+### Runtime tracing boundaries
+
+- **Intra-class dependencies** via `self.method()` and `cls.method()` are detected statically. Calls on arbitrary variables (`obj.method()`) require at least one runtime invocation to be detected.
+- **Circular dependencies** between functions cause `graphlib.CycleError` during reconstruction. Mutually recursive functions are not supported.
+- **Generators and async functions**: The wrapper records the dependency when the generator/coroutine is created. Dependencies during iteration/awaiting are handled by static analysis only.
+
+### Closure capture
+
+- Closure variables are captured via `repr()`. Values whose `repr()` does not produce valid Python (e.g., file handles, sockets, custom objects without `__repr__`) will trigger a warning and be omitted.
+- If a closure captures a function reference, `repr()` produces a non-reconstructable string. If the captured function is traced, runtime tracing will detect the dependency independently.
+
+### Source availability
+
+- Functions must be defined in `.py` source files on disk. Attempting to trace builtins, `exec`'d functions, or REPL-defined functions raises `PyFuseError` with a descriptive message.
+
+### Import edge cases
+
+- `from . import *` (relative star imports) are not supported. Absolute star imports (`from os.path import *`) are fully resolved.
+- Dynamically computed imports (`__import__()`, `importlib.import_module()` inside function bodies) are not detected.

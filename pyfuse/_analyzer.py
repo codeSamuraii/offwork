@@ -93,6 +93,20 @@ def filter_imports(
     return [imp for imp in all_imports if imp.bound_name in used_names]
 
 
+def hoist_closure_vars(source: str, closure_vars: dict[str, str]) -> str:
+    """Add closure vars as keyword-only params with default values."""
+    if not closure_vars:
+        return source
+    tree = ast.parse(source)
+    func_def = tree.body[0]
+    for name, repr_value in closure_vars.items():
+        func_def.args.kwonlyargs.append(ast.arg(arg=name))
+        func_def.args.kw_defaults.append(
+            ast.parse(repr_value, mode="eval").body
+        )
+    return ast.unparse(tree)
+
+
 def _resolve_owner_class(qualname: str) -> str | None:
     """Extract the owning class name from a function's __qualname__, or None."""
     parts = qualname.rsplit(".", 1)

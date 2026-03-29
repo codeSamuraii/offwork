@@ -30,9 +30,10 @@ class FunctionNode:
     imports: list[ImportInfo] = field(default_factory=list)
     dependencies: list[str] = field(default_factory=list)
     owner_class: str | None = None
+    closure_vars: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "qualified_name": self.qualified_name,
             "name": self.name,
             "module": self.module,
@@ -41,6 +42,9 @@ class FunctionNode:
             "dependencies": list(self.dependencies),
             "owner_class": self.owner_class,
         }
+        if self.closure_vars:
+            d["closure_vars"] = dict(self.closure_vars)
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Self:
@@ -52,4 +56,5 @@ class FunctionNode:
             imports=[ImportInfo.from_dict(imp) for imp in data["imports"]],
             dependencies=data["dependencies"],
             owner_class=data.get("owner_class"),
+            closure_vars=data.get("closure_vars", {}),
         )

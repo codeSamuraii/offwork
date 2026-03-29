@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import functools
+import inspect
 import json
+import threading
 import warnings
 from collections.abc import Callable
 from graphlib import TopologicalSorter
-from typing import Self
+from typing import Self, TypeVar
 
 from pyfuse._analyzer import (
     _resolve_owner_class,
@@ -13,9 +16,12 @@ from pyfuse._analyzer import (
     get_function_source,
     get_module_imports,
     get_used_names,
+    hoist_closure_vars,
 )
 from pyfuse._errors import PyFuseError
 from pyfuse._models import FunctionNode, ImportInfo
+
+_F = TypeVar("_F", bound=Callable[..., object])
 
 _VERSION = "0.1.0"
 
@@ -28,6 +34,9 @@ class FuseGraph:
     def __init__(self) -> None:
         self._nodes: dict[str, FunctionNode] = {}
         self._funcs: dict[str, Callable[..., object]] = {}
+        self._call_stack: threading.local = threading.local()
+        self._runtime_deps: dict[str, set[str]] = {}
+        self._lock: threading.Lock = threading.Lock()
 
     @classmethod
     def default(cls) -> FuseGraph:
@@ -39,58 +48,103 @@ class FuseGraph:
     def reset_default(cls) -> None:
         cls._default = None
 
+    def _get_call_stack(self) -> list[str]:
+        stack: list[str] | None = getattr(self._call_stack, "stack", None)
+        if stack is None:
+            stack = []
+            self._call_stack.stack = stack
+        return stack
+
+    def create_wrapper(self, func: _F) -> _F:
+        """Wrap func to record runtime caller-callee edges."""
+        qualified_name = f"{func.__module__}.{func.__qualname__}"
+
+        @functools.wraps(func)
+        def wrapper(*args: object, **kwargs: object) -> object:
+            stack = self._get_call_stack()
+            if stack and stack[-1] != qualified_name:
+                with self._lock:
+                    self._runtime_deps.setdefault(stack[-1], set()).add(
+                        qualified_name
+                    )
+            stack.append(qualified_name)
+            try:
+                return func(*args, **kwargs)
+            finally:
+                stack.pop()
+
+        wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
+        return wrapper  # type: ignore[return-value]
+
     @property
     def nodes(self) -> dict[str, FunctionNode]:
         return dict(self._nodes)
 
     def register(self, func: Callable[..., object]) -> None:
-        qualified_name = f"{func.__module__}.{func.__qualname__}"
+        # Unwrap if already traced
+        original = func
+        while hasattr(original, "__wrapped__"):
+            original = original.__wrapped__  # type: ignore[attr-defined]
+
+        qualified_name = f"{original.__module__}.{original.__qualname__}"
 
         try:
-            source = get_function_source(func)
-            all_imports = get_module_imports(func)
+            source = get_function_source(original)
+            all_imports = get_module_imports(original)
         except (OSError, TypeError) as exc:
             raise PyFuseError(
-                f"Cannot trace function '{func.__qualname__}': source code "
+                f"Cannot trace function '{original.__qualname__}': source code "
                 "unavailable. Functions must be defined in .py source files."
             ) from exc
 
         used_names = get_used_names(source)
         imports = filter_imports(all_imports, used_names)
-        owner_class = _resolve_owner_class(func.__qualname__)
+        owner_class = _resolve_owner_class(original.__qualname__)
 
-        if "<locals>" in func.__qualname__ and func.__code__.co_freevars:
-            warnings.warn(
-                f"Function '{func.__qualname__}' captures variables from "
-                f"enclosing scope: {set(func.__code__.co_freevars)}. "
-                "Reconstructed code may not be complete.",
-                stacklevel=3,
+        closure_vars: dict[str, str] = {}
+        if original.__code__.co_freevars:
+            cv = inspect.getclosurevars(original)
+            for name, value in cv.nonlocals.items():
+                try:
+                    closure_vars[name] = repr(value)
+                except Exception:
+                    warnings.warn(
+                        f"Cannot repr closure variable '{name}' in "
+                        f"'{original.__qualname__}'",
+                        stacklevel=3,
+                    )
+
+        dependencies = [
+            d for d in detect_traced_dependencies(
+                source, original.__module__, self._nodes, owner_class=owner_class
             )
-
-        dependencies = detect_traced_dependencies(
-            source, func.__module__, self._nodes, owner_class=owner_class
-        )
+            if d != qualified_name
+        ]
         node = FunctionNode(
             qualified_name=qualified_name,
-            name=func.__name__,
-            module=func.__module__,
+            name=original.__name__,
+            module=original.__module__,
             source=source,
             imports=imports,
             dependencies=dependencies,
             owner_class=owner_class,
+            closure_vars=closure_vars,
         )
         self._nodes[qualified_name] = node
-        self._funcs[qualified_name] = func
+        self._funcs[qualified_name] = original
         self.refresh()
 
     def refresh(self) -> None:
         """Re-analyze all registered functions to update dependencies."""
         for qname, func in list(self._funcs.items()):
             node = self._nodes[qname]
-            deps = detect_traced_dependencies(
-                node.source, node.module, self._nodes,
-                owner_class=node.owner_class,
-            )
+            deps = [
+                d for d in detect_traced_dependencies(
+                    node.source, node.module, self._nodes,
+                    owner_class=node.owner_class,
+                )
+                if d != qname
+            ]
             self._nodes[qname] = FunctionNode(
                 qualified_name=node.qualified_name,
                 name=node.name,
@@ -99,6 +153,7 @@ class FuseGraph:
                 imports=node.imports,
                 dependencies=deps,
                 owner_class=node.owner_class,
+                closure_vars=node.closure_vars,
             )
 
     def _collect_subgraph(self, root_names: list[str]) -> dict[str, FunctionNode]:
@@ -115,13 +170,30 @@ class FuseGraph:
 
     def _resolve_name(self, name: str | Callable[..., object]) -> str:
         if callable(name) and not isinstance(name, str):
-            return f"{name.__module__}.{name.__qualname__}"
+            unwrapped = inspect.unwrap(name)
+            return f"{unwrapped.__module__}.{unwrapped.__qualname__}"
         for qname, node in self._nodes.items():
             if qname == name or node.name == name:
                 return qname
         raise KeyError(f"Function '{name}' not found in graph")
 
+    def _merge_runtime_deps(self) -> None:
+        """Merge runtime-discovered dependencies into node dependency lists."""
+        with self._lock:
+            pending = dict(self._runtime_deps)
+        for caller_qname, callees in pending.items():
+            node = self._nodes.get(caller_qname)
+            if node is None:
+                continue
+            existing = set(node.dependencies)
+            # Only add deps that point to known nodes
+            new = {c for c in callees if c in self._nodes}
+            if new - existing:
+                node.dependencies = sorted(existing | new)
+
     def serialize(self, *funcs: Callable[..., object] | str) -> str:
+        self._merge_runtime_deps()
+
         if funcs:
             root_names = [self._resolve_name(f) for f in funcs]
             subgraph = self._collect_subgraph(root_names)
@@ -195,14 +267,23 @@ class FuseGraph:
         emitted_classes: set[str] = set()
         for qn in order:
             node = needed[qn]
+            source = node.source
+            if node.closure_vars:
+                source = hoist_closure_vars(source, node.closure_vars)
             if node.owner_class is None:
-                parts.append(node.source.rstrip())
+                parts.append(source.rstrip())
             elif node.owner_class not in emitted_classes:
                 emitted_classes.add(node.owner_class)
                 class_name = node.owner_class.rsplit(".", 1)[-1]
                 method_sources: list[str] = []
                 for member_qn in class_groups[node.owner_class]:
-                    member_src = needed[member_qn].source.rstrip()
+                    member_node = needed[member_qn]
+                    member_src = member_node.source
+                    if member_node.closure_vars:
+                        member_src = hoist_closure_vars(
+                            member_src, member_node.closure_vars
+                        )
+                    member_src = member_src.rstrip()
                     indented = "\n".join(
                         ("    " + line if line.strip() else "")
                         for line in member_src.splitlines()

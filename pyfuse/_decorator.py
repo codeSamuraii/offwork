@@ -9,6 +9,8 @@ _F = TypeVar("_F", bound=Callable[..., object])
 
 
 def trace(func: _F) -> _F:
-    """Register a function in the default pyfuse dependency graph."""
-    FuseGraph.default().register(func)
-    return func
+    """Register a function in the default pyfuse dependency graph and wrap it
+    to record runtime caller-callee edges."""
+    graph = FuseGraph.default()
+    graph.register(func)
+    return graph.create_wrapper(func)

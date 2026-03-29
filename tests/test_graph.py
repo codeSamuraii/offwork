@@ -208,7 +208,7 @@ def test_class_method_reconstruction(tmp_path: Path) -> None:
     assert source.index("def helper") < source.index("def parse")
 
 
-def test_nested_function_closure_warning(tmp_path: Path) -> None:
+def test_nested_function_closure_captured(tmp_path: Path) -> None:
     create_module(
         tmp_path,
         "closure_mod",
@@ -222,14 +222,9 @@ def test_nested_function_closure_warning(tmp_path: Path) -> None:
             "    return inner\n"
         ),
     )
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        # Need to call outer() to trigger @trace on inner
-        import importlib
-        mod = importlib.import_module("closure_mod")
-        mod.outer()
-        closure_warnings = [
-            x for x in w if "captures variables" in str(x.message)
-        ]
-        assert len(closure_warnings) == 1
-        assert "x" in str(closure_warnings[0].message)
+    import importlib
+    mod = importlib.import_module("closure_mod")
+    mod.outer()
+    graph = FuseGraph.default()
+    node = graph.nodes["closure_mod.outer.<locals>.inner"]
+    assert node.closure_vars == {"x": "10"}
