@@ -130,6 +130,21 @@ def generate_items(items):
         yield transform(item)  # dependency on transform() detected
 ```
 
+## Async Functions and Async Generators
+
+`@trace` works on `async def` functions and async generators. Dependencies are captured both statically and at runtime (via `await` / `async for`):
+
+```python
+@trace
+async def fetch_data(url: str) -> dict:
+    return await async_helper(url)  # dependency on async_helper() detected
+
+@trace
+async def stream_items(items):
+    for item in items:
+        yield await transform(item)  # dependency on transform() detected
+```
+
 ## Object Method Calls
 
 When a function parameter has a type annotation, `obj.method()` calls are resolved statically -- no execution needed:

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import ast
+import contextvars
 import functools
 import inspect
 import json
 import logging
 import threading
 import warnings
-from collections.abc import Callable, Generator
+from collections.abc import AsyncGenerator, Callable, Generator
 from graphlib import TopologicalSorter
 from typing import Self, TypeVar
 
@@ -39,7 +40,9 @@ class FuseGraph:
     def __init__(self) -> None:
         self._nodes: dict[str, FunctionNode] = {}
         self._funcs: dict[str, Callable[..., object]] = {}
-        self._call_stack: threading.local = threading.local()
+        self._call_stack: contextvars.ContextVar[list[str]] = contextvars.ContextVar(
+            "pyfuse_call_stack"
+        )
         self._runtime_deps: dict[str, set[str]] = {}
         self._lock: threading.Lock = threading.Lock()
 
@@ -54,27 +57,68 @@ class FuseGraph:
         cls._default = None
 
     def _get_call_stack(self) -> list[str]:
-        stack: list[str] | None = getattr(self._call_stack, "stack", None)
-        if stack is None:
-            stack = []
-            self._call_stack.stack = stack
+        try:
+            return self._call_stack.get()
+        except LookupError:
+            stack: list[str] = []
+            self._call_stack.set(stack)
+            return stack
+
+    def _ensure_isolated_stack(self) -> list[str]:
+        """Return a call stack isolated for the current async context.
+
+        ContextVar copies the reference to the list when a new Task is created,
+        so async wrappers must call this to get a fresh copy, preventing
+        mutations from leaking across tasks.
+        """
+        stack = list(self._get_call_stack())
+        self._call_stack.set(stack)
         return stack
+
+    def _record_edge(self, stack: list[str], qualified_name: str) -> None:
+        """Record a runtime dependency edge if a caller is on the stack."""
+        if stack and stack[-1] != qualified_name:
+            with self._lock:
+                self._runtime_deps.setdefault(stack[-1], set()).add(qualified_name)
 
     def create_wrapper(self, func: _F) -> _F:
         """Wrap func to record runtime caller-callee edges."""
         qualified_name = f"{func.__module__}.{func.__qualname__}"
+
+        if inspect.isasyncgenfunction(func):
+            logger.debug("Creating async generator wrapper for %s", qualified_name)
+
+            @functools.wraps(func)
+            def async_gen_wrapper(*args: object, **kwargs: object) -> object:
+                self._record_edge(self._get_call_stack(), qualified_name)
+                async_gen = func(*args, **kwargs)
+                return self._proxy_async_generator(async_gen, qualified_name)
+
+            async_gen_wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
+            return async_gen_wrapper  # type: ignore[return-value]
+
+        if inspect.iscoroutinefunction(func):
+            logger.debug("Creating async wrapper for %s", qualified_name)
+
+            @functools.wraps(func)
+            async def async_wrapper(*args: object, **kwargs: object) -> object:
+                stack = self._ensure_isolated_stack()
+                self._record_edge(stack, qualified_name)
+                stack.append(qualified_name)
+                try:
+                    return await func(*args, **kwargs)
+                finally:
+                    stack.pop()
+
+            async_wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
+            return async_wrapper  # type: ignore[return-value]
 
         if inspect.isgeneratorfunction(func):
             logger.debug("Creating generator wrapper for %s", qualified_name)
 
             @functools.wraps(func)
             def gen_wrapper(*args: object, **kwargs: object) -> object:
-                stack = self._get_call_stack()
-                if stack and stack[-1] != qualified_name:
-                    with self._lock:
-                        self._runtime_deps.setdefault(stack[-1], set()).add(
-                            qualified_name
-                        )
+                self._record_edge(self._get_call_stack(), qualified_name)
                 gen = func(*args, **kwargs)
                 return self._proxy_generator(gen, qualified_name)
 
@@ -86,11 +130,7 @@ class FuseGraph:
         @functools.wraps(func)
         def wrapper(*args: object, **kwargs: object) -> object:
             stack = self._get_call_stack()
-            if stack and stack[-1] != qualified_name:
-                with self._lock:
-                    self._runtime_deps.setdefault(stack[-1], set()).add(
-                        qualified_name
-                    )
+            self._record_edge(stack, qualified_name)
             stack.append(qualified_name)
             try:
                 return func(*args, **kwargs)
@@ -137,6 +177,48 @@ class FuseGraph:
                     value = gen.send(sent)
                 except StopIteration as e:
                     return e.value
+                finally:
+                    stack.pop()
+
+    async def _proxy_async_generator(
+        self,
+        async_gen: AsyncGenerator[object, object],
+        qualified_name: str,
+    ) -> AsyncGenerator[object, object]:
+        """Wrap an async generator to maintain call stack context during iteration."""
+        # Isolate once at entry; subsequent calls reuse the same isolated stack.
+        self._ensure_isolated_stack()
+        stack = self._get_call_stack()
+        stack.append(qualified_name)
+        try:
+            value = await async_gen.__anext__()
+        except StopAsyncIteration:
+            return
+        finally:
+            stack.pop()
+
+        while True:
+            try:
+                sent = yield value
+            except GeneratorExit:
+                await async_gen.aclose()
+                return
+            except BaseException as exc:
+                stack = self._get_call_stack()
+                stack.append(qualified_name)
+                try:
+                    value = await async_gen.athrow(exc)
+                except StopAsyncIteration:
+                    return
+                finally:
+                    stack.pop()
+            else:
+                stack = self._get_call_stack()
+                stack.append(qualified_name)
+                try:
+                    value = await async_gen.asend(sent)
+                except StopAsyncIteration:
+                    return
                 finally:
                     stack.pop()
 

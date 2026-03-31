@@ -1,35 +1,35 @@
 """Serialize only a subgraph instead of the full registry."""
-
+import os
 import csv
 import json
-import os
+import logging
 
 from pyfuse import FuseGraph, reconstruct, serialize, trace
 
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG, format="%(levelname)-5s - %(name)s - %(message)s")
+
 
 @trace
+def load_to_json(path: str) -> dict:
+    raw_csv = load_csv(path)
+    dict_csv = {i: l for i, l in enumerate(raw_csv)}
+    return to_json(dict_csv)
+
+def to_json(data: object) -> str:
+    """Serialize data to JSON."""
+    return json.dumps(data, indent=2)
+
 def read_file(path: str) -> str:
     """Read a file from disk."""
     with open(path) as f:
         return f.read()
 
-
 @trace
-def parse_csv(data: str) -> list[list[str]]:
+def load_csv(path: str) -> list[list[str]]:
     """Parse CSV text into rows."""
+    data = read_file(path)
     return list(csv.reader(data.splitlines()))
-
-
-@trace
-def to_json(data: object) -> str:
-    """Serialize data to JSON."""
-    return json.dumps(data, indent=2)
-
-
-@trace
-def get_env(key: str) -> str:
-    """Read an environment variable."""
-    return os.getenv(key, "")
 
 
 if __name__ == "__main__":
@@ -38,12 +38,12 @@ if __name__ == "__main__":
     print(f"Full graph has {full_graph.count('qualified_name')} nodes")
 
     # Serialize only parse_csv and its dependencies (just parse_csv itself)
-    sub_graph = serialize(parse_csv)
+    sub_graph = serialize(load_csv)
     print(f"parse_csv subgraph has {sub_graph.count('qualified_name')} node(s)")
     print()
 
     # You can also pass the function by name
-    sub_graph2 = FuseGraph.default().serialize("to_json")
-    source = reconstruct(sub_graph2, "to_json")
-    print("=== Reconstructed: to_json (from subgraph) ===")
+    # sub_graph2 = FuseGraph.default().serialize("to_json")
+    source = reconstruct(sub_graph, "load_csv")
+    print("=== Reconstructed: load_csv (from subgraph) ===")
     print(source)

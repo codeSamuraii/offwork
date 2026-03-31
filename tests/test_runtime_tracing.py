@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 from pathlib import Path
@@ -792,3 +793,509 @@ def test_closure_func_ref_end_to_end_pipeline(tmp_path: Path) -> None:
     ns: dict[str, object] = {}
     exec(source, ns)  # noqa: S102
     assert ns["pipeline"](3) == 8  # add_one(3)=4, double(4)=8
+
+
+# ---------------------------------------------------------------------------
+# Async function wrapping
+# ---------------------------------------------------------------------------
+
+
+def test_async_wrapper_preserves_behavior(tmp_path: Path) -> None:
+    """Async wrapper returns correct value via await."""
+    mod = create_module(
+        tmp_path,
+        "asyncbehav",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "async def double(x):\n"
+            "    return x * 2\n"
+        ),
+    )
+    assert asyncio.run(mod.double(5)) == 10
+
+
+def test_async_wrapper_preserves_coroutine_flag(tmp_path: Path) -> None:
+    """Wrapped async function is still a coroutine function."""
+    mod = create_module(
+        tmp_path,
+        "asyncflag",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "async def afunc():\n"
+            "    return 1\n"
+        ),
+    )
+    assert inspect.iscoroutinefunction(mod.afunc)
+
+
+def test_async_wrapper_preserves_metadata(tmp_path: Path) -> None:
+    """Async wrapper preserves __name__, __qualname__, __wrapped__."""
+    mod = create_module(
+        tmp_path,
+        "asyncmeta",
+        (
+            "import inspect\n\n"
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "async def my_coro(x):\n"
+            "    return x\n"
+        ),
+    )
+    assert mod.my_coro.__name__ == "my_coro"
+    assert mod.my_coro.__qualname__ == "my_coro"
+    assert mod.inspect.iscoroutinefunction(mod.my_coro.__wrapped__)
+
+
+def test_async_caller_to_async_callee(tmp_path: Path) -> None:
+    """async caller -> async callee edge is recorded via await."""
+    mod = create_module(
+        tmp_path,
+        "asynccall",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "async def async_helper(x):\n"
+            "    return x + 1\n\n"
+            "@trace\n"
+            "async def async_caller(x):\n"
+            "    return await async_helper(x)\n"
+        ),
+    )
+    assert asyncio.run(mod.async_caller(5)) == 6
+
+    graph = FuseGraph.default()
+    graph_json = graph.serialize()
+    data = json.loads(graph_json)
+    deps = data["nodes"]["asynccall.async_caller"]["dependencies"]
+    assert "asynccall.async_helper" in deps
+
+
+def test_async_caller_to_sync_callee(tmp_path: Path) -> None:
+    """Async function calling a sync traced function records the edge."""
+    mod = create_module(
+        tmp_path,
+        "asyncsync",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "def sync_helper(x):\n"
+            "    return x + 1\n\n"
+            "@trace\n"
+            "async def async_caller(x):\n"
+            "    return sync_helper(x)\n"
+        ),
+    )
+    assert asyncio.run(mod.async_caller(5)) == 6
+
+    graph = FuseGraph.default()
+    graph_json = graph.serialize()
+    data = json.loads(graph_json)
+    deps = data["nodes"]["asyncsync.async_caller"]["dependencies"]
+    assert "asyncsync.sync_helper" in deps
+
+
+def test_async_dep_chain(tmp_path: Path) -> None:
+    """A -> B -> C chain via await is captured."""
+    mod = create_module(
+        tmp_path,
+        "asyncchain",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "async def step_a(x):\n"
+            "    return x\n\n"
+            "@trace\n"
+            "async def step_b(x):\n"
+            "    return await step_a(x)\n\n"
+            "@trace\n"
+            "async def step_c(x):\n"
+            "    return await step_b(x)\n"
+        ),
+    )
+    asyncio.run(mod.step_c(1))
+
+    graph = FuseGraph.default()
+    graph_json = graph.serialize()
+    data = json.loads(graph_json)
+    assert "asyncchain.step_b" in data["nodes"]["asyncchain.step_c"]["dependencies"]
+    assert "asyncchain.step_a" in data["nodes"]["asyncchain.step_b"]["dependencies"]
+
+
+def test_async_no_self_dependency(tmp_path: Path) -> None:
+    """Recursive async calls don't create self-edges."""
+    mod = create_module(
+        tmp_path,
+        "asyncself",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "async def factorial(n):\n"
+            "    if n <= 1:\n"
+            "        return 1\n"
+            "    return n * await factorial(n - 1)\n"
+        ),
+    )
+    assert asyncio.run(mod.factorial(5)) == 120
+
+    graph = FuseGraph.default()
+    graph_json = graph.serialize()
+    data = json.loads(graph_json)
+    deps = data["nodes"]["asyncself.factorial"]["dependencies"]
+    assert "asyncself.factorial" not in deps
+
+
+def test_async_runtime_dep_merges_with_static(tmp_path: Path) -> None:
+    """Runtime async deps are merged with static deps."""
+    mod = create_module(
+        tmp_path,
+        "asyncmerge",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "def static_dep(x):\n"
+            "    return x\n\n"
+            "class Worker:\n"
+            "    @trace\n"
+            "    def dynamic_dep(self, x):\n"
+            "        return x\n\n"
+            "@trace\n"
+            "async def caller(w, x):\n"
+            "    a = static_dep(x)\n"
+            "    b = w.dynamic_dep(x)\n"
+            "    return a, b\n"
+        ),
+    )
+    w = mod.Worker()
+    asyncio.run(mod.caller(w, 1))
+
+    graph = FuseGraph.default()
+    graph_json = graph.serialize()
+    data = json.loads(graph_json)
+    deps = data["nodes"]["asyncmerge.caller"]["dependencies"]
+    assert "asyncmerge.static_dep" in deps
+    assert "asyncmerge.Worker.dynamic_dep" in deps
+
+
+def test_async_reconstruction(tmp_path: Path) -> None:
+    """End-to-end: async function trace/serialize/reconstruct."""
+    mod = create_module(
+        tmp_path,
+        "asyncrecon",
+        (
+            "import json\n\n"
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "async def async_helper(data):\n"
+            "    return json.dumps(data)\n\n"
+            "@trace\n"
+            "async def async_main(data):\n"
+            "    return await async_helper(data)\n"
+        ),
+    )
+    asyncio.run(mod.async_main({"key": "value"}))
+
+    source = reconstruct(serialize(), "async_main")
+    assert "import json" in source
+    assert "async def async_helper(data):" in source
+    assert "async def async_main(data):" in source
+
+
+def test_async_concurrent_tasks_isolated(tmp_path: Path) -> None:
+    """Two concurrent async tasks don't contaminate each other's deps."""
+    mod = create_module(
+        tmp_path,
+        "asynciso",
+        (
+            "import asyncio\n\n"
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "async def dep_a(x):\n"
+            "    return x\n\n"
+            "@trace\n"
+            "async def dep_b(x):\n"
+            "    return x\n\n"
+            "@trace\n"
+            "async def task_a(x):\n"
+            "    await asyncio.sleep(0)\n"
+            "    return await dep_a(x)\n\n"
+            "@trace\n"
+            "async def task_b(x):\n"
+            "    await asyncio.sleep(0)\n"
+            "    return await dep_b(x)\n"
+        ),
+    )
+
+    async def main() -> None:
+        await asyncio.gather(mod.task_a(1), mod.task_b(2))
+
+    asyncio.run(main())
+
+    graph = FuseGraph.default()
+    graph_json = graph.serialize()
+    data = json.loads(graph_json)
+    deps_a = data["nodes"]["asynciso.task_a"]["dependencies"]
+    deps_b = data["nodes"]["asynciso.task_b"]["dependencies"]
+    assert "asynciso.dep_a" in deps_a
+    assert "asynciso.dep_b" not in deps_a
+    assert "asynciso.dep_b" in deps_b
+    assert "asynciso.dep_a" not in deps_b
+
+
+# ---------------------------------------------------------------------------
+# Async generator wrapping
+# ---------------------------------------------------------------------------
+
+
+def test_async_gen_body_dep_detected(tmp_path: Path) -> None:
+    """Traced calls inside an async generator body are recorded during async for."""
+    mod = create_module(
+        tmp_path,
+        "agenbody",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "def helper(x):\n"
+            "    return x + 1\n\n"
+            "@trace\n"
+            "async def async_gen(items):\n"
+            "    for item in items:\n"
+            "        yield helper(item)\n"
+        ),
+    )
+
+    async def main() -> list[int]:
+        return [x async for x in mod.async_gen([1, 2, 3])]
+
+    assert asyncio.run(main()) == [2, 3, 4]
+
+    graph = FuseGraph.default()
+    graph_json = graph.serialize()
+    data = json.loads(graph_json)
+    deps = data["nodes"]["agenbody.async_gen"]["dependencies"]
+    assert "agenbody.helper" in deps
+
+
+def test_async_gen_caller_dep_detected(tmp_path: Path) -> None:
+    """Caller of an async generator has the caller->asyncgen edge recorded."""
+    mod = create_module(
+        tmp_path,
+        "agencaller",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "async def async_gen(items):\n"
+            "    for item in items:\n"
+            "        yield item\n\n"
+            "@trace\n"
+            "async def caller():\n"
+            "    return [x async for x in async_gen([1, 2, 3])]\n"
+        ),
+    )
+    assert asyncio.run(mod.caller()) == [1, 2, 3]
+
+    graph = FuseGraph.default()
+    graph_json = graph.serialize()
+    data = json.loads(graph_json)
+    deps = data["nodes"]["agencaller.caller"]["dependencies"]
+    assert "agencaller.async_gen" in deps
+
+
+def test_async_gen_preserves_values(tmp_path: Path) -> None:
+    """Async generator proxy yields the same values as the original."""
+    mod = create_module(
+        tmp_path,
+        "agenvals",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "async def countdown(n):\n"
+            "    while n > 0:\n"
+            "        yield n\n"
+            "        n -= 1\n"
+        ),
+    )
+
+    async def main() -> list[int]:
+        return [x async for x in mod.countdown(5)]
+
+    assert asyncio.run(main()) == [5, 4, 3, 2, 1]
+
+
+def test_async_gen_asend(tmp_path: Path) -> None:
+    """Dependencies are tracked when asend() is used."""
+    mod = create_module(
+        tmp_path,
+        "agensend",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "def transform(x):\n"
+            "    return x * 10\n\n"
+            "@trace\n"
+            "async def accumulator():\n"
+            "    total = 0\n"
+            "    while True:\n"
+            "        value = yield total\n"
+            "        if value is None:\n"
+            "            break\n"
+            "        total += transform(value)\n"
+        ),
+    )
+
+    async def main() -> None:
+        gen = mod.accumulator()
+        await gen.__anext__()
+        await gen.asend(1)
+        await gen.asend(2)
+        try:
+            await gen.asend(None)
+        except StopAsyncIteration:
+            pass
+
+    asyncio.run(main())
+
+    graph = FuseGraph.default()
+    graph_json = graph.serialize()
+    data = json.loads(graph_json)
+    deps = data["nodes"]["agensend.accumulator"]["dependencies"]
+    assert "agensend.transform" in deps
+
+
+def test_async_gen_athrow(tmp_path: Path) -> None:
+    """Dependencies are tracked when athrow() is used."""
+    mod = create_module(
+        tmp_path,
+        "agenthrow",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "def fallback(x):\n"
+            "    return x * -1\n\n"
+            "@trace\n"
+            "async def resilient():\n"
+            "    while True:\n"
+            "        try:\n"
+            "            value = yield\n"
+            "        except ValueError:\n"
+            "            yield fallback(0)\n"
+        ),
+    )
+
+    async def main() -> int:
+        gen = mod.resilient()
+        await gen.__anext__()  # prime
+        return await gen.athrow(ValueError("bad"))
+
+    result = asyncio.run(main())
+    assert result == 0
+
+    graph = FuseGraph.default()
+    graph_json = graph.serialize()
+    data = json.loads(graph_json)
+    deps = data["nodes"]["agenthrow.resilient"]["dependencies"]
+    assert "agenthrow.fallback" in deps
+
+
+def test_async_gen_aclose(tmp_path: Path) -> None:
+    """aclose() properly closes the underlying async generator."""
+    mod = create_module(
+        tmp_path,
+        "agenclose",
+        (
+            "from pyfuse import trace\n\n"
+            "closed = False\n\n"
+            "@trace\n"
+            "async def infinite():\n"
+            "    global closed\n"
+            "    try:\n"
+            "        while True:\n"
+            "            yield 1\n"
+            "    finally:\n"
+            "        closed = True\n"
+        ),
+    )
+
+    async def main() -> None:
+        gen = mod.infinite()
+        await gen.__anext__()
+        await gen.aclose()
+
+    asyncio.run(main())
+    assert mod.closed is True
+
+
+def test_async_gen_wrapper_preserves_metadata(tmp_path: Path) -> None:
+    """Async generator wrapper preserves __name__, __qualname__, __wrapped__."""
+    mod = create_module(
+        tmp_path,
+        "agenmeta",
+        (
+            "import inspect\n\n"
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "async def my_agen(n):\n"
+            "    yield n\n"
+        ),
+    )
+    assert mod.my_agen.__name__ == "my_agen"
+    assert mod.my_agen.__qualname__ == "my_agen"
+    assert mod.inspect.isasyncgenfunction(mod.my_agen.__wrapped__)
+
+
+def test_async_gen_nested_chain(tmp_path: Path) -> None:
+    """Async gen calling another async gen: both edges tracked."""
+    mod = create_module(
+        tmp_path,
+        "agenchain",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "async def inner():\n"
+            "    yield 1\n"
+            "    yield 2\n\n"
+            "@trace\n"
+            "async def outer():\n"
+            "    async for val in inner():\n"
+            "        yield val * 10\n"
+        ),
+    )
+
+    async def main() -> list[int]:
+        return [x async for x in mod.outer()]
+
+    assert asyncio.run(main()) == [10, 20]
+
+    graph = FuseGraph.default()
+    graph_json = graph.serialize()
+    data = json.loads(graph_json)
+    deps = data["nodes"]["agenchain.outer"]["dependencies"]
+    assert "agenchain.inner" in deps
+
+
+def test_async_gen_reconstruction(tmp_path: Path) -> None:
+    """End-to-end: async generator trace/serialize/reconstruct."""
+    mod = create_module(
+        tmp_path,
+        "agenrecon",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "def double(x):\n"
+            "    return x * 2\n\n"
+            "@trace\n"
+            "async def gen_doubles(items):\n"
+            "    for item in items:\n"
+            "        yield double(item)\n"
+        ),
+    )
+
+    async def main() -> list[int]:
+        return [x async for x in mod.gen_doubles([1, 2])]
+
+    asyncio.run(main())
+
+    source = reconstruct(serialize(), "gen_doubles")
+    assert "def double(x):" in source
+    assert "async def gen_doubles(items):" in source

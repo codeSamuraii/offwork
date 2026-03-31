@@ -172,7 +172,7 @@ Static analysis cannot resolve calls on arbitrary variables (`obj.method()`) whe
 
 `@trace` returns a `functools.wraps` wrapper instead of the original function. For regular (non-generator) functions, the wrapper:
 
-1. Checks a thread-local call stack maintained by the `FuseGraph` instance.
+1. Checks a `contextvars.ContextVar`-based call stack maintained by the `FuseGraph` instance.
 2. If the stack is non-empty and the top entry differs from the current function, records a runtime dependency edge (caller -> callee).
 3. Pushes the current function's qualified name onto the stack.
 4. Calls the original function.
@@ -198,6 +198,30 @@ The proxy generator maintains call stack context during each step:
 
 This ensures that any traced function called from within the generator body -- during any iteration step -- is properly attributed as a dependency.
 
+### Async functions
+
+For async coroutine functions (detected via `inspect.iscoroutinefunction`), the wrapper is an `async def` that:
+
+1. Calls `_ensure_isolated_stack()` to get a per-task copy of the call stack (see [Thread and task safety](#thread-and-task-safety)).
+2. Records the runtime dependency edge if a caller is on the stack.
+3. Pushes the function's qualified name, `await`s the original coroutine, and pops in a `finally` block.
+
+The wrapper preserves `inspect.iscoroutinefunction()` since it is itself `async def`.
+
+### Async generator functions
+
+For async generator functions (detected via `inspect.isasyncgenfunction`), the same proxy pattern as sync generators is used. The wrapper:
+
+1. Records the caller -> async generator dependency edge at creation time.
+2. Calls the original function to obtain the underlying async generator.
+3. Returns a proxy async generator (`_proxy_async_generator`) that intercepts each async iteration step.
+
+The proxy async generator maintains call stack context during each step:
+- **`__anext__()` / `asend()`**: Calls `_ensure_isolated_stack()`, pushes the qualified name, forwards to the underlying async generator, pops in a `finally` block.
+- **`athrow()`**: Same push/pop pattern, forwards the exception.
+- **`aclose()`**: Forwards `GeneratorExit` to the underlying async generator.
+- **`StopAsyncIteration`**: Caught and re-raised to signal iteration end (async generators cannot return values per PEP 525).
+
 ### Why this captures `obj.method()`
 
 Since `@trace` is applied at class definition time, the wrapper replaces the method in the class dict. Any call to `instance.method()` dispatches through the wrapper, regardless of how the instance is referenced -- whether via `self`, a local variable, a function parameter, or any other expression.
@@ -208,9 +232,15 @@ When type annotations are present, `obj.method()` calls are detected statically 
 
 Runtime-discovered dependencies are accumulated in `FuseGraph._runtime_deps`. When `serialize()` is called, these are merged (unioned) with the statically detected dependencies before building the subgraph. This ensures the serialized graph is always the most complete picture.
 
-### Thread safety
+### Thread and task safety
 
-Each thread gets its own call stack via `threading.local()`. The shared `_runtime_deps` dict is guarded by a `threading.Lock`.
+The call stack uses `contextvars.ContextVar`, which provides:
+- **Per-thread isolation** in synchronous code -- each thread gets its own context automatically.
+- **Per-task isolation** in async code -- each `asyncio.Task` gets a copy of the parent context.
+
+Since `ContextVar` copies the *reference* to the mutable list (not the list itself), async wrappers call `_ensure_isolated_stack()` to set a fresh list copy. This prevents `append`/`pop` in one task from mutating another task's stack. Sync wrappers use `_get_call_stack()` directly since each thread has a fully independent context.
+
+The shared `_runtime_deps` dict is guarded by a `threading.Lock`.
 
 ## Nested Function Handling
 
@@ -259,7 +289,6 @@ Here `scale` was a simple closure variable (hoisted via `closure_vars`) and `fn`
 
 - **Unannotated `obj.method()` calls** require at least one runtime invocation to be detected. Adding type annotations to function parameters eliminates this requirement.
 - **Circular dependencies** between functions cause `graphlib.CycleError` during reconstruction. Mutually recursive functions are not supported.
-- **Async functions and async generators** are not currently wrapped for runtime tracing. Dependencies inside async function bodies are handled by static analysis only.
 
 ### Closure capture
 
