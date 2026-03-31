@@ -519,3 +519,62 @@ class FuseGraph:
                 parts.append(class_block)
 
         return "\n\n\n".join(parts) + "\n"
+
+    def to_mermaid(
+        self,
+        *funcs: Callable[..., object] | str,
+        direction: str = "TD",
+    ) -> str:
+        """Render the dependency graph as a Mermaid flowchart.
+
+        Args:
+            *funcs: Optional functions/names to scope to a subgraph.
+            direction: Graph direction ("TD", "LR", "BT", "RL").
+
+        Returns:
+            A Mermaid flowchart string.
+        """
+        self._merge_runtime_deps()
+
+        if funcs:
+            root_names = [self._resolve_name(f) for f in funcs]
+            subgraph = self._collect_subgraph(root_names)
+        else:
+            subgraph = dict(self._nodes)
+
+        def _node_id(qname: str) -> str:
+            return qname.replace(".", "_")
+
+        lines: list[str] = [f"graph {direction}"]
+
+        # Group nodes by owner_class
+        class_members: dict[str, list[FunctionNode]] = {}
+        standalone: list[FunctionNode] = []
+        for node in subgraph.values():
+            if node.owner_class is not None:
+                class_members.setdefault(node.owner_class, []).append(node)
+            else:
+                standalone.append(node)
+
+        # Emit class subgraphs
+        for owner_class, members in class_members.items():
+            class_name = owner_class.rsplit(".", 1)[-1]
+            lines.append(f"    subgraph {class_name}")
+            for node in members:
+                nid = _node_id(node.qualified_name)
+                lines.append(f'        {nid}["{node.name}"]')
+            lines.append("    end")
+
+        # Emit standalone nodes
+        for node in standalone:
+            nid = _node_id(node.qualified_name)
+            lines.append(f'    {nid}["{node.name}"]')
+
+        # Emit edges
+        for node in subgraph.values():
+            src = _node_id(node.qualified_name)
+            for dep in node.dependencies:
+                if dep in subgraph:
+                    lines.append(f"    {src} --> {_node_id(dep)}")
+
+        return "\n".join(lines) + "\n"

@@ -228,3 +228,58 @@ def test_nested_function_closure_captured(tmp_path: Path) -> None:
     graph = FuseGraph.default()
     node = graph.nodes["closure_mod.outer.<locals>.inner"]
     assert node.closure_vars == {"x": "10"}
+
+
+# -- to_mermaid tests --
+
+
+def test_to_mermaid_full_graph(tmp_path: Path) -> None:
+    graph = _make_graph(tmp_path)
+    mermaid = graph.to_mermaid()
+    assert mermaid.startswith("graph TD\n")
+    assert '"parse"' in mermaid
+    assert '"transform"' in mermaid
+    assert "gmod_transform --> gmod_parse" in mermaid
+
+
+def test_to_mermaid_subgraph(tmp_path: Path) -> None:
+    graph = _make_graph(tmp_path)
+    mermaid = graph.to_mermaid("parse")
+    assert '"parse"' in mermaid
+    assert '"transform"' not in mermaid
+
+
+def test_to_mermaid_class_methods(tmp_path: Path) -> None:
+    create_module(
+        tmp_path,
+        "mermcls",
+        (
+            "from pyfuse import trace\n\n"
+            "class Pipeline:\n"
+            "    @trace\n"
+            "    def step_a(self, x):\n"
+            "        return x.strip()\n\n"
+            "    @trace\n"
+            "    def step_b(self, x):\n"
+            "        return self.step_a(x).lower()\n"
+        ),
+    )
+    graph = FuseGraph.default()
+    mermaid = graph.to_mermaid()
+    assert "subgraph Pipeline" in mermaid
+    assert '"step_a"' in mermaid
+    assert '"step_b"' in mermaid
+    assert "end" in mermaid
+    assert "mermcls_Pipeline_step_b --> mermcls_Pipeline_step_a" in mermaid
+
+
+def test_to_mermaid_direction(tmp_path: Path) -> None:
+    graph = _make_graph(tmp_path)
+    mermaid = graph.to_mermaid(direction="LR")
+    assert mermaid.startswith("graph LR\n")
+
+
+def test_to_mermaid_empty_graph() -> None:
+    graph = FuseGraph()
+    mermaid = graph.to_mermaid()
+    assert mermaid == "graph TD\n"
