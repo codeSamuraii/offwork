@@ -31,7 +31,7 @@ def csv_to_json(data: str) -> str:
     return to_json(parse_csv(data))
 ```
 
-The decorator is transparent -- it returns the original function unchanged with zero runtime overhead.
+Functions called by a `@trace`d function are automatically discovered and included in the dependency graph, even without `@trace`. Standard library and third-party functions are kept as import statements.
 
 ### 2. Serialize the dependency graph
 

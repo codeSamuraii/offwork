@@ -66,9 +66,11 @@ When `@trace` is applied to a function at decoration time:
    - If the repr is invalid but the value is a traced function (has `__pyfuse_traced__`), the function's qualified name is recorded in `closure_func_refs` and added to `dependencies`.
    - Otherwise, a warning is emitted and the variable is skipped.
 
-7. **Auto-refresh** -- After registration, all previously registered nodes are re-analyzed. This ensures dependencies are resolved regardless of decoration order.
+7. **Auto-discovery of untraced dependencies** -- After the node is created, bare function calls in the source are checked against the registry. Calls to functions that are not registered, not builtins, and not stdlib/third-party are auto-registered by looking them up in `sys.modules` and extracting their source. This is recursive: auto-discovered functions are themselves checked for untraced dependencies. For cross-module imports (e.g., `from utils import helper`), the import is removed from the calling node and replaced by a dependency edge, so the reconstructed code is self-contained. See [Auto-Discovery of Untraced Dependencies](#auto-discovery-of-untraced-dependencies) below.
 
-8. **Wrapper creation** -- The decorator returns a wrapper that records runtime caller-callee edges. For generator functions, a specialized proxy generator is used instead of a simple wrapper. See [Runtime Tracing](#runtime-tracing) below.
+8. **Auto-refresh** -- After registration, all previously registered nodes are re-analyzed. This ensures dependencies are resolved regardless of decoration order.
+
+9. **Wrapper creation** -- The decorator returns a wrapper that records runtime caller-callee edges. For generator functions, a specialized proxy generator is used instead of a simple wrapper. See [Runtime Tracing](#runtime-tracing) below.
 
 ## Star Import Resolution
 
@@ -80,6 +82,38 @@ When a module contains `from X import *`:
 4. The normal filtering step prunes to only names the function actually uses.
 
 If the module cannot be imported, a warning is emitted and the star import is skipped.
+
+## Auto-Discovery of Untraced Dependencies
+
+When a `@trace`d function calls another function that is not decorated with `@trace`, pyfuse automatically discovers and registers the untraced function so that the serialized graph is self-contained.
+
+### Mechanism
+
+After registering a traced function, pyfuse extracts all bare function calls from its AST (`ast.Call` nodes with `ast.Name` targets). For each call that is:
+
+1. **Not already in the registry** (not a traced or previously auto-discovered function).
+2. **Not a builtin** (`len`, `print`, `range`, etc. are excluded).
+3. **Not a class** (only `inspect.isfunction()` objects are registered).
+4. **User-defined** (source file is not under the Python stdlib or `site-packages` directories).
+
+...the function is looked up via `getattr(sys.modules[module], name)` and auto-registered with the same source extraction and import analysis pipeline used for traced functions.
+
+### Transitive discovery
+
+Auto-discovered functions are themselves checked for untraced dependencies. This is recursive: if `traced_func()` calls `helper_a()` which calls `helper_b()`, all three end up in the graph. Infinite recursion is prevented by skipping functions already in the registry.
+
+### Cross-module imports
+
+If a function is imported from another user module (e.g., `from utils import helper`), it is also auto-discovered. The import statement is removed from the calling function's imports and replaced by a dependency edge, so the reconstructed code emits the function inline rather than importing it.
+
+Aliased imports (e.g., `from utils import helper as h`) are skipped because the function name and bound name differ, which would cause a name mismatch in reconstructed code.
+
+### What is NOT auto-discovered
+
+- **Standard library functions** (`json.dumps`, `csv.reader`, etc.) -- kept as import statements.
+- **Third-party package functions** (anything installed in `site-packages`) -- kept as import statements.
+- **Method calls** (`obj.method()`, `self.method()`) -- only bare function calls are candidates.
+- **Classes used as constructors** (`MyClass()`) -- filtered by `inspect.isfunction()`.
 
 ## Type-Annotation-Based Method Detection
 

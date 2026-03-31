@@ -1,23 +1,21 @@
 """Save a serialized graph to disk, load it later, and reconstruct."""
-
 import csv
+import json
+import pprint
 import tempfile
 from pathlib import Path
 
 from pyfuse import reconstruct, serialize, trace
 
 
-@trace
 def normalize(text: str) -> str:
     """Strip and lowercase text."""
     return text.strip().lower()
-
 
 @trace
 def parse_row(row: list[str]) -> list[str]:
     """Normalize each cell in a CSV row."""
     return [normalize(cell) for cell in row]
-
 
 @trace
 def parse_csv(data: str) -> list[list[str]]:
@@ -29,6 +27,7 @@ def parse_csv(data: str) -> list[list[str]]:
 if __name__ == "__main__":
     # Serialize and save to a file
     graph_json = serialize()
+    graph_dict = json.loads(graph_json)
 
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".json", delete=False
@@ -36,8 +35,8 @@ if __name__ == "__main__":
         f.write(graph_json)
         path = Path(f.name)
 
-    print(f"Graph saved to {path}")
-
+    print(f"======== {path} ========")
+    pprint.pprint(graph_dict, width=140)
     # Later: load and reconstruct
     loaded = path.read_text()
     source = reconstruct(loaded, "parse_csv")

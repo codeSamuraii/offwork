@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import contextvars
 import functools
 import inspect
 import json
 import logging
+import os
+import sys
+import sysconfig
 import threading
 import warnings
 from collections.abc import AsyncGenerator, Callable, Generator
 from graphlib import TopologicalSorter
+from pathlib import Path
 from typing import Self, TypeVar
 
 logger = logging.getLogger(__name__)
@@ -18,6 +23,7 @@ from pyfuse._analyzer import (
     _resolve_owner_class,
     detect_traced_dependencies,
     filter_imports,
+    find_bare_calls,
     get_function_source,
     get_module_imports,
     get_used_names,
@@ -30,6 +36,39 @@ from pyfuse._models import FunctionNode, ImportInfo
 _F = TypeVar("_F", bound=Callable[..., object])
 
 _VERSION = "0.1.0"
+_BUILTIN_NAMES = set(dir(builtins))
+
+def _get_stdlib_dirs() -> list[str]:
+    dirs: list[str] = []
+    for key in ("stdlib", "platstdlib"):
+        val = sysconfig.get_path(key)
+        if val:
+            dirs.append(str(Path(val).resolve()))
+    return dirs
+
+
+_STDLIB_DIRS = _get_stdlib_dirs()
+
+
+def _is_user_function(func: Callable[..., object]) -> bool:
+    """Return True if func is user-defined (not stdlib or third-party)."""
+    if not inspect.isfunction(func):
+        return False
+    top_module = func.__module__.split(".")[0]
+    if hasattr(sys, "stdlib_module_names") and top_module in sys.stdlib_module_names:
+        return False
+    try:
+        source_file = inspect.getfile(func)
+    except (TypeError, OSError):
+        return False
+    resolved = str(Path(source_file).resolve())
+    for stdlib_dir in _STDLIB_DIRS:
+        if resolved.startswith(stdlib_dir):
+            return False
+    # Heuristic: anything under a site-packages directory is third-party
+    if f"{os.sep}site-packages{os.sep}" in resolved:
+        return False
+    return True
 
 
 class FuseGraph:
@@ -226,6 +265,89 @@ class FuseGraph:
     def nodes(self) -> dict[str, FunctionNode]:
         return dict(self._nodes)
 
+    def _auto_register(self, func: Callable[..., object]) -> bool:
+        """Auto-register an untraced function into the graph.
+
+        Returns False on failure and emits a warning so the user knows
+        a dependency could not be captured.
+        """
+        qualified_name = f"{func.__module__}.{func.__qualname__}"
+        if qualified_name in self._nodes:
+            return False
+        if not _is_user_function(func):
+            return False
+
+        try:
+            source = get_function_source(func)
+            all_imports = get_module_imports(func)
+        except (OSError, TypeError, SyntaxError):
+            warnings.warn(
+                f"Cannot auto-register dependency '{func.__qualname__}': "
+                "source code unavailable. The reconstructed code may be "
+                "incomplete.",
+                stacklevel=2,
+            )
+            return False
+
+        used_names = get_used_names(source)
+        imports = filter_imports(all_imports, used_names)
+        owner_class = _resolve_owner_class(func.__qualname__)
+
+        dependencies = [
+            d for d in detect_traced_dependencies(
+                source, func.__module__, self._nodes, owner_class=owner_class
+            )
+            if d != qualified_name
+        ]
+
+        node = FunctionNode(
+            qualified_name=qualified_name,
+            name=func.__name__,
+            module=func.__module__,
+            source=source,
+            imports=imports,
+            dependencies=dependencies,
+            owner_class=owner_class,
+        )
+        self._nodes[qualified_name] = node
+        self._funcs[qualified_name] = func
+        logger.info("Auto-registered untraced dependency %s", qualified_name)
+
+        # Recursively auto-discover this function's own untraced dependencies
+        self._discover_untraced_deps(func.__module__, node)
+
+        return True
+
+    def _discover_untraced_deps(
+        self, module_name: str, node: FunctionNode
+    ) -> None:
+        """Find and auto-register untraced bare-call dependencies of a node."""
+        module_obj = sys.modules.get(module_name)
+        if module_obj is None:
+            warnings.warn(
+                f"Cannot auto-discover dependencies for "
+                f"'{node.qualified_name}': module '{module_name}' not found "
+                "in sys.modules.",
+                stacklevel=2,
+            )
+            return
+        bare_calls = find_bare_calls(node.source)
+        imports_to_remove: list[ImportInfo] = []
+        for name in bare_calls:
+            if name in _BUILTIN_NAMES:
+                continue
+            func_obj = getattr(module_obj, name, None)
+            if func_obj is None or not inspect.isfunction(func_obj):
+                continue
+            if func_obj.__name__ != name:
+                continue  # Skip aliased imports to avoid name mismatch
+            if self._auto_register(func_obj):
+                if func_obj.__module__ != module_name:
+                    matching = [i for i in node.imports if i.bound_name == name]
+                    imports_to_remove.extend(matching)
+        if imports_to_remove:
+            node.imports = [i for i in node.imports if i not in imports_to_remove]
+
     def register(self, func: Callable[..., object]) -> None:
         # Unwrap if already traced
         original = func
@@ -324,11 +446,16 @@ class FuseGraph:
             len(closure_vars),
             len(closure_func_refs),
         )
+
         self.refresh()
 
     def refresh(self) -> None:
         """Re-analyze all registered functions to update dependencies."""
-        for qname, func in list(self._funcs.items()):
+        for qname in list(self._nodes):
+            node = self._nodes[qname]
+            self._discover_untraced_deps(node.module, node)
+
+        for qname in list(self._nodes):
             node = self._nodes[qname]
             deps = [
                 d for d in detect_traced_dependencies(
@@ -340,17 +467,7 @@ class FuseGraph:
             for ref_qname in node.closure_func_refs.values():
                 if ref_qname != qname and ref_qname not in deps:
                     deps.append(ref_qname)
-            self._nodes[qname] = FunctionNode(
-                qualified_name=node.qualified_name,
-                name=node.name,
-                module=node.module,
-                source=node.source,
-                imports=node.imports,
-                dependencies=deps,
-                owner_class=node.owner_class,
-                closure_vars=node.closure_vars,
-                closure_func_refs=node.closure_func_refs,
-            )
+            node.dependencies = deps
 
     def _collect_subgraph(self, root_names: list[str]) -> dict[str, FunctionNode]:
         collected: dict[str, FunctionNode] = {}

@@ -6,6 +6,11 @@ from pyfuse._graph import FuseGraph
 from pyfuse._models import FunctionNode, ImportInfo
 
 
+def analyze() -> FuseGraph:
+    """Return the default graph of all traced functions."""
+    return FuseGraph.default()
+
+
 def serialize(*funcs: Callable[..., object] | str) -> str:
     """Serialize the default graph (or a subgraph) to JSON."""
     return FuseGraph.default().serialize(*funcs)
@@ -18,6 +23,7 @@ def reconstruct(json_str: str, function_name: str) -> str:
 
 __all__ = [
     "trace",
+    "analyze",
     "serialize",
     "reconstruct",
     "FuseGraph",

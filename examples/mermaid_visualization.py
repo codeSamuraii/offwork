@@ -3,7 +3,7 @@
 import csv
 import json
 
-from pyfuse import FuseGraph, trace
+from pyfuse import analyze, trace
 
 
 @trace
@@ -31,7 +31,7 @@ def csv_to_json(csv_data: str) -> str:
 
 
 if __name__ == "__main__":
-    graph = FuseGraph.default()
+    graph = analyze()
 
     # Full graph
     print("=== Full graph ===")

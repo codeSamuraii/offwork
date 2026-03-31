@@ -1,5 +1,5 @@
 """Serialize only a subgraph instead of the full registry."""
-import os
+import asyncio
 import csv
 import json
 import logging
@@ -11,8 +11,8 @@ logging.basicConfig(level=logging.DEBUG, format="%(levelname)-5s - %(name)s - %(
 
 
 @trace
-def load_to_json(path: str) -> dict:
-    raw_csv = load_csv(path)
+async def load_to_json(path: str) -> dict:
+    raw_csv = await load_csv(path)
     dict_csv = {i: l for i, l in enumerate(raw_csv)}
     return to_json(dict_csv)
 
@@ -20,30 +20,38 @@ def to_json(data: object) -> str:
     """Serialize data to JSON."""
     return json.dumps(data, indent=2)
 
-def read_file(path: str) -> str:
+async def read_file(path: str) -> str:
     """Read a file from disk."""
+    return await asyncio.to_thread(_read_file_sync, path)
+
+def _read_file_sync(path: str) -> str:
     with open(path) as f:
         return f.read()
 
 @trace
-def load_csv(path: str) -> list[list[str]]:
+async def load_csv(path: str) -> list[list[str]]:
     """Parse CSV text into rows."""
-    data = read_file(path)
+    data = await read_file(path)
     return list(csv.reader(data.splitlines()))
 
 
-if __name__ == "__main__":
+async def main() -> None:
     # Serialize the full graph (all 4 functions)
     full_graph = serialize()
-    print(f"Full graph has {full_graph.count('qualified_name')} nodes")
+    import pprint
+    pprint.pprint(json.loads(full_graph), width=140)
 
+    print("\n\n--------\n")
     # Serialize only parse_csv and its dependencies (just parse_csv itself)
     sub_graph = serialize(load_csv)
-    print(f"parse_csv subgraph has {sub_graph.count('qualified_name')} node(s)")
-    print()
+    pprint.pprint(json.loads(sub_graph), width=140)
 
     # You can also pass the function by name
     # sub_graph2 = FuseGraph.default().serialize("to_json")
     source = reconstruct(sub_graph, "load_csv")
     print("=== Reconstructed: load_csv (from subgraph) ===")
     print(source)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

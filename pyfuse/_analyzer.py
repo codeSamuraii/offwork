@@ -101,6 +101,16 @@ def get_used_names(func_source: str) -> set[str]:
     return {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
 
 
+def find_bare_calls(func_source: str) -> set[str]:
+    """Return all bare function call names from the source AST."""
+    tree = ast.parse(func_source)
+    return {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+
+
 def filter_imports(
     all_imports: list[ImportInfo], used_names: set[str]
 ) -> list[ImportInfo]:
