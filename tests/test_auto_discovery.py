@@ -270,9 +270,9 @@ def test_untraced_dep_end_to_end(tmp_path: Path) -> None:
     )
     graph_json = serialize()
     data = json.loads(graph_json)
-    assert "ade2e.normalize" in data["nodes"]
-    assert "ade2e.parse_row" in data["nodes"]
-    assert "ade2e.parse_csv" in data["nodes"]
+    assert "ade2e.normalize" in data["refs"]
+    assert "ade2e.parse_row" in data["refs"]
+    assert "ade2e.parse_csv" in data["refs"]
 
     source = reconstruct(graph_json, "parse_csv")
     assert "def normalize(text):" in source

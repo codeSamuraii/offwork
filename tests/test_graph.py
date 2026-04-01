@@ -55,22 +55,25 @@ def test_serialize_full_graph(tmp_path: Path) -> None:
     graph = _make_graph(tmp_path)
     data = json.loads(graph.serialize())
     assert "version" in data
-    assert "gmod.parse" in data["nodes"]
-    assert "gmod.transform" in data["nodes"]
+    assert "gmod.parse" in data["refs"]
+    assert "gmod.transform" in data["refs"]
+    # All refs point to existing objects
+    for h in data["refs"].values():
+        assert h in data["objects"]
 
 
 def test_serialize_subgraph(tmp_path: Path) -> None:
     graph = _make_graph(tmp_path)
     data = json.loads(graph.serialize("parse"))
-    assert "gmod.parse" in data["nodes"]
-    assert "gmod.transform" not in data["nodes"]
+    assert "gmod.parse" in data["refs"]
+    assert "gmod.transform" not in data["refs"]
 
 
 def test_serialize_subgraph_with_deps(tmp_path: Path) -> None:
     graph = _make_graph(tmp_path)
     data = json.loads(graph.serialize("transform"))
-    assert "gmod.parse" in data["nodes"]
-    assert "gmod.transform" in data["nodes"]
+    assert "gmod.parse" in data["refs"]
+    assert "gmod.transform" in data["refs"]
 
 
 def test_deserialize_roundtrip(tmp_path: Path) -> None:
@@ -283,3 +286,83 @@ def test_to_mermaid_empty_graph() -> None:
     graph = FuseGraph()
     mermaid = graph.to_mermaid()
     assert mermaid == "graph TD\n"
+
+
+# -- Content-addressable store tests --
+
+
+def test_content_hash_deterministic(tmp_path: Path) -> None:
+    graph = _make_graph(tmp_path)
+    node = graph.nodes["gmod.parse"]
+    assert node.content_hash() == node.content_hash()
+
+
+def test_content_hash_changes_on_source_change(tmp_path: Path) -> None:
+    from pyfuse._models import FunctionNode
+    node_a = FunctionNode(
+        qualified_name="m.f", name="f", module="m",
+        source="def f(): return 1",
+    )
+    node_b = FunctionNode(
+        qualified_name="m.f", name="f", module="m",
+        source="def f(): return 2",
+    )
+    assert node_a.content_hash() != node_b.content_hash()
+
+
+def test_content_hash_stable_on_dep_change(tmp_path: Path) -> None:
+    from pyfuse._models import FunctionNode
+    node_a = FunctionNode(
+        qualified_name="m.f", name="f", module="m",
+        source="def f(): pass", dependencies=[],
+    )
+    node_b = FunctionNode(
+        qualified_name="m.f", name="f", module="m",
+        source="def f(): pass", dependencies=["m.other"],
+    )
+    assert node_a.content_hash() == node_b.content_hash()
+
+
+def test_deduplication_shared_dep(tmp_path: Path) -> None:
+    create_module(
+        tmp_path,
+        "dedup_shared",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "def shared():\n    return 1\n\n"
+            "@trace\n"
+            "def caller_a():\n    return shared()\n\n"
+            "@trace\n"
+            "def caller_b():\n    return shared()\n"
+        ),
+    )
+    graph = FuseGraph.default()
+    data = json.loads(graph.serialize())
+    # shared() appears once in objects, referenced by both callers
+    shared_hash = data["refs"]["dedup_shared.shared"]
+    caller_a_hash = data["refs"]["dedup_shared.caller_a"]
+    caller_b_hash = data["refs"]["dedup_shared.caller_b"]
+    assert shared_hash in data["objects"][caller_a_hash]["deps"]
+    assert shared_hash in data["objects"][caller_b_hash]["deps"]
+    # Only one object entry for shared
+    shared_hashes = [
+        h for h, obj in data["objects"].items() if obj["name"] == "shared"
+    ]
+    assert len(shared_hashes) == 1
+
+
+def test_serialize_format_structure(tmp_path: Path) -> None:
+    graph = _make_graph(tmp_path)
+    data = json.loads(graph.serialize())
+    assert data["version"] == "0.2.0"
+    assert "objects" in data
+    assert "refs" in data
+    # Each object has required fields
+    for h, obj in data["objects"].items():
+        assert obj["hash"] == h
+        assert "name" in obj
+        assert "module" in obj
+        assert "source" in obj
+        assert "imports" in obj
+        assert "deps" in obj

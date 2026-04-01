@@ -45,7 +45,23 @@ graph_json = serialize()
 graph_json = serialize(csv_to_json)
 ```
 
-The result is a JSON string containing function source code, import dependencies, and inter-function relationships.
+The result is a JSON string containing a content-addressable object store. Each function is stored once, identified by a content hash, with dependencies linked by hash:
+
+```json
+{
+  "version": "0.2.0",
+  "objects": {
+    "a1b2...": {"hash": "a1b2...", "name": "parse_csv", "source": "...", "deps": [], ...},
+    "c3d4...": {"hash": "c3d4...", "name": "csv_to_json", "source": "...", "deps": ["a1b2..."], ...}
+  },
+  "refs": {
+    "mymodule.parse_csv": "a1b2...",
+    "mymodule.csv_to_json": "c3d4..."
+  }
+}
+```
+
+Shared dependencies are stored once and referenced by multiple callers. Workers can cache objects by hash and only request missing ones.
 
 ### 3. Reconstruct source code
 
@@ -75,7 +91,7 @@ def csv_to_json(data: str) -> str:
     return to_json(parse_csv(data))
 ```
 
-Functions are emitted in dependency order -- dependencies first, target function last. Imports are deduplicated across all functions.
+Functions are emitted in dependency order -- dependencies first, target function last. Imports are deduplicated across all functions. Dependencies are resolved by content hash, so the output is stable regardless of how functions are named or organized.
 
 ### 4. Save and load graphs
 
@@ -89,6 +105,26 @@ Path("graph.json").write_text(graph_json)
 # Later...
 loaded = Path("graph.json").read_text()
 source = reconstruct(loaded, "parse_csv")
+```
+
+### 5. Merge stores
+
+Two serialized stores can be merged by combining their `objects` and `refs` dictionaries. Identical content hashes guarantee safe deduplication:
+
+```python
+import json
+
+store_a = json.loads(serialize(func_a))
+store_b = json.loads(serialize(func_b))
+
+merged = json.dumps({
+    "version": "0.2.0",
+    "objects": {**store_a["objects"], **store_b["objects"]},
+    "refs": {**store_a["refs"], **store_b["refs"]},
+})
+
+# Shared dependencies appear only once in the merged store
+source = reconstruct(merged, "func_a")
 ```
 
 ## Class Methods

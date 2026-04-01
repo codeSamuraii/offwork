@@ -35,7 +35,7 @@ from pyfuse._models import FunctionNode, ImportInfo
 
 _F = TypeVar("_F", bound=Callable[..., object])
 
-_VERSION = "0.1.0"
+_VERSION = "0.2.0"
 _BUILTIN_NAMES = set(dir(builtins))
 
 def _get_stdlib_dirs() -> list[str]:
@@ -528,45 +528,132 @@ class FuseGraph:
             subgraph = dict(self._nodes)
             logger.info("Serializing full graph: %d nodes", len(subgraph))
 
-        data = {
-            "version": _VERSION,
-            "nodes": {qn: node.to_dict() for qn, node in subgraph.items()},
+        qname_to_hash = {
+            qn: node.content_hash() for qn, node in subgraph.items()
         }
+
+        objects: dict[str, dict[str, object]] = {}
+        for qn, node in subgraph.items():
+            h = qname_to_hash[qn]
+            obj: dict[str, object] = {
+                "hash": h,
+                "name": node.name,
+                "module": node.module,
+                "source": node.source,
+                "imports": [imp.to_dict() for imp in node.imports],
+                "deps": [
+                    qname_to_hash[d]
+                    for d in node.dependencies
+                    if d in qname_to_hash
+                ],
+                "owner_class": node.owner_class,
+            }
+            if node.closure_vars:
+                obj["closure_vars"] = dict(node.closure_vars)
+            if node.closure_func_refs:
+                obj["closure_func_refs"] = {
+                    var: qname_to_hash.get(ref_qn, ref_qn)
+                    for var, ref_qn in node.closure_func_refs.items()
+                }
+            objects[h] = obj
+
+        refs = {qn: qname_to_hash[qn] for qn in subgraph}
+
+        data = {"version": _VERSION, "objects": objects, "refs": refs}
         return json.dumps(data, indent=2)
 
     @classmethod
     def deserialize_graph(cls, json_str: str) -> FuseGraph:
         data = json.loads(json_str)
         graph = cls()
-        for node_data in data["nodes"].values():
-            node = FunctionNode.from_dict(node_data)
+        hash_to_qname = {h: qn for qn, h in data["refs"].items()}
+
+        for obj in data["objects"].values():
+            h = obj["hash"]
+            qname = hash_to_qname.get(h, f"{obj['module']}.{obj['name']}")
+            deps = [
+                hash_to_qname[d]
+                for d in obj.get("deps", [])
+                if d in hash_to_qname
+            ]
+            closure_func_refs = {
+                var: hash_to_qname.get(ref_h, ref_h)
+                for var, ref_h in obj.get("closure_func_refs", {}).items()
+            }
+            node = FunctionNode(
+                qualified_name=qname,
+                name=obj["name"],
+                module=obj["module"],
+                source=obj["source"],
+                imports=[ImportInfo.from_dict(imp) for imp in obj["imports"]],
+                dependencies=deps,
+                owner_class=obj.get("owner_class"),
+                closure_vars=obj.get("closure_vars", {}),
+                closure_func_refs=closure_func_refs,
+            )
             graph._nodes[node.qualified_name] = node
         return graph
 
     @staticmethod
     def reconstruct(json_str: str, function_name: str) -> str:
         data = json.loads(json_str)
-        nodes = {qn: FunctionNode.from_dict(nd) for qn, nd in data["nodes"].items()}
+        objects = data["objects"]
+        refs = data["refs"]
+        hash_to_qname = {h: qn for qn, h in refs.items()}
 
-        # Resolve function_name to qualified name
-        target_qname: str | None = None
-        for qname, node in nodes.items():
-            if qname == function_name or node.name == function_name:
-                target_qname = qname
-                break
-        if target_qname is None:
-            raise KeyError(f"Function '{function_name}' not found in serialized graph")
+        # Resolve function_name to a hash
+        target_hash: str | None = None
+        if function_name in refs:
+            target_hash = refs[function_name]
+        else:
+            for qn, h in refs.items():
+                if objects[h]["name"] == function_name:
+                    target_hash = h
+                    break
+        if target_hash is None:
+            raise KeyError(
+                f"Function '{function_name}' not found in serialized graph"
+            )
 
-        # Collect transitive dependencies
-        needed: dict[str, FunctionNode] = {}
-        stack = [target_qname]
+        # Collect transitive dependencies by hash
+        collected: dict[str, dict[str, object]] = {}
+        stack = [target_hash]
         while stack:
-            qn = stack.pop()
-            if qn in needed:
+            h = stack.pop()
+            if h in collected:
                 continue
-            needed[qn] = nodes[qn]
-            stack.extend(nodes[qn].dependencies)
+            collected[h] = objects[h]
+            stack.extend(objects[h].get("deps", []))
 
+        # Build FunctionNode objects for reconstruction logic
+        needed: dict[str, FunctionNode] = {}
+        for h, obj in collected.items():
+            qn = hash_to_qname.get(h, f"{obj['module']}.{obj['name']}")
+            closure_func_refs = {
+                var: hash_to_qname.get(ref_h, ref_h)
+                for var, ref_h in obj.get("closure_func_refs", {}).items()
+            }
+            node = FunctionNode(
+                qualified_name=qn,
+                name=obj["name"],
+                module=obj["module"],
+                source=obj["source"],
+                imports=[
+                    ImportInfo.from_dict(imp) for imp in obj["imports"]
+                ],
+                dependencies=[
+                    hash_to_qname.get(d, d)
+                    for d in obj.get("deps", [])
+                ],
+                owner_class=obj.get("owner_class"),
+                closure_vars=obj.get("closure_vars", {}),
+                closure_func_refs=closure_func_refs,
+            )
+            needed[qn] = node
+
+        target_qname = hash_to_qname.get(
+            target_hash, f"unknown.{function_name}"
+        )
         logger.info(
             "Reconstructing %s: %d dependencies",
             target_qname,
@@ -632,7 +719,10 @@ class FuseGraph:
                         for line in member_src.splitlines()
                     )
                     method_sources.append(indented)
-                class_block = f"class {class_name}:\n" + "\n\n".join(method_sources)
+                class_block = (
+                    f"class {class_name}:\n"
+                    + "\n\n".join(method_sources)
+                )
                 parts.append(class_block)
 
         return "\n\n\n".join(parts) + "\n"

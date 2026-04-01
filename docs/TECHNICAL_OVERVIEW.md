@@ -10,7 +10,7 @@ pyfuse/
     _decorator.py    @trace implementation
     _analyzer.py     AST-based source and dependency analysis
     _graph.py        FuseGraph: registration, serialization, reconstruction
-    _models.py       ImportInfo, FunctionNode dataclasses
+    _models.py       ImportInfo, FunctionNode dataclasses (incl. content hashing)
     _errors.py       PyFuseError exception
 ```
 
@@ -33,15 +33,17 @@ Represents one function in the dependency graph:
 
 | Field | Description |
 |-------|-------------|
-| `qualified_name` | `"module.ClassName.method"` -- unique identifier |
+| `qualified_name` | `"module.ClassName.method"` -- unique identifier (in-memory) |
 | `name` | `"method"` -- simple function name (`__name__`) |
 | `module` | `"module"` -- the module where the function is defined |
 | `source` | Function source code, `@trace` stripped, zero-indented |
 | `imports` | `list[ImportInfo]` -- only the imports this function uses |
-| `dependencies` | `list[str]` -- qualified names of other traced functions |
+| `dependencies` | `list[str]` -- qualified names of other traced functions (in-memory; serialized as content hashes in `deps`) |
 | `owner_class` | `"ClassName"` for methods, `None` for standalone functions |
 | `closure_vars` | `dict[str, str]` -- captured closure variable `repr()` values (empty for non-closures) |
-| `closure_func_refs` | `dict[str, str]` -- closure-captured traced function references: variable name to qualified name (empty for non-closures) |
+| `closure_func_refs` | `dict[str, str]` -- closure-captured traced function references: variable name to qualified name (in-memory; serialized as content hashes) |
+
+Additionally, `FunctionNode.content_hash()` computes a deterministic SHA-256 hash (16 hex chars) from the node's intrinsic content (`name`, `module`, `source`, `imports`, `owner_class`, `closure_vars`, `closure_func_refs`). Dependencies are excluded so that adding or removing edges does not change an existing node's hash.
 
 ## How `@trace` Works
 
@@ -132,56 +134,85 @@ This supplements runtime tracing -- both mechanisms can detect the same edge, an
 
 ## Serialization Format
 
-The serialized format is JSON:
+The serialized format is a content-addressable JSON store. Each function node is identified by a SHA-256 content hash (truncated to 16 hex characters), computed from the node's own content (source, name, module, imports, metadata) but **not** from its dependency hashes.
 
 ```json
 {
-  "version": "0.1.0",
-  "nodes": {
-    "mymodule.parse_csv": {
-      "qualified_name": "mymodule.parse_csv",
+  "version": "0.2.0",
+  "objects": {
+    "b8a4483a7a203635": {
+      "hash": "b8a4483a7a203635",
       "name": "parse_csv",
       "module": "mymodule",
       "source": "def parse_csv(data: str) -> dict:\n    ...",
       "imports": [
         {"statement": "import csv", "bound_name": "csv"}
       ],
-      "dependencies": [],
+      "deps": [],
       "owner_class": null
     },
-    "mymodule.csv_to_json": {
-      "qualified_name": "mymodule.csv_to_json",
+    "c9243932be475d63": {
+      "hash": "c9243932be475d63",
       "name": "csv_to_json",
       "module": "mymodule",
       "source": "def csv_to_json(data: str) -> str:\n    ...",
       "imports": [],
-      "dependencies": ["mymodule.parse_csv"],
+      "deps": ["b8a4483a7a203635"],
       "owner_class": null
     }
+  },
+  "refs": {
+    "mymodule.parse_csv": "b8a4483a7a203635",
+    "mymodule.csv_to_json": "c9243932be475d63"
   }
 }
 ```
 
 Key properties:
-- **Flat node dictionary** keyed by qualified name -- O(1) lookup.
-- **Dependencies are qualified names** -- unambiguous references into the same `nodes` dict.
+- **`objects`** -- flat dictionary keyed by content hash. Each value is a self-contained node. O(1) lookup by hash.
+- **`refs`** -- maps qualified names to content hashes. This is the human-readable index for resolving function names.
+- **`deps`** -- dependency edges are content hashes, not qualified names. This makes links rename-stable: renaming a function doesn't break references as long as the content stays the same.
 - **Imports are granular** -- one entry per binding, not per statement.
 - **Version field** -- enables future format evolution.
-- **Optional fields** -- `closure_vars` and `closure_func_refs` are omitted when empty for backward compatibility.
+- **Optional fields** -- `closure_vars` and `closure_func_refs` are omitted when empty.
+
+### Content hashing
+
+The hash is computed from a canonical JSON serialization of the node's intrinsic content:
+
+| Included in hash | Excluded from hash |
+|---|---|
+| `name`, `module`, `source` | `qualified_name` (derived, fragile on rename) |
+| `imports` (sorted), `owner_class` | `deps` (structural, not content) |
+| `closure_vars`, `closure_func_refs` (sorted) | |
+
+Because dependencies are excluded, adding or removing an edge never changes an existing node's hash. This enables efficient incremental updates and deduplication.
+
+### Deduplication
+
+Two functions with identical content produce the same hash and occupy a single entry in `objects`, even if they have different qualified names (both appear in `refs` pointing to the same hash).
+
+Across multiple serialized stores, a consumer (e.g., a remote worker) can cache objects by hash and compute `missing = incoming.keys() - cached.keys()` to receive only new objects.
+
+### Merging stores
+
+Two serialized stores can be merged by taking the union of their `objects` and `refs` dictionaries. Hash collisions are by definition identical content, so merging is always safe.
 
 ## Reconstruction Algorithm
 
-Given a serialized graph and a target function name:
+Given a serialized store and a target function name:
 
-1. **Resolve** the function name to a qualified name (matches by qualified name or simple name).
+1. **Resolve** the function name to a content hash via the `refs` index (matches by qualified name or simple name).
 
-2. **Collect** the target and all transitive dependencies via BFS through the `dependencies` edges.
+2. **Collect** the target and all transitive dependencies via BFS through the `deps` hash edges in `objects`.
 
-3. **Topological sort** using `graphlib.TopologicalSorter`. Dependencies come before dependents.
+3. **Build** temporary `FunctionNode` objects from the collected objects, translating dependency hashes back to qualified names via the inverted `refs` index.
 
-4. **Deduplicate imports** across all nodes using insertion-order dict (`dict.fromkeys`).
+4. **Topological sort** using `graphlib.TopologicalSorter`. Dependencies come before dependents.
 
-5. **Assemble output**:
+5. **Deduplicate imports** across all nodes using insertion-order dict (`dict.fromkeys`).
+
+6. **Assemble output**:
    - Sorted import statements at the top.
    - For each node in topological order:
      - If `closure_vars` is non-empty, values are hoisted as keyword-only parameters with default values (e.g., `def inner(x, *, scale=5)`).
@@ -264,7 +295,7 @@ When type annotations are present, `obj.method()` calls are detected statically 
 
 ### Merging with static analysis
 
-Runtime-discovered dependencies are accumulated in `FuseGraph._runtime_deps`. When `serialize()` is called, these are merged (unioned) with the statically detected dependencies before building the subgraph. This ensures the serialized graph is always the most complete picture.
+Runtime-discovered dependencies are accumulated in `FuseGraph._runtime_deps`. When `serialize()` is called, these are merged (unioned) with the statically detected dependencies before building the subgraph and computing content hashes. This ensures the serialized store is always the most complete picture.
 
 ### Thread and task safety
 
@@ -307,7 +338,10 @@ Here `scale` was a simple closure variable (hoisted via `closure_vars`) and `fn`
 ## Dependency Graph Properties
 
 - **Directed acyclic graph** -- edges point from caller to callee. Circular dependencies cause `graphlib.CycleError` during reconstruction.
+- **Content-addressable storage** -- each node is identified by a content hash, enabling deduplication and efficient incremental updates. Two nodes with identical content share the same hash regardless of qualified name.
 - **Subgraph serialization** -- `serialize(func)` exports only the reachable subgraph from that function, keeping the JSON compact.
+- **Incremental updates** -- adding a new function creates one new object entry; existing nodes are unaffected because dependency hashes are excluded from the content hash.
+- **Store merging** -- two serialized stores can be merged by unioning `objects` and `refs`. Identical content hashes guarantee safe deduplication.
 - **Order-independent registration** -- auto-refresh after each `register()` call ensures dependencies are correct regardless of `@trace` order.
 - **Multi-module support** -- functions from different modules can be traced into the same graph. Qualified names prevent collisions. Same-module matches are preferred during dependency resolution.
 

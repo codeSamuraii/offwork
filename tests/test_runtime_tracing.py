@@ -10,6 +10,14 @@ from pyfuse._graph import FuseGraph
 from tests.conftest import create_module
 
 
+def _get_dep_names(data: dict, qname: str) -> list[str]:
+    """Resolve a node's dependency hashes back to qualified names."""
+    h = data["refs"][qname]
+    dep_hashes = data["objects"][h]["deps"]
+    hash_to_name = {v: k for k, v in data["refs"].items()}
+    return [hash_to_name[dh] for dh in dep_hashes if dh in hash_to_name]
+
+
 # ---------------------------------------------------------------------------
 # Runtime dependency tracing
 # ---------------------------------------------------------------------------
@@ -69,7 +77,7 @@ def test_static_typed_obj_method_no_execution(tmp_path: Path) -> None:
     graph = FuseGraph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
-    run_deps = data["nodes"]["staticobj.run"]["dependencies"]
+    run_deps = _get_dep_names(data, "staticobj.run")
     assert "staticobj.Processor.step" in run_deps
 
 
@@ -95,7 +103,7 @@ def test_runtime_dep_obj_method_call(tmp_path: Path) -> None:
     graph = FuseGraph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
-    run_deps = data["nodes"]["objcall.run"]["dependencies"]
+    run_deps = _get_dep_names(data, "objcall.run")
     assert "objcall.Processor.step" in run_deps
 
 
@@ -119,7 +127,7 @@ def test_runtime_dep_direct_call(tmp_path: Path) -> None:
     graph = FuseGraph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
-    assert "dircall.helper" in data["nodes"]["dircall.caller"]["dependencies"]
+    assert "dircall.helper" in _get_dep_names(data, "dircall.caller")
 
 
 def test_runtime_dep_chain(tmp_path: Path) -> None:
@@ -145,8 +153,8 @@ def test_runtime_dep_chain(tmp_path: Path) -> None:
     graph = FuseGraph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
-    assert "rtchain.step_b" in data["nodes"]["rtchain.step_c"]["dependencies"]
-    assert "rtchain.step_a" in data["nodes"]["rtchain.step_b"]["dependencies"]
+    assert "rtchain.step_b" in _get_dep_names(data, "rtchain.step_c")
+    assert "rtchain.step_a" in _get_dep_names(data, "rtchain.step_b")
 
 
 def test_runtime_dep_no_self_dependency(tmp_path: Path) -> None:
@@ -168,7 +176,7 @@ def test_runtime_dep_no_self_dependency(tmp_path: Path) -> None:
     graph = FuseGraph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
-    deps = data["nodes"]["selfcall.factorial"]["dependencies"]
+    deps = _get_dep_names(data, "selfcall.factorial")
     assert "selfcall.factorial" not in deps
 
 
@@ -201,7 +209,7 @@ def test_runtime_dep_merges_with_static(tmp_path: Path) -> None:
     graph = FuseGraph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
-    deps = data["nodes"]["merge.caller"]["dependencies"]
+    deps = _get_dep_names(data, "merge.caller")
     assert "merge.static_dep" in deps
     assert "merge.Worker.dynamic_dep" in deps
 
@@ -259,7 +267,7 @@ def test_generator_body_dep_detected(tmp_path: Path) -> None:
     graph = FuseGraph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
-    deps = data["nodes"]["genbody.gen_func"]["dependencies"]
+    deps = _get_dep_names(data, "genbody.gen_func")
     assert "genbody.helper" in deps
 
 
@@ -283,7 +291,7 @@ def test_generator_caller_dep_detected(tmp_path: Path) -> None:
     graph = FuseGraph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
-    deps = data["nodes"]["gencaller.caller"]["dependencies"]
+    deps = _get_dep_names(data, "gencaller.caller")
     assert "gencaller.gen_func" in deps
 
 
@@ -319,7 +327,7 @@ def test_generator_send_maintains_context(tmp_path: Path) -> None:
     graph = FuseGraph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
-    deps = data["nodes"]["gensend.accumulator"]["dependencies"]
+    deps = _get_dep_names(data, "gensend.accumulator")
     assert "gensend.transform" in deps
 
 
@@ -414,7 +422,7 @@ def test_generator_throw_maintains_context(tmp_path: Path) -> None:
     graph = FuseGraph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
-    deps = data["nodes"]["genthrow.resilient"]["dependencies"]
+    deps = _get_dep_names(data, "genthrow.resilient")
     assert "genthrow.fallback" in deps
 
 
@@ -464,7 +472,7 @@ def test_generator_nested_chain(tmp_path: Path) -> None:
     graph = FuseGraph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
-    deps = data["nodes"]["genchain.gen_outer"]["dependencies"]
+    deps = _get_dep_names(data, "genchain.gen_outer")
     assert "genchain.gen_inner" in deps
 
 
@@ -574,23 +582,27 @@ def test_closure_reconstructed_code_is_runnable(tmp_path: Path) -> None:
     assert ns["multiply"](6) == 42  # type: ignore[operator]
 
 
-def test_backward_compat_no_closure_vars() -> None:
-    """Old JSON without closure_vars deserializes correctly."""
-    old_json = json.dumps({
-        "version": "0.1.0",
-        "nodes": {
-            "mod.func": {
-                "qualified_name": "mod.func",
+def test_deserialize_no_closure_vars() -> None:
+    """JSON without closure_vars/closure_func_refs deserializes correctly."""
+    node_hash = "abcdef0123456789"
+    store_json = json.dumps({
+        "version": "0.2.0",
+        "objects": {
+            node_hash: {
+                "hash": node_hash,
                 "name": "func",
                 "module": "mod",
                 "source": "def func():\n    pass",
                 "imports": [],
-                "dependencies": [],
+                "deps": [],
                 "owner_class": None,
             }
         },
+        "refs": {
+            "mod.func": node_hash,
+        },
     })
-    graph = FuseGraph.deserialize_graph(old_json)
+    graph = FuseGraph.deserialize_graph(store_json)
     node = graph.nodes["mod.func"]
     assert node.closure_vars == {}
     assert node.closure_func_refs == {}
@@ -868,7 +880,7 @@ def test_async_caller_to_async_callee(tmp_path: Path) -> None:
     graph = FuseGraph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
-    deps = data["nodes"]["asynccall.async_caller"]["dependencies"]
+    deps = _get_dep_names(data, "asynccall.async_caller")
     assert "asynccall.async_helper" in deps
 
 
@@ -892,7 +904,7 @@ def test_async_caller_to_sync_callee(tmp_path: Path) -> None:
     graph = FuseGraph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
-    deps = data["nodes"]["asyncsync.async_caller"]["dependencies"]
+    deps = _get_dep_names(data, "asyncsync.async_caller")
     assert "asyncsync.sync_helper" in deps
 
 
@@ -919,8 +931,8 @@ def test_async_dep_chain(tmp_path: Path) -> None:
     graph = FuseGraph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
-    assert "asyncchain.step_b" in data["nodes"]["asyncchain.step_c"]["dependencies"]
-    assert "asyncchain.step_a" in data["nodes"]["asyncchain.step_b"]["dependencies"]
+    assert "asyncchain.step_b" in _get_dep_names(data, "asyncchain.step_c")
+    assert "asyncchain.step_a" in _get_dep_names(data, "asyncchain.step_b")
 
 
 def test_async_no_self_dependency(tmp_path: Path) -> None:
@@ -942,7 +954,7 @@ def test_async_no_self_dependency(tmp_path: Path) -> None:
     graph = FuseGraph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
-    deps = data["nodes"]["asyncself.factorial"]["dependencies"]
+    deps = _get_dep_names(data, "asyncself.factorial")
     assert "asyncself.factorial" not in deps
 
 
@@ -973,7 +985,7 @@ def test_async_runtime_dep_merges_with_static(tmp_path: Path) -> None:
     graph = FuseGraph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
-    deps = data["nodes"]["asyncmerge.caller"]["dependencies"]
+    deps = _get_dep_names(data, "asyncmerge.caller")
     assert "asyncmerge.static_dep" in deps
     assert "asyncmerge.Worker.dynamic_dep" in deps
 
@@ -1035,8 +1047,8 @@ def test_async_concurrent_tasks_isolated(tmp_path: Path) -> None:
     graph = FuseGraph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
-    deps_a = data["nodes"]["asynciso.task_a"]["dependencies"]
-    deps_b = data["nodes"]["asynciso.task_b"]["dependencies"]
+    deps_a = _get_dep_names(data, "asynciso.task_a")
+    deps_b = _get_dep_names(data, "asynciso.task_b")
     assert "asynciso.dep_a" in deps_a
     assert "asynciso.dep_b" not in deps_a
     assert "asynciso.dep_b" in deps_b
@@ -1073,7 +1085,7 @@ def test_async_gen_body_dep_detected(tmp_path: Path) -> None:
     graph = FuseGraph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
-    deps = data["nodes"]["agenbody.async_gen"]["dependencies"]
+    deps = _get_dep_names(data, "agenbody.async_gen")
     assert "agenbody.helper" in deps
 
 
@@ -1098,7 +1110,7 @@ def test_async_gen_caller_dep_detected(tmp_path: Path) -> None:
     graph = FuseGraph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
-    deps = data["nodes"]["agencaller.caller"]["dependencies"]
+    deps = _get_dep_names(data, "agencaller.caller")
     assert "agencaller.async_gen" in deps
 
 
@@ -1159,7 +1171,7 @@ def test_async_gen_asend(tmp_path: Path) -> None:
     graph = FuseGraph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
-    deps = data["nodes"]["agensend.accumulator"]["dependencies"]
+    deps = _get_dep_names(data, "agensend.accumulator")
     assert "agensend.transform" in deps
 
 
@@ -1194,7 +1206,7 @@ def test_async_gen_athrow(tmp_path: Path) -> None:
     graph = FuseGraph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
-    deps = data["nodes"]["agenthrow.resilient"]["dependencies"]
+    deps = _get_dep_names(data, "agenthrow.resilient")
     assert "agenthrow.fallback" in deps
 
 
@@ -1270,7 +1282,7 @@ def test_async_gen_nested_chain(tmp_path: Path) -> None:
     graph = FuseGraph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
-    deps = data["nodes"]["agenchain.outer"]["dependencies"]
+    deps = _get_dep_names(data, "agenchain.outer")
     assert "agenchain.inner" in deps
 
 

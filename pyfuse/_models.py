@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import Any, Self
 
@@ -48,6 +50,27 @@ class FunctionNode:
         if self.closure_func_refs:
             d["closure_func_refs"] = dict(self.closure_func_refs)
         return d
+
+    def content_hash(self) -> str:
+        """Compute a deterministic content hash for this node.
+
+        The hash covers the node's own content but NOT its dependencies,
+        so adding/removing edges doesn't invalidate existing hashes.
+        """
+        canonical = {
+            "name": self.name,
+            "module": self.module,
+            "source": self.source,
+            "imports": [
+                imp.to_dict()
+                for imp in sorted(self.imports, key=lambda i: i.statement)
+            ],
+            "owner_class": self.owner_class,
+            "closure_vars": dict(sorted(self.closure_vars.items())),
+            "closure_func_refs": dict(sorted(self.closure_func_refs.items())),
+        }
+        raw = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Self:
