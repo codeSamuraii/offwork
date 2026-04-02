@@ -51,6 +51,25 @@ class FunctionNode:
             d["closure_func_refs"] = dict(self.closure_func_refs)
         return d
 
+    def to_content_blob(self) -> dict[str, Any]:
+        """Return only the fields stored in the content-addressable store.
+
+        Excludes ``qualified_name`` and ``dependencies`` which are graph
+        topology, not intrinsic content.
+        """
+        blob: dict[str, Any] = {
+            "name": self.name,
+            "module": self.module,
+            "source": self.source,
+            "imports": [imp.to_dict() for imp in self.imports],
+            "owner_class": self.owner_class,
+        }
+        if self.closure_vars:
+            blob["closure_vars"] = dict(self.closure_vars)
+        if self.closure_func_refs:
+            blob["closure_func_refs"] = dict(self.closure_func_refs)
+        return blob
+
     def content_hash(self) -> str:
         """Compute a deterministic content hash for this node.
 

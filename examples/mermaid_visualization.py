@@ -38,8 +38,8 @@ if __name__ == "__main__":
     print(graph.to_mermaid())
 
     # Subgraph scoped to csv_to_json
-    print("=== Subgraph: csv_to_json ===")
-    print(graph.to_mermaid(csv_to_json))
+    print("=== Subgraph: parse_csv ===")
+    print(graph.to_mermaid(parse_csv))
 
     # Left-to-right layout
     print("=== Left-to-right ===")

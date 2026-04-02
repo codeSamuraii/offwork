@@ -343,8 +343,8 @@ def test_deduplication_shared_dep(tmp_path: Path) -> None:
     shared_hash = data["refs"]["dedup_shared.shared"]
     caller_a_hash = data["refs"]["dedup_shared.caller_a"]
     caller_b_hash = data["refs"]["dedup_shared.caller_b"]
-    assert shared_hash in data["objects"][caller_a_hash]["deps"]
-    assert shared_hash in data["objects"][caller_b_hash]["deps"]
+    assert shared_hash in data["deps"][caller_a_hash]
+    assert shared_hash in data["deps"][caller_b_hash]
     # Only one object entry for shared
     shared_hashes = [
         h for h, obj in data["objects"].items() if obj["name"] == "shared"
@@ -355,14 +355,15 @@ def test_deduplication_shared_dep(tmp_path: Path) -> None:
 def test_serialize_format_structure(tmp_path: Path) -> None:
     graph = _make_graph(tmp_path)
     data = json.loads(graph.serialize())
-    assert data["version"] == "0.2.0"
+    assert data["version"] == "0.3.0"
     assert "objects" in data
+    assert "deps" in data
     assert "refs" in data
-    # Each object has required fields
+    # Each object has required content fields but no hash or deps
     for h, obj in data["objects"].items():
-        assert obj["hash"] == h
+        assert "hash" not in obj
+        assert "deps" not in obj
         assert "name" in obj
         assert "module" in obj
         assert "source" in obj
         assert "imports" in obj
-        assert "deps" in obj

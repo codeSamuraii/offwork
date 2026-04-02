@@ -5,7 +5,6 @@ import builtins
 import contextvars
 import functools
 import inspect
-import json
 import logging
 import os
 import sys
@@ -13,7 +12,6 @@ import sysconfig
 import threading
 import warnings
 from collections.abc import AsyncGenerator, Callable, Generator
-from graphlib import TopologicalSorter
 from pathlib import Path
 from typing import Self, TypeVar
 
@@ -27,15 +25,14 @@ from pyfuse._analyzer import (
     get_function_source,
     get_module_imports,
     get_used_names,
-    hoist_closure_func_refs,
-    hoist_closure_vars,
 )
 from pyfuse._errors import PyFuseError
 from pyfuse._models import FunctionNode, ImportInfo
+from pyfuse._store import FuseStore
 
 _F = TypeVar("_F", bound=Callable[..., object])
 
-_VERSION = "0.2.0"
+_VERSION = "0.3.0"
 _BUILTIN_NAMES = set(dir(builtins))
 
 def _get_stdlib_dirs() -> list[str]:
@@ -513,7 +510,13 @@ class FuseGraph:
         if added:
             logger.info("Merged %d runtime dependency edges", added)
 
-    def serialize(self, *funcs: Callable[..., object] | str) -> str:
+    def to_store(self, *funcs: Callable[..., object] | str) -> FuseStore:
+        """Build a :class:`FuseStore` from this graph.
+
+        Args:
+            *funcs: If given, only include these functions and their
+                transitive dependencies.  Otherwise the full graph.
+        """
         self._merge_runtime_deps()
 
         if funcs:
@@ -528,67 +531,53 @@ class FuseGraph:
             subgraph = dict(self._nodes)
             logger.info("Serializing full graph: %d nodes", len(subgraph))
 
-        qname_to_hash = {
-            qn: node.content_hash() for qn, node in subgraph.items()
-        }
+        store = FuseStore()
+        qname_to_hash: dict[str, str] = {}
 
-        objects: dict[str, dict[str, object]] = {}
         for qn, node in subgraph.items():
-            h = qname_to_hash[qn]
-            obj: dict[str, object] = {
-                "hash": h,
-                "name": node.name,
-                "module": node.module,
-                "source": node.source,
-                "imports": [imp.to_dict() for imp in node.imports],
-                "deps": [
-                    qname_to_hash[d]
-                    for d in node.dependencies
-                    if d in qname_to_hash
-                ],
-                "owner_class": node.owner_class,
-            }
-            if node.closure_vars:
-                obj["closure_vars"] = dict(node.closure_vars)
-            if node.closure_func_refs:
-                obj["closure_func_refs"] = {
-                    var: qname_to_hash.get(ref_qn, ref_qn)
-                    for var, ref_qn in node.closure_func_refs.items()
-                }
-            objects[h] = obj
+            h = store.put(node)
+            qname_to_hash[qn] = h
+            store.set_ref(qn, h)
 
-        refs = {qn: qname_to_hash[qn] for qn in subgraph}
+        for qn, node in subgraph.items():
+            dep_hashes = [
+                qname_to_hash[d]
+                for d in node.dependencies
+                if d in qname_to_hash
+            ]
+            store.set_deps(qname_to_hash[qn], dep_hashes)
 
-        data = {"version": _VERSION, "objects": objects, "refs": refs}
-        return json.dumps(data, indent=2)
+        return store
+
+    def serialize(self, *funcs: Callable[..., object] | str) -> str:
+        return self.to_store(*funcs).to_json()
 
     @classmethod
     def deserialize_graph(cls, json_str: str) -> FuseGraph:
-        data = json.loads(json_str)
+        store = FuseStore.from_json(json_str)
         graph = cls()
-        hash_to_qname = {h: qn for qn, h in data["refs"].items()}
+        hash_to_qname = {h: qn for qn, h in store.refs.items()}
 
-        for obj in data["objects"].values():
-            h = obj["hash"]
-            qname = hash_to_qname.get(h, f"{obj['module']}.{obj['name']}")
-            deps = [
-                hash_to_qname[d]
-                for d in obj.get("deps", [])
-                if d in hash_to_qname
+        for h, qn in hash_to_qname.items():
+            blob = store.get(h)
+            if blob is None:
+                continue
+            dep_qnames = [
+                hash_to_qname.get(d, d) for d in store.get_deps(h)
             ]
             closure_func_refs = {
                 var: hash_to_qname.get(ref_h, ref_h)
-                for var, ref_h in obj.get("closure_func_refs", {}).items()
+                for var, ref_h in blob.get("closure_func_refs", {}).items()
             }
             node = FunctionNode(
-                qualified_name=qname,
-                name=obj["name"],
-                module=obj["module"],
-                source=obj["source"],
-                imports=[ImportInfo.from_dict(imp) for imp in obj["imports"]],
-                dependencies=deps,
-                owner_class=obj.get("owner_class"),
-                closure_vars=obj.get("closure_vars", {}),
+                qualified_name=qn,
+                name=blob["name"],
+                module=blob["module"],
+                source=blob["source"],
+                imports=[ImportInfo.from_dict(imp) for imp in blob["imports"]],
+                dependencies=dep_qnames,
+                owner_class=blob.get("owner_class"),
+                closure_vars=blob.get("closure_vars", {}),
                 closure_func_refs=closure_func_refs,
             )
             graph._nodes[node.qualified_name] = node
@@ -596,136 +585,8 @@ class FuseGraph:
 
     @staticmethod
     def reconstruct(json_str: str, function_name: str) -> str:
-        data = json.loads(json_str)
-        objects = data["objects"]
-        refs = data["refs"]
-        hash_to_qname = {h: qn for qn, h in refs.items()}
-
-        # Resolve function_name to a hash
-        target_hash: str | None = None
-        if function_name in refs:
-            target_hash = refs[function_name]
-        else:
-            for qn, h in refs.items():
-                if objects[h]["name"] == function_name:
-                    target_hash = h
-                    break
-        if target_hash is None:
-            raise KeyError(
-                f"Function '{function_name}' not found in serialized graph"
-            )
-
-        # Collect transitive dependencies by hash
-        collected: dict[str, dict[str, object]] = {}
-        stack = [target_hash]
-        while stack:
-            h = stack.pop()
-            if h in collected:
-                continue
-            collected[h] = objects[h]
-            stack.extend(objects[h].get("deps", []))
-
-        # Build FunctionNode objects for reconstruction logic
-        needed: dict[str, FunctionNode] = {}
-        for h, obj in collected.items():
-            qn = hash_to_qname.get(h, f"{obj['module']}.{obj['name']}")
-            closure_func_refs = {
-                var: hash_to_qname.get(ref_h, ref_h)
-                for var, ref_h in obj.get("closure_func_refs", {}).items()
-            }
-            node = FunctionNode(
-                qualified_name=qn,
-                name=obj["name"],
-                module=obj["module"],
-                source=obj["source"],
-                imports=[
-                    ImportInfo.from_dict(imp) for imp in obj["imports"]
-                ],
-                dependencies=[
-                    hash_to_qname.get(d, d)
-                    for d in obj.get("deps", [])
-                ],
-                owner_class=obj.get("owner_class"),
-                closure_vars=obj.get("closure_vars", {}),
-                closure_func_refs=closure_func_refs,
-            )
-            needed[qn] = node
-
-        target_qname = hash_to_qname.get(
-            target_hash, f"unknown.{function_name}"
-        )
-        logger.info(
-            "Reconstructing %s: %d dependencies",
-            target_qname,
-            len(needed) - 1,
-        )
-
-        # Topological sort
-        sorter: TopologicalSorter[str] = TopologicalSorter()
-        for qn, node in needed.items():
-            sorter.add(qn, *[d for d in node.dependencies if d in needed])
-        order = list(sorter.static_order())
-        logger.debug("Topological order: %s", order)
-
-        # Collect and deduplicate imports
-        seen_statements: dict[str, None] = {}
-        for qn in order:
-            for imp in needed[qn].imports:
-                seen_statements.setdefault(imp.statement, None)
-        import_lines = sorted(seen_statements.keys())
-
-        # Group nodes by owner_class
-        class_groups: dict[str, list[str]] = {}
-        for qn in order:
-            oc = needed[qn].owner_class
-            if oc is not None:
-                class_groups.setdefault(oc, []).append(qn)
-
-        # Assemble script
-        parts: list[str] = []
-        if import_lines:
-            parts.append("\n".join(import_lines))
-
-        emitted_classes: set[str] = set()
-        for qn in order:
-            node = needed[qn]
-            source = node.source
-            if node.closure_vars:
-                source = hoist_closure_vars(source, node.closure_vars)
-            if node.closure_func_refs:
-                source = hoist_closure_func_refs(
-                    source, node.closure_func_refs, needed
-                )
-            if node.owner_class is None:
-                parts.append(source.rstrip())
-            elif node.owner_class not in emitted_classes:
-                emitted_classes.add(node.owner_class)
-                class_name = node.owner_class.rsplit(".", 1)[-1]
-                method_sources: list[str] = []
-                for member_qn in class_groups[node.owner_class]:
-                    member_node = needed[member_qn]
-                    member_src = member_node.source
-                    if member_node.closure_vars:
-                        member_src = hoist_closure_vars(
-                            member_src, member_node.closure_vars
-                        )
-                    if member_node.closure_func_refs:
-                        member_src = hoist_closure_func_refs(
-                            member_src, member_node.closure_func_refs, needed
-                        )
-                    member_src = member_src.rstrip()
-                    indented = "\n".join(
-                        ("    " + line if line.strip() else "")
-                        for line in member_src.splitlines()
-                    )
-                    method_sources.append(indented)
-                class_block = (
-                    f"class {class_name}:\n"
-                    + "\n\n".join(method_sources)
-                )
-                parts.append(class_block)
-
-        return "\n\n\n".join(parts) + "\n"
+        store = FuseStore.from_json(json_str)
+        return store.reconstruct(function_name)
 
     def to_mermaid(
         self,

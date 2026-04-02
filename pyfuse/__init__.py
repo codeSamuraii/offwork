@@ -4,6 +4,7 @@ from pyfuse._decorator import trace
 from pyfuse._errors import PyFuseError
 from pyfuse._graph import FuseGraph
 from pyfuse._models import FunctionNode, ImportInfo
+from pyfuse._store import FuseStore, MergeResult
 
 
 def analyze() -> FuseGraph:
@@ -30,4 +31,6 @@ __all__ = [
     "FunctionNode",
     "ImportInfo",
     "PyFuseError",
+    "FuseStore",
+    "MergeResult",
 ]

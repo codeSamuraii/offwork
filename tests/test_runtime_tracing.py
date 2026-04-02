@@ -13,7 +13,7 @@ from tests.conftest import create_module
 def _get_dep_names(data: dict, qname: str) -> list[str]:
     """Resolve a node's dependency hashes back to qualified names."""
     h = data["refs"][qname]
-    dep_hashes = data["objects"][h]["deps"]
+    dep_hashes = data.get("deps", {}).get(h, [])
     hash_to_name = {v: k for k, v in data["refs"].items()}
     return [hash_to_name[dh] for dh in dep_hashes if dh in hash_to_name]
 
