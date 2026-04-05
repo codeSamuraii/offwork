@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from pyfuse import reconstruct, serialize
+from pyfuse._deps import _collect_package_hints
 from pyfuse._graph import FuseGraph
+from pyfuse._store import FuseStore
 from tests.conftest import create_module
 
 
@@ -233,3 +235,33 @@ def test_mixed_class_and_standalone(tmp_path: Path) -> None:
     assert "    def work(self, data):" in source
     # helper (standalone) should appear before the Worker class
     assert source.index("def helper") < source.index("class Worker")
+
+
+def test_install_package_as_end_to_end(tmp_path: Path) -> None:
+    """install_package_as records the package name through the full pipeline."""
+    # Create a stub module so the import succeeds at trace time
+    (tmp_path / "cv2.py").write_text("def imread(path): pass\n")
+    create_module(
+        tmp_path,
+        "vision",
+        (
+            "from pyfuse import trace, install_package_as\n\n"
+            "with install_package_as('opencv-python'):\n"
+            "    import cv2\n\n"
+            "@trace\n"
+            "def process_image(path):\n"
+            "    return cv2.imread(path)\n"
+        ),
+    )
+
+    graph_json = serialize()
+
+    # Verify the package hint survives serialization
+    store = FuseStore.from_json(graph_json)
+    hints = _collect_package_hints(store, "process_image")
+    assert hints == {"cv2": "opencv-python"}
+
+    # Verify reconstruction still works
+    source = reconstruct(graph_json, "process_image")
+    assert "import cv2" in source
+    assert "def process_image" in source

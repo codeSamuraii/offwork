@@ -12,13 +12,21 @@ class ImportInfo:
 
     statement: str
     bound_name: str
+    package: str | None = None
 
     def to_dict(self) -> dict[str, str]:
-        return {"statement": self.statement, "bound_name": self.bound_name}
+        d = {"statement": self.statement, "bound_name": self.bound_name}
+        if self.package is not None:
+            d["package"] = self.package
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, str]) -> Self:
-        return cls(statement=data["statement"], bound_name=data["bound_name"])
+        return cls(
+            statement=data["statement"],
+            bound_name=data["bound_name"],
+            package=data.get("package"),
+        )
 
 
 @dataclass

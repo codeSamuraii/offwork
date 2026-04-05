@@ -1,10 +1,13 @@
 from collections.abc import Callable
 
 from pyfuse._decorator import trace
-from pyfuse._errors import PyFuseError
+from pyfuse._deps import install_package_as
+from pyfuse._errors import DependencyError, PyFuseError, WorkerError
 from pyfuse._graph import FuseGraph
 from pyfuse._models import FunctionNode, ImportInfo
 from pyfuse._store import FuseStore, MergeResult
+from pyfuse._worker import FuseWorker
+from pyfuse._worker import execute as execute
 
 
 def analyze() -> FuseGraph:
@@ -24,13 +27,18 @@ def reconstruct(json_str: str, function_name: str) -> str:
 
 __all__ = [
     "trace",
+    "install_package_as",
     "analyze",
     "serialize",
     "reconstruct",
+    "execute",
     "FuseGraph",
+    "FuseWorker",
     "FunctionNode",
     "ImportInfo",
     "PyFuseError",
+    "WorkerError",
+    "DependencyError",
     "FuseStore",
     "MergeResult",
 ]

@@ -40,59 +40,101 @@ def get_module_imports(func: Callable[..., object]) -> list[ImportInfo]:
 
     for node in tree.body:
         if isinstance(node, ast.Import):
-            for alias in node.names:
-                bound = alias.asname or alias.name.split(".")[0]
-                stmt = ast.unparse(ast.Import(names=[alias]))
-                imports.append(ImportInfo(statement=stmt, bound_name=bound))
+            imports.extend(_extract_import(node))
 
         elif isinstance(node, ast.ImportFrom):
-            for alias in node.names:
-                if alias.name == "*":
-                    if node.module is None:
-                        warnings.warn(
-                            "Relative star import 'from . import *' "
-                            "is not supported",
-                            stacklevel=2,
-                        )
-                        continue
-                    try:
-                        star_mod = importlib.import_module(node.module)
-                        exported: list[str]
-                        if hasattr(star_mod, "__all__"):
-                            exported = list(star_mod.__all__)
-                        else:
-                            exported = [
-                                n for n in dir(star_mod) if not n.startswith("_")
-                            ]
-                        logger.debug(
-                            "Resolved 'from %s import *': %d names",
-                            node.module,
-                            len(exported),
-                        )
-                        for export_name in exported:
-                            stmt = f"from {node.module} import {export_name}"
-                            imports.append(
-                                ImportInfo(statement=stmt, bound_name=export_name)
-                            )
-                    except ImportError:
-                        warnings.warn(
-                            f"Cannot resolve 'from {node.module} import *': "
-                            "module not importable",
-                            stacklevel=2,
-                        )
-                    continue
-                bound = alias.asname or alias.name
-                stmt = ast.unparse(
-                    ast.ImportFrom(
-                        module=node.module, names=[alias], level=node.level
-                    )
-                )
-                imports.append(ImportInfo(statement=stmt, bound_name=bound))
+            imports.extend(_extract_import_from(node))
+
+        elif isinstance(node, ast.With):
+            package = _parse_install_package_as(node)
+            if package is not None:
+                for child in node.body:
+                    if isinstance(child, ast.Import):
+                        imports.extend(_extract_import(child, package))
+                    elif isinstance(child, ast.ImportFrom):
+                        imports.extend(_extract_import_from(child, package))
 
     logger.debug(
         "Found %d import bindings in %s", len(imports), source_file
     )
     return imports
+
+
+def _parse_install_package_as(node: ast.With) -> str | None:
+    """Return the package name if *node* is ``with install_package_as(...)``."""
+    if len(node.items) != 1:
+        return None
+    ctx = node.items[0].context_expr
+    if not (
+        isinstance(ctx, ast.Call)
+        and isinstance(ctx.func, ast.Name)
+        and ctx.func.id == "install_package_as"
+        and len(ctx.args) == 1
+        and isinstance(ctx.args[0], ast.Constant)
+        and isinstance(ctx.args[0].value, str)
+    ):
+        return None
+    return ctx.args[0].value
+
+
+def _extract_import(
+    node: ast.Import, package: str | None = None
+) -> list[ImportInfo]:
+    result: list[ImportInfo] = []
+    for alias in node.names:
+        bound = alias.asname or alias.name.split(".")[0]
+        stmt = ast.unparse(ast.Import(names=[alias]))
+        result.append(ImportInfo(statement=stmt, bound_name=bound, package=package))
+    return result
+
+
+def _extract_import_from(
+    node: ast.ImportFrom, package: str | None = None
+) -> list[ImportInfo]:
+    result: list[ImportInfo] = []
+    for alias in node.names:
+        if alias.name == "*":
+            if node.module is None:
+                warnings.warn(
+                    "Relative star import 'from . import *' "
+                    "is not supported",
+                    stacklevel=2,
+                )
+                continue
+            try:
+                star_mod = importlib.import_module(node.module)
+                exported: list[str]
+                if hasattr(star_mod, "__all__"):
+                    exported = list(star_mod.__all__)
+                else:
+                    exported = [
+                        n for n in dir(star_mod) if not n.startswith("_")
+                    ]
+                logger.debug(
+                    "Resolved 'from %s import *': %d names",
+                    node.module,
+                    len(exported),
+                )
+                for export_name in exported:
+                    stmt = f"from {node.module} import {export_name}"
+                    result.append(
+                        ImportInfo(statement=stmt, bound_name=export_name, package=package)
+                    )
+            except ImportError:
+                warnings.warn(
+                    f"Cannot resolve 'from {node.module} import *': "
+                    "module not importable",
+                    stacklevel=2,
+                )
+            continue
+        bound = alias.asname or alias.name
+        stmt = ast.unparse(
+            ast.ImportFrom(
+                module=node.module, names=[alias], level=node.level
+            )
+        )
+        result.append(ImportInfo(statement=stmt, bound_name=bound, package=package))
+    return result
 
 
 def get_used_names(func_source: str) -> set[str]:
