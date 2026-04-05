@@ -8,6 +8,7 @@ from typing import Any
 from pyfuse._deps import ensure_dependencies
 from pyfuse._errors import WorkerError
 from pyfuse._store import FuseStore
+from pyfuse._task import Task
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +120,18 @@ class FuseWorker:
         logger.info("Executing async %s (cache key: %s)", function_name, key)
         return await cached.func(*args, **kwargs)
 
+    def run(self, task: Task) -> Any:
+        """Execute a :class:`Task`. Convenience wrapper around :meth:`execute`."""
+        return self.execute(
+            task.graph_json, task.function_name, *task.args, **task.kwargs
+        )
+
+    async def run_async(self, task: Task) -> Any:
+        """Execute a :class:`Task` asynchronously."""
+        return await self.execute_async(
+            task.graph_json, task.function_name, *task.args, **task.kwargs
+        )
+
     def cache_info(self) -> dict[str, Any]:
         """Return cache statistics."""
         return {"size": len(self._cache), "keys": list(self._cache.keys())}
@@ -151,7 +164,21 @@ class FuseWorker:
 
 
 def execute(
-    json_str: str, function_name: str, *args: Any, **kwargs: Any
+    json_str_or_task: str | Task,
+    function_name: str | None = None,
+    *args: Any,
+    **kwargs: Any,
 ) -> Any:
-    """One-shot execution of a function from a serialized pyfuse graph."""
-    return FuseWorker().execute(json_str, function_name, *args, **kwargs)
+    """One-shot execution of a function from a serialized pyfuse graph.
+
+    Accepts either a JSON string + function name, or a :class:`Task`::
+
+        execute(json_str, "my_func", arg1, arg2)
+        execute(task)
+    """
+    worker = FuseWorker()
+    if isinstance(json_str_or_task, Task):
+        return worker.run(json_str_or_task)
+    if function_name is None:
+        raise TypeError("function_name is required when passing a JSON string")
+    return worker.execute(json_str_or_task, function_name, *args, **kwargs)

@@ -2,16 +2,20 @@
 
 ## Architecture
 
-pyfuse is structured as five internal modules behind a minimal public API:
+pyfuse is structured as internal modules behind a minimal public API:
 
 ```
 pyfuse/
-    __init__.py      trace, serialize, reconstruct, FuseGraph, PyFuseError
+    __init__.py      trace, serialize, reconstruct, pack, execute, graph, ...
     _decorator.py    @trace implementation
     _analyzer.py     AST-based source and dependency analysis
     _graph.py        FuseGraph: registration, serialization, reconstruction
+    _store.py        FuseStore: content-addressable store with graph operations
     _models.py       ImportInfo, FunctionNode dataclasses (incl. content hashing)
-    _errors.py       PyFuseError exception
+    _task.py         Task: serializable envelope for remote execution
+    _worker.py       FuseWorker: reconstruct, install deps, execute
+    _deps.py         Dependency extraction and pip installation
+    _errors.py       PyFuseError, WorkerError, DependencyError
 ```
 
 ## Data Model
@@ -344,6 +348,80 @@ Here `scale` was a simple closure variable (hoisted via `closure_vars`) and `fn`
 - **Store merging** -- two serialized stores can be merged by unioning `objects` and `refs`. Identical content hashes guarantee safe deduplication.
 - **Order-independent registration** -- auto-refresh after each `register()` call ensures dependencies are correct regardless of `@trace` order.
 - **Multi-module support** -- functions from different modules can be traced into the same graph. Qualified names prevent collisions. Same-module matches are preferred during dependency resolution.
+
+## Task Envelope
+
+The `Task` dataclass (`_task.py`) is a frozen, serializable envelope that bundles everything needed for remote function execution:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `graph_json` | `str` | Serialized dependency graph (JSON) |
+| `function_name` | `str` | Qualified name of the target function |
+| `args` | `tuple[Any, ...]` | Positional arguments (default `()`) |
+| `kwargs` | `dict[str, Any]` | Keyword arguments (default `{}`) |
+| `task_id` | `str` | Auto-generated 12-char hex ID |
+
+### Design properties
+
+- **Frozen** -- tasks are immutable values, safe to pass across threads or serialize multiple times.
+- **Zero internal imports** -- `_task.py` only imports stdlib (`json`, `uuid`, `dataclasses`, `typing`). Workers consuming tasks do not need the tracing machinery.
+- **Transport-agnostic** -- `to_json()` / `from_json()` produce plain JSON strings. The user chooses the transport (Redis, HTTP, files, message queues).
+
+### `pack()` convenience function
+
+`pack(func, *args, **kwargs)` creates a `Task` in one call:
+
+1. Unwraps the function via `inspect.unwrap()` to resolve the qualified name.
+2. Calls `serialize(func)` to capture only the target function's subgraph (not the full graph).
+3. Returns a `Task` with the scoped graph, qualified name, and arguments.
+
+### Serialization format
+
+```json
+{
+  "id": "a1b2c3d4e5f6",
+  "graph": "{\"version\": \"0.3.0\", \"objects\": {...}, ...}",
+  "function": "mymodule.csv_to_json",
+  "args": [1, 2, 3],
+  "kwargs": {"key": "value"}
+}
+```
+
+The `graph` field contains the serialized store as a JSON string (not nested object), keeping the envelope flat and simple to parse. `from_json()` accepts both `str` and `bytes` for convenience with transport libraries (e.g., Redis returns bytes).
+
+## Worker
+
+The `FuseWorker` class (`_worker.py`) reconstructs and executes functions from serialized graphs. It is designed for the consumer side of a distributed system -- the worker has no prior knowledge of the functions it will execute.
+
+### Execution pipeline
+
+1. **Deserialize** -- Parse the JSON graph into a `FuseStore`.
+2. **Cache check** -- Compute a subgraph key (SHA-256 of all content hashes in the transitive closure). If the key is cached, skip to step 6.
+3. **Install dependencies** -- If `auto_install=True` (default), extract third-party module names from the function's imports and install missing packages via pip. The `DEFAULT_IMPORT_TO_PACKAGE` mapping handles common aliases (e.g., `cv2` -> `opencv-python`, `PIL` -> `Pillow`).
+4. **Reconstruct** -- Call `FuseStore.reconstruct()` to produce a self-contained Python script.
+5. **Compile and exec** -- `compile()` the source, `exec()` it into a fresh namespace, extract the target callable.
+6. **Call** -- Invoke the function with the provided arguments.
+
+### Caching
+
+Functions are cached by subgraph content hash -- a SHA-256 of all content hashes reachable from the target function, sorted and joined. This means:
+
+- **Same code = cache hit** regardless of how the graph was serialized or where it came from.
+- **Any change to the function or its dependencies** produces a different key, invalidating the cache.
+- Cache can be inspected via `cache_info()` and cleared via `clear_cache()`.
+
+### API surface
+
+| Method | Description |
+|--------|-------------|
+| `run(task)` | Execute a `Task` (recommended) |
+| `run_async(task)` | Execute a `Task`, awaiting the result |
+| `execute(json_str, name, *args, **kwargs)` | Execute from raw JSON + function name |
+| `execute_async(json_str, name, *args, **kwargs)` | Async variant of `execute()` |
+| `cache_info()` | Return `{"size": N, "keys": [...]}` |
+| `clear_cache()` | Drop all cached functions |
+
+The module-level `execute()` function provides one-shot execution (no caching across calls). It accepts either a `Task` or `(json_str, function_name, *args, **kwargs)`.
 
 ## Limitations
 

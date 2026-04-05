@@ -1,4 +1,7 @@
+import inspect
+import warnings
 from collections.abc import Callable
+from typing import Any
 
 from pyfuse._decorator import trace
 from pyfuse._deps import install_package_as
@@ -6,12 +9,27 @@ from pyfuse._errors import DependencyError, PyFuseError, WorkerError
 from pyfuse._graph import FuseGraph
 from pyfuse._models import FunctionNode, ImportInfo
 from pyfuse._store import FuseStore, MergeResult
+from pyfuse._task import Task
 from pyfuse._worker import FuseWorker
 from pyfuse._worker import execute as execute
 
 
-def analyze() -> FuseGraph:
+def graph() -> FuseGraph:
     """Return the default graph of all traced functions."""
+    return FuseGraph.default()
+
+
+def analyze() -> FuseGraph:
+    """Return the default graph of all traced functions.
+
+    .. deprecated::
+        Use :func:`graph` instead.
+    """
+    warnings.warn(
+        "analyze() is deprecated, use graph() instead",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return FuseGraph.default()
 
 
@@ -25,20 +43,53 @@ def reconstruct(json_str: str, function_name: str) -> str:
     return FuseGraph.reconstruct(json_str, function_name)
 
 
+def pack(func: Callable[..., object], *args: Any, **kwargs: Any) -> Task:
+    """Capture the subgraph and bundle into a Task for remote execution.
+
+    Equivalent to::
+
+        Task(
+            graph_json=serialize(func),
+            function_name=qualified_name,
+            args=args,
+            kwargs=kwargs,
+        )
+    """
+    unwrapped = inspect.unwrap(func)
+    function_name = f"{unwrapped.__module__}.{unwrapped.__qualname__}"
+    graph_json = FuseGraph.default().serialize(func)
+    return Task(
+        graph_json=graph_json,
+        function_name=function_name,
+        args=args,
+        kwargs=kwargs,
+    )
+
+
 __all__ = [
+    # Core API
     "trace",
-    "install_package_as",
-    "analyze",
+    "graph",
     "serialize",
     "reconstruct",
     "execute",
-    "FuseGraph",
+    "pack",
+    # Task / Worker
+    "Task",
     "FuseWorker",
-    "FunctionNode",
-    "ImportInfo",
+    # Graph / Store
+    "FuseGraph",
+    "FuseStore",
+    # Errors
     "PyFuseError",
     "WorkerError",
     "DependencyError",
-    "FuseStore",
+    # Utilities
+    "install_package_as",
+    # Deprecated
+    "analyze",
+    # Data models
+    "FunctionNode",
+    "ImportInfo",
     "MergeResult",
 ]

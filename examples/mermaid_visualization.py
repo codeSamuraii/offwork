@@ -3,7 +3,7 @@
 import csv
 import json
 
-from pyfuse import analyze, trace
+from pyfuse import graph, trace
 
 
 @trace
@@ -31,16 +31,16 @@ def csv_to_json(csv_data: str) -> str:
 
 
 if __name__ == "__main__":
-    graph = analyze()
+    g = graph()
 
     # Full graph
     print("=== Full graph ===")
-    print(graph.to_mermaid())
+    print(g.to_mermaid())
 
     # Subgraph scoped to csv_to_json
     print("=== Subgraph: parse_csv ===")
-    print(graph.to_mermaid(parse_csv))
+    print(g.to_mermaid(parse_csv))
 
     # Left-to-right layout
     print("=== Left-to-right ===")
-    print(graph.to_mermaid(direction="LR"))
+    print(g.to_mermaid(direction="LR"))

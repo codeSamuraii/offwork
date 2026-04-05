@@ -8,6 +8,7 @@ import pytest
 from pyfuse._errors import WorkerError
 from pyfuse._models import FunctionNode, ImportInfo
 from pyfuse._store import FuseStore
+from pyfuse._task import Task
 from pyfuse._worker import FuseWorker, _compute_subgraph_key, execute
 
 
@@ -178,8 +179,61 @@ class TestAsyncExecute:
 
 # -- Convenience function ---------------------------------------------------
 
+class TestRun:
+    def test_run_simple(self) -> None:
+        _, json_str = _simple_store()
+        task = Task(graph_json=json_str, function_name="f", args=(21,))
+        worker = FuseWorker(auto_install=False)
+        assert worker.run(task) == 42
+
+    def test_run_with_kwargs(self) -> None:
+        _, json_str = _simple_store()
+        task = Task(graph_json=json_str, function_name="f", kwargs={"x": 10})
+        worker = FuseWorker(auto_install=False)
+        assert worker.run(task) == 20
+
+    def test_run_with_dependencies(self) -> None:
+        _, json_str = _chain_store()
+        task = Task(graph_json=json_str, function_name="a", args=(5,))
+        worker = FuseWorker(auto_install=False)
+        assert worker.run(task) == 16
+
+    def test_run_async(self) -> None:
+        _, json_str = _async_store()
+        task = Task(graph_json=json_str, function_name="af", args=(5,))
+        worker = FuseWorker(auto_install=False)
+        result = asyncio.run(worker.run_async(task))
+        assert result == 15
+
+    def test_run_uses_cache(self) -> None:
+        _, json_str = _simple_store()
+        task = Task(graph_json=json_str, function_name="f", args=(1,))
+        worker = FuseWorker(auto_install=False)
+        worker.run(task)
+        assert worker.cache_info()["size"] == 1
+        worker.run(task)
+        assert worker.cache_info()["size"] == 1
+
+
 class TestConvenienceExecute:
     def test_execute_function(self) -> None:
         _, json_str = _simple_store()
         result = execute(json_str, "f", 7)
         assert result == 14
+
+    def test_execute_with_task(self) -> None:
+        _, json_str = _simple_store()
+        task = Task(graph_json=json_str, function_name="f", args=(7,))
+        result = execute(task)
+        assert result == 14
+
+    def test_execute_task_ignores_extra_args(self) -> None:
+        _, json_str = _simple_store()
+        task = Task(graph_json=json_str, function_name="f", args=(7,))
+        result = execute(task)
+        assert result == 14
+
+    def test_execute_str_without_function_name_raises(self) -> None:
+        _, json_str = _simple_store()
+        with pytest.raises(TypeError, match="function_name is required"):
+            execute(json_str)

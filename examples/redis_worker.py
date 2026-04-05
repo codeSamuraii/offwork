@@ -14,10 +14,9 @@ import sys
 import json
 import math
 import time
-import uuid
 import logging
 
-from pyfuse import FuseWorker, serialize, trace
+from pyfuse import FuseWorker, Task, pack, trace
 
 # logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -49,23 +48,6 @@ def greet(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Task helpers
-# ---------------------------------------------------------------------------
-
-
-def make_task(
-    function_name: str, args: list, task_id: str | None = None
-) -> str:
-    """Build a JSON task envelope containing the serialized graph."""
-    return json.dumps({
-        "id": task_id or uuid.uuid4().hex[:8],
-        "graph": serialize(),
-        "function": function_name,
-        "args": args,
-    })
-
-
-# ---------------------------------------------------------------------------
 # Client – pushes tasks then waits for results
 # ---------------------------------------------------------------------------
 
@@ -77,18 +59,17 @@ def push_tasks() -> None:
     r = redis.Redis()
 
     tasks = [
-        ("add",        [3, 4]),
-        ("hypotenuse", [3.0, 4.0]),
-        ("greet",      ["pyfuse"]),
-        ("say_hello",  []),
+        pack(add, 3, 4),
+        pack(hypotenuse, 3.0, 4.0),
+        pack(greet, "pyfuse"),
+        pack(say_hello),
     ]
 
     task_ids: list[str] = []
-    for func_name, args in tasks:
-        tid = uuid.uuid4().hex[:8]
-        task_ids.append(tid)
-        r.rpush(QUEUE_KEY, make_task(func_name, args, tid))
-        print(f"  pushed   {func_name}({', '.join(map(repr, args))})")
+    for task in tasks:
+        task_ids.append(task.task_id)
+        r.rpush(QUEUE_KEY, task.to_json())
+        print(f"  pushed   {task.function_name}({', '.join(map(repr, task.args))})")
 
     print(f"\n{len(tasks)} tasks queued — waiting for results …\n")
 
@@ -132,32 +113,27 @@ def run_worker() -> None:
     try:
         while True:
             _, raw = r.blpop(QUEUE_KEY)  # type: ignore[misc]
-            envelope = json.loads(raw)
-
-            task_id = envelope["id"]
-            func_name = envelope["function"]
-            graph = envelope["graph"]
-            args = envelope["args"]
+            task = Task.from_json(raw)
 
             t0 = time.perf_counter()
-            result = worker.execute(graph, func_name, *args)
+            result = worker.run(task)
             elapsed_ms = round((time.perf_counter() - t0) * 1000, 2)
 
             cache = worker.cache_info()
             print(
-                f"  executed  {func_name:<12}  "
+                f"  executed  {task.function_name:<12}  "
                 f"{elapsed_ms:6.2f}ms  "
                 f"cache size: {cache['size']}",
                 flush=True,
             )
 
             # Push result to a per-task key so the client can read it back
-            result_key = f"pyfuse:result:{task_id}"
+            result_key = f"pyfuse:result:{task.task_id}"
             r.rpush(
                 result_key,
                 json.dumps({
-                    "function": func_name,
-                    "args": args,
+                    "function": task.function_name,
+                    "args": list(task.args),
                     "result": result,
                     "elapsed_ms": elapsed_ms,
                 }),

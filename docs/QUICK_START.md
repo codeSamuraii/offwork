@@ -45,6 +45,30 @@ graph_json = serialize()
 graph_json = serialize(csv_to_json)
 ```
 
+### 3. Pack a function for remote execution
+
+`pack()` captures a function's subgraph and bundles it with arguments into a `Task` -- a serializable envelope ready to send to a worker:
+
+```python
+from pyfuse import pack
+
+task = pack(csv_to_json, "a,b\n1,2")
+print(task.task_id)        # auto-generated unique ID
+print(task.function_name)  # qualified name
+print(task.args)           # (\"a,b\\n1,2\",)
+
+# Serialize for transport (Redis, HTTP, file, etc.)
+task_json = task.to_json()
+```
+
+On the receiving side:
+
+```python
+from pyfuse import Task
+
+task = Task.from_json(task_json)
+```
+
 The result is a JSON string containing a content-addressable object store. Each function is stored once, identified by a content hash, with dependencies linked by hash:
 
 ```json
@@ -63,7 +87,7 @@ The result is a JSON string containing a content-addressable object store. Each 
 
 Shared dependencies are stored once and referenced by multiple callers. Workers can cache objects by hash and only request missing ones.
 
-### 3. Reconstruct source code
+### 4. Reconstruct source code
 
 ```python
 from pyfuse import reconstruct
@@ -93,7 +117,31 @@ def csv_to_json(data: str) -> str:
 
 Functions are emitted in dependency order -- dependencies first, target function last. Imports are deduplicated across all functions. Dependencies are resolved by content hash, so the output is stable regardless of how functions are named or organized.
 
-### 4. Save and load graphs
+### 5. Execute on a worker
+
+`FuseWorker` reconstructs and executes functions from serialized graphs. It caches compiled functions by subgraph content hash, so repeated calls with identical graphs skip reconstruction entirely. Missing third-party dependencies are auto-installed via pip.
+
+```python
+from pyfuse import FuseWorker, pack
+
+task = pack(csv_to_json, "a,b\n1,2")
+
+# One-shot execution
+from pyfuse import execute
+result = execute(task)
+
+# Or with a persistent worker (caches compiled functions)
+worker = FuseWorker()
+result = worker.run(task)
+
+# The worker also accepts raw JSON + function name
+result = worker.execute(graph_json, "csv_to_json", "a,b\n1,2")
+
+# Async support
+result = await worker.run_async(task)
+```
+
+### 6. Save and load graphs
 
 The serialized format is plain JSON text. Save it to a file and reconstruct later:
 
@@ -107,7 +155,7 @@ loaded = Path("graph.json").read_text()
 source = reconstruct(loaded, "parse_csv")
 ```
 
-### 5. Merge stores
+### 7. Merge stores
 
 Two serialized stores can be merged by combining their `objects` and `refs` dictionaries. Identical content hashes guarantee safe deduplication:
 
@@ -228,4 +276,9 @@ poetry run python examples/basic_usage.py
 poetry run python examples/class_methods.py
 poetry run python examples/subgraph_serialization.py
 poetry run python examples/save_and_load.py
+poetry run python examples/mermaid_visualization.py
+
+# Redis worker (requires Redis on localhost:6379 and `pip install redis`)
+poetry run python examples/redis_worker.py worker   # Terminal 1
+poetry run python examples/redis_worker.py push     # Terminal 2
 ```
