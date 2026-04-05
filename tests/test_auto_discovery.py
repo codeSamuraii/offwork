@@ -351,30 +351,31 @@ def test_auto_discover_cross_module_reconstruction(tmp_path: Path) -> None:
 
 def test_auto_register_warns_on_source_unavailable(tmp_path: Path) -> None:
     """Warning emitted when auto-registration fails due to unavailable source."""
-    # Create a module with a C-extension function masquerading as a dependency
-    create_module(
-        tmp_path,
-        "adwarn",
-        (
-            "import posixpath\n\n"
-            "from pyfuse import trace\n\n"
-            "# Rebind a stdlib function under a new name to bypass stdlib check\n"
-            "helper = type(lambda: None)(\n"
-            "    posixpath.join.__code__,\n"
-            "    {'__builtins__': __builtins__},\n"
-            "    'helper',\n"
-            ")\n"
-            "helper.__module__ = 'adwarn'\n"
-            "helper.__qualname__ = 'helper'\n\n"
-            "@trace\n"
-            "def run(x):\n"
-            "    return helper(x)\n"
-        ),
-    )
-    # The dynamically created function has no .py source file, so
-    # get_function_source will fail and a warning should be emitted.
-    graph = FuseGraph.default()
-    assert "adwarn.helper" not in graph.nodes
+    with warnings.catch_warnings(record=False, action='ignore', category=UserWarning):
+        # Create a module with a C-extension function masquerading as a dependency
+        create_module(
+            tmp_path,
+            "adwarn",
+            (
+                "import posixpath\n\n"
+                "from pyfuse import trace\n\n"
+                "# Rebind a stdlib function under a new name to bypass stdlib check\n"
+                "helper = type(lambda: None)(\n"
+                "    posixpath.join.__code__,\n"
+                "    {'__builtins__': __builtins__},\n"
+                "    'helper',\n"
+                ")\n"
+                "helper.__module__ = 'adwarn'\n"
+                "helper.__qualname__ = 'helper'\n\n"
+                "@trace\n"
+                "def run(x):\n"
+                "    return helper(x)\n"
+            ),
+        )
+        # The dynamically created function has no .py source file, so
+        # get_function_source will fail and a warning should be emitted.
+        graph = FuseGraph.default()
+        assert "adwarn.helper" not in graph.nodes
 
 
 def test_auto_discover_no_warning_for_local_variables(tmp_path: Path) -> None:
