@@ -3,11 +3,14 @@ import warnings
 from collections.abc import Callable
 from typing import Any
 
+from pyfuse._backend import Backend
 from pyfuse._decorator import trace
 from pyfuse._deps import install_package_as
-from pyfuse._errors import DependencyError, PyFuseError, WorkerError
+from pyfuse._errors import DependencyError, PyFuseError, RemoteError, WorkerError
 from pyfuse._graph import FuseGraph
 from pyfuse._models import FunctionNode, ImportInfo
+from pyfuse._remote import connect, disconnect, serve
+from pyfuse._result import FuseResult, ResultEnvelope
 from pyfuse._store import FuseStore, MergeResult
 from pyfuse._task import Task
 from pyfuse._worker import FuseWorker
@@ -74,6 +77,13 @@ __all__ = [
     "reconstruct",
     "execute",
     "pack",
+    # Remote execution
+    "connect",
+    "disconnect",
+    "serve",
+    "Backend",
+    "FuseResult",
+    "ResultEnvelope",
     # Task / Worker
     "Task",
     "FuseWorker",
@@ -84,6 +94,7 @@ __all__ = [
     "PyFuseError",
     "WorkerError",
     "DependencyError",
+    "RemoteError",
     # Utilities
     "install_package_as",
     # Deprecated

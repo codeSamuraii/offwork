@@ -6,7 +6,8 @@ pyfuse is structured as internal modules behind a minimal public API:
 
 ```
 pyfuse/
-    __init__.py      trace, serialize, reconstruct, pack, execute, graph, ...
+    __init__.py      trace, serialize, reconstruct, pack, execute, connect, serve, ...
+    __main__.py      CLI entrypoint (python -m pyfuse worker ...)
     _decorator.py    @trace implementation
     _analyzer.py     AST-based source and dependency analysis
     _graph.py        FuseGraph: registration, serialization, reconstruction
@@ -14,8 +15,11 @@ pyfuse/
     _models.py       ImportInfo, FunctionNode dataclasses (incl. content hashing)
     _task.py         Task: serializable envelope for remote execution
     _worker.py       FuseWorker: reconstruct, install deps, execute
+    _backend.py      Backend ABC + RedisBackend: pluggable transport layer
+    _remote.py       connect/disconnect/serve/submit_remote: remote execution orchestration
+    _result.py       ResultEnvelope + FuseResult: result serialization and futures
     _deps.py         Dependency extraction and pip installation
-    _errors.py       PyFuseError, WorkerError, DependencyError
+    _errors.py       PyFuseError, WorkerError, RemoteError, DependencyError
 ```
 
 ## Data Model
@@ -422,6 +426,70 @@ Functions are cached by subgraph content hash -- a SHA-256 of all content hashes
 | `clear_cache()` | Drop all cached functions |
 
 The module-level `execute()` function provides one-shot execution (no caching across calls). It accepts either a `Task` or `(json_str, function_name, *args, **kwargs)`.
+
+## Remote Execution
+
+The remote execution layer provides a seamless way to submit traced functions to a remote worker and retrieve results, without manual serialization or transport wiring.
+
+### API semantics
+
+- **`func(args)`** -- runs locally (unchanged behavior, sync or async depending on definition).
+- **`func.run(args)`** -- packs the function and its dependency graph, submits to the configured backend, and returns a `FuseResult` future.
+
+### Backend abstraction
+
+The `Backend` ABC (`_backend.py`) defines the transport interface:
+
+| Method | Description |
+|--------|-------------|
+| `submit(task_json)` | Enqueue a serialized task |
+| `listen()` | Blocking iterator yielding task JSON strings |
+| `send_result(task_id, result_json)` | Store a result envelope |
+| `get_result(task_id, timeout)` | Block until result is available |
+| `try_get_result(task_id)` | Non-blocking result fetch |
+| `close()` | Release resources |
+
+`RedisBackend` is the built-in implementation, using `RPUSH`/`BLPOP` patterns with keys `pyfuse:tasks` (task queue) and `pyfuse:result:{task_id}` (per-task result). The `redis` package is imported lazily and is an optional dependency.
+
+Custom backends can be implemented by subclassing `Backend` for any transport (RabbitMQ, shared memory, HTTP, etc.).
+
+### Result envelope
+
+`ResultEnvelope` (`_result.py`) is the wire format for worker responses:
+
+```json
+{"task_id": "abc123", "status": "ok", "result": 42}
+```
+
+On error, the traceback is captured and forwarded:
+
+```json
+{"task_id": "abc123", "status": "error", "error_type": "ValueError", "error_message": "...", "error_traceback": "Traceback ..."}
+```
+
+### FuseResult
+
+`FuseResult` is a future-like handle returned by `func.run()`:
+
+- **`.task_id`** -- the unique task identifier.
+- **`.result(timeout=None)`** -- blocks until the result arrives; raises `RemoteError` if the remote execution failed.
+- **`.done()`** -- non-blocking check.
+
+### How `.run()` is attached
+
+`@trace` wrappers gain a `.run()` method via `_make_run_method()` in `_graph.py`. The method uses a lazy import to avoid circular dependencies: `from pyfuse._remote import submit_remote` is only resolved when `.run()` is actually called.
+
+### Global backend configuration
+
+`connect(url)` sets the module-level `_active_backend` in `_remote.py`. All subsequent `.run()` calls use this backend. `disconnect()` closes and clears it. The backend is looked up at call time, so functions traced before `connect()` still gain remote execution.
+
+### Worker CLI
+
+```bash
+python -m pyfuse worker --backend redis://localhost:6379 [--no-auto-install]
+```
+
+The `serve(url)` function in `_remote.py` creates a `FuseWorker`, loops over `backend.listen()`, executes each task, and pushes `ResultEnvelope` responses. Exceptions are caught per-task and sent as error envelopes rather than crashing the worker.
 
 ## Limitations
 

@@ -28,9 +28,24 @@ from pyfuse._analyzer import (
 )
 from pyfuse._errors import PyFuseError
 from pyfuse._models import FunctionNode, ImportInfo
-from pyfuse._store import FuseStore
 
 _F = TypeVar("_F", bound=Callable[..., object])
+
+
+def _make_run_method(
+    wrapper: Callable[..., object], func: Callable[..., object]
+) -> Callable[..., object]:
+    """Create the ``.run()`` method attached to a traced wrapper."""
+
+    def run(*args: object, **kwargs: object) -> object:
+        from pyfuse._remote import submit_remote
+
+        return submit_remote(func, wrapper, *args, **kwargs)
+
+    return run
+
+
+from pyfuse._store import FuseStore
 
 _VERSION = "0.3.0"
 _BUILTIN_NAMES = set(dir(builtins))
@@ -131,6 +146,7 @@ class FuseGraph:
                 return self._proxy_async_generator(async_gen, qualified_name)
 
             async_gen_wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
+            async_gen_wrapper.run = _make_run_method(async_gen_wrapper, func)  # type: ignore[attr-defined]
             return async_gen_wrapper  # type: ignore[return-value]
 
         if inspect.iscoroutinefunction(func):
@@ -147,6 +163,7 @@ class FuseGraph:
                     stack.pop()
 
             async_wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
+            async_wrapper.run = _make_run_method(async_wrapper, func)  # type: ignore[attr-defined]
             return async_wrapper  # type: ignore[return-value]
 
         if inspect.isgeneratorfunction(func):
@@ -159,6 +176,7 @@ class FuseGraph:
                 return self._proxy_generator(gen, qualified_name)
 
             gen_wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
+            gen_wrapper.run = _make_run_method(gen_wrapper, func)  # type: ignore[attr-defined]
             return gen_wrapper  # type: ignore[return-value]
 
         logger.debug("Creating wrapper for %s", qualified_name)
@@ -174,6 +192,7 @@ class FuseGraph:
                 stack.pop()
 
         wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
+        wrapper.run = _make_run_method(wrapper, func)  # type: ignore[attr-defined]
         return wrapper  # type: ignore[return-value]
 
     def _proxy_generator(

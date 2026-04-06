@@ -4,3 +4,5 @@
 __pycache__/
 poetry.lock
 *.pyc
+*.rdb
+.DS_Store

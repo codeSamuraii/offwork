@@ -8,3 +8,7 @@ class WorkerError(PyFuseError):
 
 class DependencyError(PyFuseError):
     """Raised when dependency installation fails."""
+
+
+class RemoteError(WorkerError):
+    """Raised on the client side when a remote execution fails."""

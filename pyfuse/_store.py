@@ -152,12 +152,12 @@ class FuseStore:
                 self._deps[h] = merged
 
         for name, h in other._refs.items():
-            existing = self._refs.get(name)
-            if existing is None:
+            existing_ref = self._refs.get(name)
+            if existing_ref is None:
                 self._refs[name] = h
                 result.added_refs += 1
-            elif existing != h:
-                result.conflicts[name] = (existing, h)
+            elif existing_ref != h:
+                result.conflicts[name] = (existing_ref, h)
 
         return result
 

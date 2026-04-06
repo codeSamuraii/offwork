@@ -117,7 +117,44 @@ def csv_to_json(data: str) -> str:
 
 Functions are emitted in dependency order -- dependencies first, target function last. Imports are deduplicated across all functions. Dependencies are resolved by content hash, so the output is stable regardless of how functions are named or organized.
 
-### 5. Execute on a worker
+### 5. Remote execution
+
+The simplest way to run a traced function remotely is with `.run()`:
+
+```python
+import pyfuse
+from pyfuse import trace
+
+# Connect to a backend (Redis, etc.)
+pyfuse.connect("redis://localhost:6379")
+
+@trace
+def csv_to_json(data: str) -> str:
+    return to_json(parse_csv(data))
+
+# Call locally (unchanged behavior)
+result = csv_to_json("a,b\n1,2")
+
+# Submit to remote worker -- returns a FuseResult future
+future = csv_to_json.run("a,b\n1,2")
+result = future.result()  # blocks until the worker returns
+```
+
+Start a worker from the command line:
+
+```bash
+python -m pyfuse worker --backend redis://localhost:6379
+```
+
+Or programmatically:
+
+```python
+import pyfuse
+
+pyfuse.serve("redis://localhost:6379")
+```
+
+### 6. Manual worker execution
 
 `FuseWorker` reconstructs and executes functions from serialized graphs. It caches compiled functions by subgraph content hash, so repeated calls with identical graphs skip reconstruction entirely. Missing third-party dependencies are auto-installed via pip.
 
@@ -141,7 +178,7 @@ result = worker.execute(graph_json, "csv_to_json", "a,b\n1,2")
 result = await worker.run_async(task)
 ```
 
-### 6. Save and load graphs
+### 7. Save and load graphs
 
 The serialized format is plain JSON text. Save it to a file and reconstruct later:
 
@@ -155,7 +192,7 @@ loaded = Path("graph.json").read_text()
 source = reconstruct(loaded, "parse_csv")
 ```
 
-### 7. Merge stores
+### 8. Merge stores
 
 Two serialized stores can be merged by combining their `objects` and `refs` dictionaries. Identical content hashes guarantee safe deduplication:
 
@@ -278,7 +315,11 @@ poetry run python examples/subgraph_serialization.py
 poetry run python examples/save_and_load.py
 poetry run python examples/mermaid_visualization.py
 
-# Redis worker (requires Redis on localhost:6379 and `pip install redis`)
+# Redis worker -- built-in CLI (requires Redis on localhost:6379 and `pip install redis`)
+python -m pyfuse worker --backend redis://localhost:6379   # Terminal 1
+poetry run python examples/redis_worker.py push            # Terminal 2
+
+# Redis worker -- example script
 poetry run python examples/redis_worker.py worker   # Terminal 1
 poetry run python examples/redis_worker.py push     # Terminal 2
 ```
