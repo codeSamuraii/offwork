@@ -1,7 +1,7 @@
 [project]
 name = "pyfuse"
-version = "0.1.0"
-description = "Python Function Serializer - bundle Python functions into an exportable format"
+version = "0.2.0"
+description = "Distributed Python task execution via automatic function serialization"
 authors = [
     {name = "Rémi Héneault", email = "remi@heneault.fr"}
 ]

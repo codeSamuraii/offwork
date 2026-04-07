@@ -70,37 +70,20 @@ def pack(func: Callable[..., object], *args: Any, **kwargs: Any) -> Task:
 
 
 __all__ = [
-    # Core API
+    # Primary API
     "trace",
-    "graph",
-    "serialize",
-    "reconstruct",
-    "execute",
-    "pack",
-    # Remote execution
     "connect",
     "disconnect",
     "serve",
-    "Backend",
-    "FuseResult",
-    "ResultEnvelope",
-    # Task / Worker
-    "Task",
-    "FuseWorker",
-    # Graph / Store
-    "FuseGraph",
-    "FuseStore",
+    # Serialization API
+    "serialize",
+    "reconstruct",
+    "pack",
+    "execute",
     # Errors
     "PyFuseError",
-    "WorkerError",
-    "DependencyError",
     "RemoteError",
-    # Utilities
-    "install_package_as",
-    # Deprecated
-    "analyze",
-    # Data models
-    "FunctionNode",
-    "ImportInfo",
-    "MergeResult",
+    # Power-user
+    "Task",
+    "FuseWorker",
 ]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import os
 from collections.abc import Callable
 from typing import Any
 
@@ -13,8 +14,38 @@ logger = logging.getLogger(__name__)
 
 _active_backend: Backend | None = None
 
+_ENV_VAR = "PYFUSE_BACKEND"
 
-def connect(url: str, **kwargs: Any) -> Backend:
+
+def _resolve_url(url: str | None) -> str:
+    """Return *url* if given, otherwise read from the environment variable."""
+    if url is not None:
+        return url
+    env_url = os.environ.get(_ENV_VAR)
+    if env_url:
+        return env_url
+    raise ValueError(
+        "No backend URL provided. Pass a URL or set the "
+        f"{_ENV_VAR} environment variable."
+    )
+
+
+def _create_backend(url: str, **kwargs: Any) -> Backend:
+    """Create a backend instance from a URL."""
+    scheme = url.split("://", 1)[0].lower()
+    if scheme in ("redis", "rediss"):
+        return RedisBackend(url, **kwargs)
+    if scheme == "shm":
+        from pyfuse._shm_backend import SharedMemoryBackend
+
+        return SharedMemoryBackend(url, **kwargs)
+    raise ValueError(
+        f"Unknown backend scheme: {scheme!r}. "
+        f"Supported: redis://, rediss://, shm://"
+    )
+
+
+def connect(url: str | None = None, **kwargs: Any) -> Backend:
     """Configure the global transport backend.
 
     Parameters
@@ -25,6 +56,8 @@ def connect(url: str, **kwargs: Any) -> Backend:
         - ``redis://`` / ``rediss://`` — :class:`RedisBackend`
         - ``shm://`` — :class:`SharedMemoryBackend` (same-machine IPC)
 
+        When *None*, the ``PYFUSE_BACKEND`` environment variable is used.
+
     **kwargs
         Passed to the backend constructor.
 
@@ -34,19 +67,9 @@ def connect(url: str, **kwargs: Any) -> Backend:
         The connected backend instance.
     """
     global _active_backend
-    scheme = url.split("://", 1)[0].lower()
-    if scheme in ("redis", "rediss"):
-        _active_backend = RedisBackend(url, **kwargs)
-    elif scheme == "shm":
-        from pyfuse._shm_backend import SharedMemoryBackend
-
-        _active_backend = SharedMemoryBackend(url, **kwargs)
-    else:
-        raise ValueError(
-            f"Unknown backend scheme: {scheme!r}. "
-            f"Supported: redis://, rediss://, shm://"
-        )
-    logger.info("Connected to backend: %s", url)
+    resolved = _resolve_url(url)
+    _active_backend = _create_backend(resolved, **kwargs)
+    logger.info("Connected to backend: %s", resolved)
     return _active_backend
 
 
@@ -60,18 +83,30 @@ def disconnect() -> None:
 
 
 def get_backend() -> Backend:
-    """Return the active backend, or raise if none is configured."""
+    """Return the active backend, or raise if none is configured.
+
+    If no backend has been configured via :func:`connect`, the
+    ``PYFUSE_BACKEND`` environment variable is checked and used
+    to auto-connect.
+    """
+    global _active_backend
     if _active_backend is None:
-        raise RuntimeError(
-            "No backend connected. Call pyfuse.connect('redis://...') first."
-        )
-    return _active_backend
+        env_url = os.environ.get(_ENV_VAR)
+        if env_url:
+            connect(env_url)
+        else:
+            raise RuntimeError(
+                "No backend connected. Call pyfuse.connect('redis://...') "
+                f"or set the {_ENV_VAR} environment variable."
+            )
+    return _active_backend  # type: ignore[return-value]
 
 
 def submit_remote(
     func: Callable[..., object],
     wrapper: Callable[..., object],
     *args: Any,
+    _backend: str | Backend | None = None,
     **kwargs: Any,
 ) -> FuseResult:
     """Pack and submit a function to the remote backend.
@@ -80,7 +115,12 @@ def submit_remote(
     """
     from pyfuse._graph import FuseGraph
 
-    backend = get_backend()
+    if isinstance(_backend, str):
+        backend = _create_backend(_backend)
+    elif isinstance(_backend, Backend):
+        backend = _backend
+    else:
+        backend = get_backend()
 
     unwrapped = inspect.unwrap(func)
     function_name = f"{unwrapped.__module__}.{unwrapped.__qualname__}"
@@ -98,7 +138,7 @@ def submit_remote(
 
 
 def serve(
-    url: str,
+    url: str | None = None,
     *,
     auto_install: bool = True,
     import_to_package: dict[str, str] | None = None,
@@ -109,6 +149,7 @@ def serve(
     ----------
     url
         Backend URL (e.g. ``redis://localhost:6379``).
+        When *None*, the ``PYFUSE_BACKEND`` environment variable is used.
     auto_install
         Automatically install missing third-party dependencies via pip.
     import_to_package

@@ -12,8 +12,11 @@ _F = TypeVar("_F", bound=Callable[..., object])
 
 
 def trace(func: _F) -> _F:
-    """Register a function in the default pyfuse dependency graph and wrap it
-    to record runtime caller-callee edges."""
+    """Enable a function for serialization and remote execution.
+
+    The decorated function works normally when called directly.
+    Call ``func.run(...)`` to submit it to a remote worker.
+    """
     logger.debug("@trace applied to %s", func.__qualname__)
     graph = FuseGraph.default()
     graph.register(func)

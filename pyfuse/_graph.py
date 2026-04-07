@@ -35,12 +35,12 @@ _F = TypeVar("_F", bound=Callable[..., object])
 def _make_run_method(
     wrapper: Callable[..., object], func: Callable[..., object]
 ) -> Callable[..., object]:
-    """Create the ``.run()`` method attached to a traced wrapper."""
+    """Create the ``.run()`` / ``.delay()`` method attached to a traced wrapper."""
 
-    def run(*args: object, **kwargs: object) -> object:
+    def run(*args: object, backend: object | None = None, **kwargs: object) -> object:
         from pyfuse._remote import submit_remote
 
-        return submit_remote(func, wrapper, *args, **kwargs)
+        return submit_remote(func, wrapper, *args, _backend=backend, **kwargs)
 
     return run
 
@@ -147,6 +147,7 @@ class FuseGraph:
 
             async_gen_wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
             async_gen_wrapper.run = _make_run_method(async_gen_wrapper, func)  # type: ignore[attr-defined]
+            async_gen_wrapper.delay = async_gen_wrapper.run  # type: ignore[attr-defined]
             return async_gen_wrapper  # type: ignore[return-value]
 
         if inspect.iscoroutinefunction(func):
@@ -164,6 +165,7 @@ class FuseGraph:
 
             async_wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
             async_wrapper.run = _make_run_method(async_wrapper, func)  # type: ignore[attr-defined]
+            async_wrapper.delay = async_wrapper.run  # type: ignore[attr-defined]
             return async_wrapper  # type: ignore[return-value]
 
         if inspect.isgeneratorfunction(func):
@@ -177,6 +179,7 @@ class FuseGraph:
 
             gen_wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
             gen_wrapper.run = _make_run_method(gen_wrapper, func)  # type: ignore[attr-defined]
+            gen_wrapper.delay = gen_wrapper.run  # type: ignore[attr-defined]
             return gen_wrapper  # type: ignore[return-value]
 
         logger.debug("Creating wrapper for %s", qualified_name)
@@ -193,6 +196,7 @@ class FuseGraph:
 
         wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
         wrapper.run = _make_run_method(wrapper, func)  # type: ignore[attr-defined]
+        wrapper.delay = wrapper.run  # type: ignore[attr-defined]
         return wrapper  # type: ignore[return-value]
 
     def _proxy_generator(
