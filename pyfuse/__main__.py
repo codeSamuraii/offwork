@@ -21,7 +21,7 @@ def main() -> None:
     worker_parser.add_argument(
         "--backend",
         required=True,
-        help="Backend URL (e.g. redis://localhost:6379)",
+        help="Backend URL (e.g. redis://localhost:6379, shm://localhost:9847)",
     )
     worker_parser.add_argument(
         "--no-auto-install",

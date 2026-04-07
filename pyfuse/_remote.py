@@ -23,6 +23,7 @@ def connect(url: str, **kwargs: Any) -> Backend:
         Backend URL.  Supported schemes:
 
         - ``redis://`` / ``rediss://`` — :class:`RedisBackend`
+        - ``shm://`` — :class:`SharedMemoryBackend` (same-machine IPC)
 
     **kwargs
         Passed to the backend constructor.
@@ -36,10 +37,14 @@ def connect(url: str, **kwargs: Any) -> Backend:
     scheme = url.split("://", 1)[0].lower()
     if scheme in ("redis", "rediss"):
         _active_backend = RedisBackend(url, **kwargs)
+    elif scheme == "shm":
+        from pyfuse._shm_backend import SharedMemoryBackend
+
+        _active_backend = SharedMemoryBackend(url, **kwargs)
     else:
         raise ValueError(
             f"Unknown backend scheme: {scheme!r}. "
-            f"Supported: redis://, rediss://"
+            f"Supported: redis://, rediss://, shm://"
         )
     logger.info("Connected to backend: %s", url)
     return _active_backend
