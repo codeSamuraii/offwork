@@ -5,6 +5,58 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Self
 
+_OBJECT_SENTINEL = "__pyfuse_obj__"
+
+
+class _TaskEncoder(json.JSONEncoder):
+    """JSON encoder that serializes arbitrary objects via class name + __dict__."""
+
+    def default(self, o: object) -> Any:
+        if hasattr(o, "__dict__"):
+            return {
+                _OBJECT_SENTINEL: {
+                    "class": type(o).__name__,
+                    "state": o.__dict__,
+                }
+            }
+        raise TypeError(
+            f"Object of type {type(o).__name__} is not JSON serializable"
+        )
+
+
+def _resolve(value: Any, namespace: dict[str, Any]) -> Any:
+    """Recursively resolve serialized object sentinels using *namespace*."""
+    if isinstance(value, dict):
+        if len(value) == 1 and _OBJECT_SENTINEL in value:
+            info = value[_OBJECT_SENTINEL]
+            cls = namespace.get(info["class"])
+            if cls is None:
+                return value
+            obj = cls.__new__(cls)
+            state = {k: _resolve(v, namespace) for k, v in info.get("state", {}).items()}
+            obj.__dict__.update(state)
+            return obj
+        return {k: _resolve(v, namespace) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_resolve(v, namespace) for v in value]
+    return value
+
+
+def resolve_args(
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    namespace: dict[str, Any],
+) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    """Resolve serialized object sentinels in task arguments.
+
+    Called by the worker after reconstructing the function's namespace,
+    so that class instances passed as arguments can be rebuilt.
+    """
+    return (
+        tuple(_resolve(a, namespace) for a in args),
+        {k: _resolve(v, namespace) for k, v in kwargs.items()},
+    )
+
 
 @dataclass(frozen=True)
 class Task:
@@ -39,7 +91,7 @@ class Task:
             d["retries"] = self.retries
         if self.retry_delay != 1.0:
             d["retry_delay"] = self.retry_delay
-        return json.dumps(d)
+        return json.dumps(d, cls=_TaskEncoder)
 
     @classmethod
     def from_json(cls, json_str: str | bytes) -> Self:

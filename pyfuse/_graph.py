@@ -22,6 +22,7 @@ from pyfuse._analyzer import (
     detect_traced_dependencies,
     filter_imports,
     find_bare_calls,
+    find_self_calls,
     get_function_source,
     get_module_imports,
     get_used_names,
@@ -356,7 +357,7 @@ class Graph:
     def _discover_untraced_deps(
         self, module_name: str, node: FunctionNode
     ) -> None:
-        """Find and auto-register untraced bare-call dependencies of a node."""
+        """Find and auto-register untraced dependencies of a node."""
         module_obj = sys.modules.get(module_name)
         if module_obj is None:
             warnings.warn(
@@ -366,6 +367,8 @@ class Graph:
                 stacklevel=2,
             )
             return
+
+        # Bare function calls (e.g. helper())
         bare_calls = find_bare_calls(node.source)
         imports_to_remove: list[ImportInfo] = []
         for name in bare_calls:
@@ -382,6 +385,20 @@ class Graph:
                     imports_to_remove.extend(matching)
         if imports_to_remove:
             node.imports = [i for i in node.imports if i not in imports_to_remove]
+
+        # self.method() / cls.method() calls in class methods
+        if node.owner_class:
+            class_simple = node.owner_class.rsplit(".", 1)[-1]
+            cls_obj = getattr(module_obj, class_simple, None)
+            if cls_obj is None:
+                return
+            for method_name in find_self_calls(node.source):
+                method_qname = f"{module_name}.{class_simple}.{method_name}"
+                if method_qname in self._nodes:
+                    continue
+                method_obj = getattr(cls_obj, method_name, None)
+                if method_obj is not None and inspect.isfunction(method_obj):
+                    self._auto_register(method_obj)
 
     def register(self, func: Callable[..., object]) -> None:
         # Unwrap if already traced

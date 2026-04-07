@@ -83,6 +83,14 @@ class Worker:
         self._auto_install = auto_install
         self._cache: dict[str, _CachedFunction] = {}
 
+    def _get_cached(self, json_str: str, function_name: str) -> _CachedFunction:
+        """Return the cached (or freshly built) function for *function_name*."""
+        store = Store.from_json(json_str)
+        key = _compute_subgraph_key(store, function_name)
+        if key not in self._cache:
+            self._cache[key] = self._build(store, function_name, key)
+        return self._cache[key]
+
     def execute(
         self,
         json_str: str,
@@ -95,14 +103,8 @@ class Worker:
         Cached by subgraph content hash — repeated calls with identical
         graphs skip reconstruction entirely.
         """
-        store = Store.from_json(json_str)
-        key = _compute_subgraph_key(store, function_name)
-
-        if key not in self._cache:
-            self._cache[key] = self._build(store, function_name, key)
-
-        cached = self._cache[key]
-        logger.info("Executing %s (cache key: %s)", function_name, key)
+        cached = self._get_cached(json_str, function_name)
+        logger.info("Executing %s (cache key: %s)", function_name, cached.subgraph_key)
         return cached.func(*args, **kwargs)
 
     async def execute_async(
@@ -113,27 +115,27 @@ class Worker:
         **kwargs: Any,
     ) -> Any:
         """Like :meth:`execute` but ``await``s the target coroutine."""
-        store = Store.from_json(json_str)
-        key = _compute_subgraph_key(store, function_name)
-
-        if key not in self._cache:
-            self._cache[key] = self._build(store, function_name, key)
-
-        cached = self._cache[key]
-        logger.info("Executing async %s (cache key: %s)", function_name, key)
+        cached = self._get_cached(json_str, function_name)
+        logger.info("Executing async %s (cache key: %s)", function_name, cached.subgraph_key)
         return await cached.func(*args, **kwargs)
 
     def run(self, task: Task) -> Any:
-        """Execute a :class:`Task`. Convenience wrapper around :meth:`execute`."""
-        return self.execute(
-            task.graph_json, task.function_name, *task.args, **task.kwargs
-        )
+        """Execute a :class:`Task`, resolving serialized object arguments."""
+        from pyfuse._task import resolve_args
+
+        cached = self._get_cached(task.graph_json, task.function_name)
+        args, kwargs = resolve_args(task.args, task.kwargs, cached.namespace)
+        logger.info("Executing %s (cache key: %s)", task.function_name, cached.subgraph_key)
+        return cached.func(*args, **kwargs)
 
     async def run_async(self, task: Task) -> Any:
-        """Execute a :class:`Task` asynchronously."""
-        return await self.execute_async(
-            task.graph_json, task.function_name, *task.args, **task.kwargs
-        )
+        """Execute a :class:`Task` asynchronously, resolving serialized object arguments."""
+        from pyfuse._task import resolve_args
+
+        cached = self._get_cached(task.graph_json, task.function_name)
+        args, kwargs = resolve_args(task.args, task.kwargs, cached.namespace)
+        logger.info("Executing async %s (cache key: %s)", task.function_name, cached.subgraph_key)
+        return await cached.func(*args, **kwargs)
 
     def run_with_policy(self, task: Task) -> Any:
         """Execute a :class:`Task` with retry and timeout enforcement.

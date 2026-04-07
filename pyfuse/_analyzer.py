@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_TRACE_PATTERN = re.compile(r"^\s*@trace\s*$")
+_TRACE_PATTERN = re.compile(r"^\s*@trace\s*(\(.*\))?\s*$")
 
 
 def get_function_source(func: Callable[..., object]) -> str:
@@ -151,6 +151,21 @@ def find_bare_calls(func_source: str) -> set[str]:
         for node in ast.walk(tree)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     }
+
+
+def find_self_calls(func_source: str) -> set[str]:
+    """Return method names from ``self.method()`` / ``cls.method()`` calls."""
+    tree = ast.parse(func_source)
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in ("self", "cls")
+        ):
+            names.add(node.func.attr)
+    return names
 
 
 def filter_imports(

@@ -18,11 +18,10 @@ import json
 
 from pyfuse import trace
 
-@trace
+
 def parse_csv(data: str) -> list[list[str]]:
     return list(csv.reader(data.splitlines()))
 
-@trace
 def to_json(data: object) -> str:
     return json.dumps(data, indent=2)
 
@@ -31,7 +30,8 @@ def csv_to_json(data: str) -> str:
     return to_json(parse_csv(data))
 ```
 
-Functions called by a `@trace`d function are automatically discovered and included in the dependency graph, even without `@trace`. Standard library and third-party functions are kept as import statements.
+Functions called by a `@trace`d function are automatically discovered and included in the dependency graph, even without `@trace`.
+Standard library and third-party functions are kept as import statements.
 
 ### 2. Serialize the dependency graph
 
@@ -317,17 +317,10 @@ except Error as e:
 ## Running the Examples
 
 ```bash
-poetry run python examples/basic_usage.py
-poetry run python examples/class_methods.py
-poetry run python examples/subgraph_serialization.py
-poetry run python examples/save_and_load.py
-poetry run python examples/mermaid_visualization.py
+# Serialization (no external services needed)
+poetry run python examples/serialization.py
 
-# Redis worker -- built-in CLI (requires Redis on localhost:6379 and `pip install redis`)
-python -m pyfuse worker --backend redis://localhost:6379 -c 4   # Terminal 1
-poetry run python examples/redis_worker.py push            # Terminal 2
-
-# Redis worker -- example script
-poetry run python examples/redis_worker.py worker   # Terminal 1
-poetry run python examples/redis_worker.py push     # Terminal 2
+# Remote execution (requires Redis on localhost:6379 and `pip install redis`)
+python -m pyfuse worker --backend redis://localhost:6379   # Terminal 1
+poetry run python examples/remote_execution.py             # Terminal 2
 ```
