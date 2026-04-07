@@ -67,7 +67,7 @@ class ResultEnvelope:
         )
 
 
-class FuseResult:
+class Result:
     """Future-like handle for a remotely submitted task.
 
     Returned by ``traced_func.run(...)``.
@@ -97,6 +97,20 @@ class FuseResult:
             raise RemoteError(msg)
         return self._envelope.result
 
+    def wait(self, timeout: float | None = None) -> Any:
+        """Alias for :meth:`result`."""
+        return self.result(timeout=timeout)
+
+    @property
+    def status(self) -> str:
+        """Return ``"pending"``, ``"success"``, or ``"error"``."""
+        if self._envelope is None:
+            raw = self._backend.try_get_result(self._task_id)
+            if raw is None:
+                return "pending"
+            self._envelope = ResultEnvelope.from_json(raw)
+        return "success" if self._envelope.status == "ok" else "error"
+
     def done(self) -> bool:
         """Non-blocking check whether the result is available."""
         if self._envelope is not None:
@@ -106,3 +120,11 @@ class FuseResult:
             self._envelope = ResultEnvelope.from_json(raw)
             return True
         return False
+
+    def __repr__(self) -> str:
+        s = "pending" if self._envelope is None else self._envelope.status
+        return f"Result(task_id={self._task_id!r}, status={s!r})"
+
+
+# Backward-compat alias
+FuseResult = Result

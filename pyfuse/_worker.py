@@ -7,7 +7,7 @@ from typing import Any
 
 from pyfuse._deps import ensure_dependencies
 from pyfuse._errors import WorkerError
-from pyfuse._store import FuseStore
+from pyfuse._store import Store
 from pyfuse._task import Task
 
 logger = logging.getLogger(__name__)
@@ -21,7 +21,7 @@ class _CachedFunction:
     source: str
 
 
-def _compute_subgraph_key(store: FuseStore, function_name: str) -> str:
+def _compute_subgraph_key(store: Store, function_name: str) -> str:
     """Compute a cache key from all content hashes in the function's subgraph."""
     root_hash = store._resolve_function_hash(function_name)
     all_hashes = sorted(store.walk(root_hash))
@@ -30,7 +30,7 @@ def _compute_subgraph_key(store: FuseStore, function_name: str) -> str:
 
 def _extract_target_callable(
     namespace: dict[str, Any],
-    store: FuseStore,
+    store: Store,
     function_name: str,
 ) -> Any:
     """Extract the target callable from an exec'd namespace."""
@@ -60,7 +60,7 @@ def _extract_target_callable(
     return func
 
 
-class FuseWorker:
+class Worker:
     """Execute functions from serialized pyfuse graphs with caching.
 
     Parameters
@@ -92,7 +92,7 @@ class FuseWorker:
         Cached by subgraph content hash — repeated calls with identical
         graphs skip reconstruction entirely.
         """
-        store = FuseStore.from_json(json_str)
+        store = Store.from_json(json_str)
         key = _compute_subgraph_key(store, function_name)
 
         if key not in self._cache:
@@ -110,7 +110,7 @@ class FuseWorker:
         **kwargs: Any,
     ) -> Any:
         """Like :meth:`execute` but ``await``s the target coroutine."""
-        store = FuseStore.from_json(json_str)
+        store = Store.from_json(json_str)
         key = _compute_subgraph_key(store, function_name)
 
         if key not in self._cache:
@@ -143,7 +143,7 @@ class FuseWorker:
     # -- internals -------------------------------------------------------------
 
     def _build(
-        self, store: FuseStore, function_name: str, key: str
+        self, store: Store, function_name: str, key: str
     ) -> _CachedFunction:
         if self._auto_install:
             ensure_dependencies(
@@ -176,9 +176,13 @@ def execute(
         execute(json_str, "my_func", arg1, arg2)
         execute(task)
     """
-    worker = FuseWorker()
+    worker = Worker()
     if isinstance(json_str_or_task, Task):
         return worker.run(json_str_or_task)
     if function_name is None:
         raise TypeError("function_name is required when passing a JSON string")
     return worker.execute(json_str_or_task, function_name, *args, **kwargs)
+
+
+# Backward-compat alias
+FuseWorker = Worker

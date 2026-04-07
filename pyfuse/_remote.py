@@ -7,7 +7,7 @@ from collections.abc import Callable
 from typing import Any
 
 from pyfuse._backend import Backend, RedisBackend
-from pyfuse._result import FuseResult, ResultEnvelope
+from pyfuse._result import Result, ResultEnvelope
 from pyfuse._task import Task
 
 logger = logging.getLogger(__name__)
@@ -108,12 +108,12 @@ def submit_remote(
     *args: Any,
     _backend: str | Backend | None = None,
     **kwargs: Any,
-) -> FuseResult:
+) -> Result:
     """Pack and submit a function to the remote backend.
 
     Called internally by ``traced_func.run(...)``.
     """
-    from pyfuse._graph import FuseGraph
+    from pyfuse._graph import Graph
 
     if isinstance(_backend, str):
         backend = _create_backend(_backend)
@@ -124,7 +124,7 @@ def submit_remote(
 
     unwrapped = inspect.unwrap(func)
     function_name = f"{unwrapped.__module__}.{unwrapped.__qualname__}"
-    graph_json = FuseGraph.default().serialize(wrapper)
+    graph_json = Graph.default().serialize(wrapper)
     task = Task(
         graph_json=graph_json,
         function_name=function_name,
@@ -134,7 +134,7 @@ def submit_remote(
 
     backend.submit(task.to_json())
     logger.info("Submitted task %s for %s", task.task_id, function_name)
-    return FuseResult(task.task_id, backend)
+    return Result(task.task_id, backend)
 
 
 def serve(
@@ -155,10 +155,10 @@ def serve(
     import_to_package
         Extra import-name to pip-package-name mappings.
     """
-    from pyfuse._worker import FuseWorker
+    from pyfuse._worker import Worker
 
     backend = connect(url)
-    worker = FuseWorker(
+    worker = Worker(
         auto_install=auto_install,
         import_to_package=import_to_package,
     )

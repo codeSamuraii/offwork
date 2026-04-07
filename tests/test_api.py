@@ -16,19 +16,6 @@ class TestGraph:
         assert g is FuseGraph.default()
 
 
-# -- analyze() deprecation --------------------------------------------------
-
-class TestAnalyzeDeprecation:
-    def test_emits_deprecation_warning(self) -> None:
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            result = pyfuse.analyze()
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-            assert "graph()" in str(w[0].message)
-            assert isinstance(result, FuseGraph)
-
-
 # -- pack() -----------------------------------------------------------------
 
 class TestPack:

@@ -4,7 +4,7 @@ import logging
 from collections.abc import Callable
 from typing import TypeVar
 
-from pyfuse._graph import FuseGraph
+from pyfuse._graph import Graph
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +18,6 @@ def trace(func: _F) -> _F:
     Call ``func.run(...)`` to submit it to a remote worker.
     """
     logger.debug("@trace applied to %s", func.__qualname__)
-    graph = FuseGraph.default()
+    graph = Graph.default()
     graph.register(func)
     return graph.create_wrapper(func)

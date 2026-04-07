@@ -24,7 +24,7 @@ class MergeResult:
     conflicts: dict[str, tuple[str, str]] = field(default_factory=dict)
 
 
-class FuseStore:
+class Store:
     """Content-addressable store for function objects with separate topology.
 
     Separates three concerns:
@@ -105,13 +105,13 @@ class FuseStore:
             stack.extend(self._deps.get(h, []))
         return list(visited)
 
-    def subgraph(self, *root_hashes: str) -> FuseStore:
+    def subgraph(self, *root_hashes: str) -> Store:
         """Extract transitive closure of *root_hashes* into a new store."""
         reachable: set[str] = set()
         for root in root_hashes:
             reachable.update(self.walk(root))
 
-        store = FuseStore()
+        store = Store()
         hash_to_qname = {h: qn for qn, h in self._refs.items()}
         for h in reachable:
             blob = self._objects.get(h)
@@ -129,7 +129,7 @@ class FuseStore:
         """Return hashes from *hashes* not present in this store."""
         return hashes - self._objects.keys()
 
-    def merge(self, other: FuseStore) -> MergeResult:
+    def merge(self, other: Store) -> MergeResult:
         """Merge *other* into this store.
 
         Objects are unioned by hash (same hash = same content).
@@ -321,7 +321,7 @@ class FuseStore:
         return json.dumps(self.to_dict(), indent=2)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> FuseStore:
+    def from_dict(cls, data: dict[str, Any]) -> Store:
         """Import from dict. Supports v0.2.0 and v0.3.0 formats."""
         store = cls()
         version = data.get("version", "0.2.0")
@@ -350,7 +350,7 @@ class FuseStore:
         return store
 
     @classmethod
-    def from_json(cls, json_str: str) -> FuseStore:
+    def from_json(cls, json_str: str) -> Store:
         return cls.from_dict(json.loads(json_str))
 
     # -- Private helpers -----------------------------------------------------
@@ -368,7 +368,7 @@ class FuseStore:
         )
 
     @classmethod
-    def _from_v020(cls, data: dict[str, Any]) -> FuseStore:
+    def _from_v020(cls, data: dict[str, Any]) -> Store:
         """Import from v0.2.0 format (deps inside objects, hash field)."""
         store = cls()
         refs = data.get("refs", {})
@@ -399,3 +399,7 @@ class FuseStore:
             store.set_ref(name, h)
 
         return store
+
+
+# Backward-compat alias
+FuseStore = Store

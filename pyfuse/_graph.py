@@ -26,7 +26,7 @@ from pyfuse._analyzer import (
     get_module_imports,
     get_used_names,
 )
-from pyfuse._errors import PyFuseError
+from pyfuse._errors import Error
 from pyfuse._models import FunctionNode, ImportInfo
 
 _F = TypeVar("_F", bound=Callable[..., object])
@@ -45,7 +45,18 @@ def _make_run_method(
     return run
 
 
-from pyfuse._store import FuseStore
+def _make_map_method(
+    run_method: Callable[..., object],
+) -> Callable[..., object]:
+    """Create the ``.map()`` method for batch submission."""
+
+    def map(args_list: list[tuple[object, ...]], **kwargs: object) -> list[object]:
+        return [run_method(*args, **kwargs) for args in args_list]
+
+    return map
+
+
+from pyfuse._store import Store
 
 _VERSION = "0.3.0"
 _BUILTIN_NAMES = set(dir(builtins))
@@ -83,10 +94,10 @@ def _is_user_function(func: Callable[..., object]) -> bool:
     return True
 
 
-class FuseGraph:
+class Graph:
     """Dependency graph of traced functions."""
 
-    _default: FuseGraph | None = None
+    _default: Graph | None = None
 
     def __init__(self) -> None:
         self._nodes: dict[str, FunctionNode] = {}
@@ -98,9 +109,9 @@ class FuseGraph:
         self._lock: threading.Lock = threading.Lock()
 
     @classmethod
-    def default(cls) -> FuseGraph:
+    def default(cls) -> Graph:
         if cls._default is None:
-            cls._default = FuseGraph()
+            cls._default = Graph()
         return cls._default
 
     @classmethod
@@ -148,6 +159,7 @@ class FuseGraph:
             async_gen_wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
             async_gen_wrapper.run = _make_run_method(async_gen_wrapper, func)  # type: ignore[attr-defined]
             async_gen_wrapper.delay = async_gen_wrapper.run  # type: ignore[attr-defined]
+            async_gen_wrapper.map = _make_map_method(async_gen_wrapper.run)  # type: ignore[attr-defined]
             return async_gen_wrapper  # type: ignore[return-value]
 
         if inspect.iscoroutinefunction(func):
@@ -166,6 +178,7 @@ class FuseGraph:
             async_wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
             async_wrapper.run = _make_run_method(async_wrapper, func)  # type: ignore[attr-defined]
             async_wrapper.delay = async_wrapper.run  # type: ignore[attr-defined]
+            async_wrapper.map = _make_map_method(async_wrapper.run)  # type: ignore[attr-defined]
             return async_wrapper  # type: ignore[return-value]
 
         if inspect.isgeneratorfunction(func):
@@ -180,6 +193,7 @@ class FuseGraph:
             gen_wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
             gen_wrapper.run = _make_run_method(gen_wrapper, func)  # type: ignore[attr-defined]
             gen_wrapper.delay = gen_wrapper.run  # type: ignore[attr-defined]
+            gen_wrapper.map = _make_map_method(gen_wrapper.run)  # type: ignore[attr-defined]
             return gen_wrapper  # type: ignore[return-value]
 
         logger.debug("Creating wrapper for %s", qualified_name)
@@ -197,6 +211,7 @@ class FuseGraph:
         wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
         wrapper.run = _make_run_method(wrapper, func)  # type: ignore[attr-defined]
         wrapper.delay = wrapper.run  # type: ignore[attr-defined]
+        wrapper.map = _make_map_method(wrapper.run)  # type: ignore[attr-defined]
         return wrapper  # type: ignore[return-value]
 
     def _proxy_generator(
@@ -384,7 +399,7 @@ class FuseGraph:
             logger.info(
                 "Cannot register %s: source unavailable", qualified_name
             )
-            raise PyFuseError(
+            raise Error(
                 f"Cannot trace function '{original.__qualname__}': source code "
                 "unavailable. Functions must be defined in .py source files."
             ) from exc
@@ -533,8 +548,8 @@ class FuseGraph:
         if added:
             logger.info("Merged %d runtime dependency edges", added)
 
-    def to_store(self, *funcs: Callable[..., object] | str) -> FuseStore:
-        """Build a :class:`FuseStore` from this graph.
+    def to_store(self, *funcs: Callable[..., object] | str) -> Store:
+        """Build a :class:`Store` from this graph.
 
         Args:
             *funcs: If given, only include these functions and their
@@ -554,7 +569,7 @@ class FuseGraph:
             subgraph = dict(self._nodes)
             logger.info("Serializing full graph: %d nodes", len(subgraph))
 
-        store = FuseStore()
+        store = Store()
         qname_to_hash: dict[str, str] = {}
 
         for qn, node in subgraph.items():
@@ -576,8 +591,8 @@ class FuseGraph:
         return self.to_store(*funcs).to_json()
 
     @classmethod
-    def deserialize_graph(cls, json_str: str) -> FuseGraph:
-        store = FuseStore.from_json(json_str)
+    def deserialize_graph(cls, json_str: str) -> Graph:
+        store = Store.from_json(json_str)
         graph = cls()
         hash_to_qname = {h: qn for qn, h in store.refs.items()}
 
@@ -608,7 +623,7 @@ class FuseGraph:
 
     @staticmethod
     def reconstruct(json_str: str, function_name: str) -> str:
-        store = FuseStore.from_json(json_str)
+        store = Store.from_json(json_str)
         return store.reconstruct(function_name)
 
     def to_mermaid(
@@ -669,3 +684,7 @@ class FuseGraph:
                     lines.append(f"    {src} --> {_node_id(dep)}")
 
         return "\n".join(lines) + "\n"
+
+
+# Backward-compat alias
+FuseGraph = Graph

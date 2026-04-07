@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pyfuse._errors import DependencyError
-from pyfuse._store import FuseStore
+from pyfuse._store import Store
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ def _extract_top_module(statement: str) -> str:
 
 
 def extract_third_party_modules(
-    store: FuseStore, function_name: str
+    store: Store, function_name: str
 ) -> set[str]:
     """Return third-party module names needed by *function_name* and its deps."""
     _target_qname, nodes = store.collect(function_name)
@@ -126,7 +126,7 @@ def install_packages(
 
 
 def _collect_package_hints(
-    store: FuseStore, function_name: str
+    store: Store, function_name: str
 ) -> dict[str, str]:
     """Extract import→package mappings from ``ImportInfo.package`` fields."""
     _target_qname, nodes = store.collect(function_name)
@@ -143,7 +143,7 @@ def _collect_package_hints(
 
 
 def ensure_dependencies(
-    store: FuseStore,
+    store: Store,
     function_name: str,
     import_to_package: dict[str, str] | None = None,
 ) -> InstallResult:
