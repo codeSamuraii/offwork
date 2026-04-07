@@ -125,11 +125,16 @@ def submit_remote(
     unwrapped = inspect.unwrap(func)
     function_name = f"{unwrapped.__module__}.{unwrapped.__qualname__}"
     graph_json = Graph.default().serialize(wrapper)
+
+    opts = getattr(wrapper, "__pyfuse_options__", {})
     task = Task(
         graph_json=graph_json,
         function_name=function_name,
         args=args,
         kwargs=kwargs,
+        timeout=opts.get("timeout"),
+        retries=opts.get("retries", 0),
+        retry_delay=opts.get("retry_delay", 1.0),
     )
 
     backend.submit(task.to_json())
@@ -137,9 +142,37 @@ def submit_remote(
     return Result(task.task_id, backend)
 
 
+def _handle_task(
+    worker: object,
+    backend: Backend,
+    task_json: str,
+) -> None:
+    """Process a single task: deserialize, execute with policy, send result."""
+    task = Task.from_json(task_json)
+    logger.info("Received task %s: %s", task.task_id, task.function_name)
+
+    try:
+        result = worker.run_with_policy(task)  # type: ignore[union-attr]
+        envelope = ResultEnvelope.success(task.task_id, result)
+    except Exception as exc:
+        logger.exception("Task %s failed", task.task_id)
+        envelope = ResultEnvelope.failure(task.task_id, exc)
+
+    backend.send_result(task.task_id, envelope.to_json())
+
+    cache = worker.cache_info()  # type: ignore[union-attr]
+    status = "ok" if envelope.status == "ok" else "error"
+    print(
+        f"  [{status}] {task.function_name:<30} "
+        f"cache size: {cache['size']}",
+        flush=True,
+    )
+
+
 def serve(
     url: str | None = None,
     *,
+    concurrency: int = 1,
     auto_install: bool = True,
     import_to_package: dict[str, str] | None = None,
 ) -> None:
@@ -150,11 +183,15 @@ def serve(
     url
         Backend URL (e.g. ``redis://localhost:6379``).
         When *None*, the ``PYFUSE_BACKEND`` environment variable is used.
+    concurrency
+        Number of concurrent worker threads (default: 1).
     auto_install
         Automatically install missing third-party dependencies via pip.
     import_to_package
         Extra import-name to pip-package-name mappings.
     """
+    from concurrent.futures import ThreadPoolExecutor
+
     from pyfuse._worker import Worker
 
     backend = connect(url)
@@ -163,30 +200,17 @@ def serve(
         import_to_package=import_to_package,
     )
 
-    print(f"Worker listening on {url}", flush=True)
+    print(f"Worker listening (concurrency={concurrency})", flush=True)
     print("Press Ctrl+C to stop.\n", flush=True)
 
     try:
-        for task_json in backend.listen():
-            task = Task.from_json(task_json)
-            logger.info("Received task %s: %s", task.task_id, task.function_name)
-
-            try:
-                result = worker.run(task)
-                envelope = ResultEnvelope.success(task.task_id, result)
-            except Exception as exc:
-                logger.exception("Task %s failed", task.task_id)
-                envelope = ResultEnvelope.failure(task.task_id, exc)
-
-            backend.send_result(task.task_id, envelope.to_json())
-
-            cache = worker.cache_info()
-            status = "ok" if envelope.status == "ok" else "error"
-            print(
-                f"  [{status}] {task.function_name:<30} "
-                f"cache size: {cache['size']}",
-                flush=True,
-            )
+        if concurrency > 1:
+            with ThreadPoolExecutor(max_workers=concurrency) as pool:
+                for task_json in backend.listen():
+                    pool.submit(_handle_task, worker, backend, task_json)
+        else:
+            for task_json in backend.listen():
+                _handle_task(worker, backend, task_json)
     except KeyboardInterrupt:
         print("\nWorker stopped.")
     finally:

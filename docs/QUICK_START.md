@@ -135,15 +135,23 @@ def csv_to_json(data: str) -> str:
 # Call locally (unchanged behavior)
 result = csv_to_json("a,b\n1,2")
 
-# Submit to remote worker -- returns a FuseResult future
+# Submit to remote worker -- returns a Result future
 future = csv_to_json.run("a,b\n1,2")
 result = future.result()  # blocks until the worker returns
+```
+
+```python
+# With retry and timeout options
+@trace(timeout=30, retries=3)
+def flaky_task(url: str) -> str:
+    ...
 ```
 
 Start a worker from the command line:
 
 ```bash
 python -m pyfuse worker --backend redis://localhost:6379
+python -m pyfuse worker --backend redis://localhost:6379 -c 4  # 4 concurrent threads
 ```
 
 Or programmatically:
@@ -156,10 +164,10 @@ pyfuse.serve("redis://localhost:6379")
 
 ### 6. Manual worker execution
 
-`FuseWorker` reconstructs and executes functions from serialized graphs. It caches compiled functions by subgraph content hash, so repeated calls with identical graphs skip reconstruction entirely. Missing third-party dependencies are auto-installed via pip.
+`Worker` reconstructs and executes functions from serialized graphs. It caches compiled functions by subgraph content hash, so repeated calls with identical graphs skip reconstruction entirely. Missing third-party dependencies are auto-installed via pip.
 
 ```python
-from pyfuse import FuseWorker, pack
+from pyfuse import Worker, pack
 
 task = pack(csv_to_json, "a,b\n1,2")
 
@@ -168,7 +176,7 @@ from pyfuse import execute
 result = execute(task)
 
 # Or with a persistent worker (caches compiled functions)
-worker = FuseWorker()
+worker = Worker()
 result = worker.run(task)
 
 # The worker also accepts raw JSON + function name
@@ -295,14 +303,14 @@ Functions can be `@trace`d in any order. pyfuse automatically resolves dependenc
 
 ## Error Handling
 
-Attempting to trace a function without available source code (builtins, `exec`'d functions, REPL definitions) raises `PyFuseError`:
+Attempting to trace a function without available source code (builtins, `exec`'d functions, REPL definitions) raises `Error`:
 
 ```python
-from pyfuse import trace, PyFuseError
+from pyfuse import trace, Error
 
 try:
     trace(len)  # built-in, no source
-except PyFuseError as e:
+except Error as e:
     print(e)  # "Cannot trace function 'len': source code unavailable..."
 ```
 
@@ -316,7 +324,7 @@ poetry run python examples/save_and_load.py
 poetry run python examples/mermaid_visualization.py
 
 # Redis worker -- built-in CLI (requires Redis on localhost:6379 and `pip install redis`)
-python -m pyfuse worker --backend redis://localhost:6379   # Terminal 1
+python -m pyfuse worker --backend redis://localhost:6379 -c 4   # Terminal 1
 poetry run python examples/redis_worker.py push            # Terminal 2
 
 # Redis worker -- example script

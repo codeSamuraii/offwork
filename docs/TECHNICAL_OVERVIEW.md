@@ -10,16 +10,16 @@ pyfuse/
     __main__.py      CLI entrypoint (python -m pyfuse worker ...)
     _decorator.py    @trace implementation
     _analyzer.py     AST-based source and dependency analysis
-    _graph.py        FuseGraph: registration, serialization, reconstruction
-    _store.py        FuseStore: content-addressable store with graph operations
+    _graph.py        Graph: registration, serialization, reconstruction
+    _store.py        Store: content-addressable store with graph operations
     _models.py       ImportInfo, FunctionNode dataclasses (incl. content hashing)
     _task.py         Task: serializable envelope for remote execution
-    _worker.py       FuseWorker: reconstruct, install deps, execute
+    _worker.py       Worker: reconstruct, install deps, execute
     _backend.py      Backend ABC + RedisBackend: pluggable transport layer
     _remote.py       connect/disconnect/serve/submit_remote: remote execution orchestration
-    _result.py       ResultEnvelope + FuseResult: result serialization and futures
+    _result.py       ResultEnvelope + Result: result serialization and futures
     _deps.py         Dependency extraction and pip installation
-    _errors.py       PyFuseError, WorkerError, RemoteError, DependencyError
+    _errors.py       Error, WorkerError, RemoteError, DependencyError
 ```
 
 ## Data Model
@@ -245,7 +245,7 @@ Static analysis cannot resolve calls on arbitrary variables (`obj.method()`) whe
 
 `@trace` returns a `functools.wraps` wrapper instead of the original function. For regular (non-generator) functions, the wrapper:
 
-1. Checks a `contextvars.ContextVar`-based call stack maintained by the `FuseGraph` instance.
+1. Checks a `contextvars.ContextVar`-based call stack maintained by the `Graph` instance.
 2. If the stack is non-empty and the top entry differs from the current function, records a runtime dependency edge (caller -> callee).
 3. Pushes the current function's qualified name onto the stack.
 4. Calls the original function.
@@ -303,7 +303,7 @@ When type annotations are present, `obj.method()` calls are detected statically 
 
 ### Merging with static analysis
 
-Runtime-discovered dependencies are accumulated in `FuseGraph._runtime_deps`. When `serialize()` is called, these are merged (unioned) with the statically detected dependencies before building the subgraph and computing content hashes. This ensures the serialized store is always the most complete picture.
+Runtime-discovered dependencies are accumulated in `Graph._runtime_deps`. When `serialize()` is called, these are merged (unioned) with the statically detected dependencies before building the subgraph and computing content hashes. This ensures the serialized store is always the most complete picture.
 
 ### Thread and task safety
 
@@ -393,16 +393,28 @@ The `Task` dataclass (`_task.py`) is a frozen, serializable envelope that bundle
 
 The `graph` field contains the serialized store as a JSON string (not nested object), keeping the envelope flat and simple to parse. `from_json()` accepts both `str` and `bytes` for convenience with transport libraries (e.g., Redis returns bytes).
 
+### Task Options
+
+Tasks carry optional execution policy fields:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `timeout` | `float | None` | `None` | Per-attempt timeout in seconds |
+| `retries` | `int` | `0` | Number of retry attempts on failure |
+| `retry_delay` | `float` | `1.0` | Base delay between retries (exponential backoff: `delay * 2^attempt`) |
+
+These fields are set via `@trace(timeout=30, retries=3)` on the client side and enforced by `Worker.run_with_policy()` on the worker side. They are omitted from the JSON when at default values for backward compatibility.
+
 ## Worker
 
-The `FuseWorker` class (`_worker.py`) reconstructs and executes functions from serialized graphs. It is designed for the consumer side of a distributed system -- the worker has no prior knowledge of the functions it will execute.
+The `Worker` class (`_worker.py`) reconstructs and executes functions from serialized graphs. It is designed for the consumer side of a distributed system -- the worker has no prior knowledge of the functions it will execute.
 
 ### Execution pipeline
 
-1. **Deserialize** -- Parse the JSON graph into a `FuseStore`.
+1. **Deserialize** -- Parse the JSON graph into a `Store`.
 2. **Cache check** -- Compute a subgraph key (SHA-256 of all content hashes in the transitive closure). If the key is cached, skip to step 6.
 3. **Install dependencies** -- If `auto_install=True` (default), extract third-party module names from the function's imports and install missing packages via pip. The `DEFAULT_IMPORT_TO_PACKAGE` mapping handles common aliases (e.g., `cv2` -> `opencv-python`, `PIL` -> `Pillow`).
-4. **Reconstruct** -- Call `FuseStore.reconstruct()` to produce a self-contained Python script.
+4. **Reconstruct** -- Call `Store.reconstruct()` to produce a self-contained Python script.
 5. **Compile and exec** -- `compile()` the source, `exec()` it into a fresh namespace, extract the target callable.
 6. **Call** -- Invoke the function with the provided arguments.
 
@@ -413,6 +425,14 @@ Functions are cached by subgraph content hash -- a SHA-256 of all content hashes
 - **Same code = cache hit** regardless of how the graph was serialized or where it came from.
 - **Any change to the function or its dependencies** produces a different key, invalidating the cache.
 - Cache can be inspected via `cache_info()` and cleared via `clear_cache()`.
+
+### Concurrency
+
+`serve()` accepts a `concurrency` parameter (default `1`). When greater than one, tasks are dispatched to a `ThreadPoolExecutor` with that many workers. The CLI equivalent is `--concurrency` / `-c`:
+
+```bash
+python -m pyfuse worker --backend redis://localhost:6379 -c 4
+```
 
 ### API surface
 
@@ -434,7 +454,7 @@ The remote execution layer provides a seamless way to submit traced functions to
 ### API semantics
 
 - **`func(args)`** -- runs locally (unchanged behavior, sync or async depending on definition).
-- **`func.run(args)`** -- packs the function and its dependency graph, submits to the configured backend, and returns a `FuseResult` future.
+- **`func.run(args)`** -- packs the function and its dependency graph, submits to the configured backend, and returns a `Result` future.
 
 ### Backend abstraction
 
@@ -467,9 +487,9 @@ On error, the traceback is captured and forwarded:
 {"task_id": "abc123", "status": "error", "error_type": "ValueError", "error_message": "...", "error_traceback": "Traceback ..."}
 ```
 
-### FuseResult
+### Result
 
-`FuseResult` is a future-like handle returned by `func.run()`:
+`Result` is a future-like handle returned by `func.run()`:
 
 - **`.task_id`** -- the unique task identifier.
 - **`.result(timeout=None)`** -- blocks until the result arrives; raises `RemoteError` if the remote execution failed.
@@ -489,7 +509,7 @@ On error, the traceback is captured and forwarded:
 python -m pyfuse worker --backend redis://localhost:6379 [--no-auto-install]
 ```
 
-The `serve(url)` function in `_remote.py` creates a `FuseWorker`, loops over `backend.listen()`, executes each task, and pushes `ResultEnvelope` responses. Exceptions are caught per-task and sent as error envelopes rather than crashing the worker.
+The `serve(url)` function in `_remote.py` creates a `Worker`, loops over `backend.listen()`, executes each task, and pushes `ResultEnvelope` responses. Exceptions are caught per-task and sent as error envelopes rather than crashing the worker.
 
 ## Limitations
 
@@ -512,9 +532,13 @@ The `serve(url)` function in `_remote.py` creates a `FuseWorker`, loops over `ba
 
 ### Source availability
 
-- Functions must be defined in `.py` source files on disk. Attempting to trace builtins, `exec`'d functions, or REPL-defined functions raises `PyFuseError` with a descriptive message.
+- Functions must be defined in `.py` source files on disk. Attempting to trace builtins, `exec`'d functions, or REPL-defined functions raises `Error` with a descriptive message.
 
 ### Import edge cases
 
 - `from . import *` (relative star imports) are not supported. Absolute star imports (`from os.path import *`) are fully resolved.
 - Dynamically computed imports (`__import__()`, `importlib.import_module()` inside function bodies) are not detected.
+
+## Backward Compatibility
+
+All renamed classes have aliases at their original names: `FuseGraph`, `FuseStore`, `FuseWorker`, `FuseResult`, and `PyFuseError` remain importable and are identical to the new names.

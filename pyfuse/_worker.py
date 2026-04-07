@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
 from typing import Any
 
@@ -131,6 +134,40 @@ class Worker:
         return await self.execute_async(
             task.graph_json, task.function_name, *task.args, **task.kwargs
         )
+
+    def run_with_policy(self, task: Task) -> Any:
+        """Execute a :class:`Task` with retry and timeout enforcement.
+
+        Reads ``task.retries``, ``task.timeout``, and ``task.retry_delay``
+        to apply exponential-backoff retries and per-attempt timeouts.
+        """
+        last_exc: Exception | None = None
+        for attempt in range(1 + task.retries):
+            try:
+                if task.timeout is not None:
+                    return self._run_with_timeout(task, task.timeout)
+                return self.run(task)
+            except Exception as exc:
+                last_exc = exc
+                if attempt < task.retries:
+                    delay = task.retry_delay * (2 ** attempt)
+                    logger.warning(
+                        "Task %s attempt %d/%d failed, retrying in %.1fs: %s",
+                        task.task_id, attempt + 1, task.retries, delay, exc,
+                    )
+                    time.sleep(delay)
+        raise last_exc  # type: ignore[misc]
+
+    def _run_with_timeout(self, task: Task, timeout: float) -> Any:
+        """Execute a task with a timeout enforced via a thread pool."""
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(self.run, task)
+            try:
+                return future.result(timeout=timeout)
+            except FuturesTimeoutError:
+                raise TimeoutError(
+                    f"Task {task.task_id} timed out after {timeout}s"
+                ) from None
 
     def cache_info(self) -> dict[str, Any]:
         """Return cache statistics."""

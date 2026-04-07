@@ -23,7 +23,7 @@ def _cmd_worker(args: argparse.Namespace) -> None:
 
     from pyfuse._remote import serve
 
-    serve(backend, auto_install=not args.no_auto_install)
+    serve(backend, concurrency=args.concurrency, auto_install=not args.no_auto_install)
 
 
 def _cmd_info(_args: argparse.Namespace) -> None:
@@ -95,6 +95,12 @@ def main() -> None:
         "--backend",
         default=os.environ.get("PYFUSE_BACKEND"),
         help="Backend URL, e.g. redis://localhost:6379 (default: $PYFUSE_BACKEND)",
+    )
+    worker_p.add_argument(
+        "-c", "--concurrency",
+        type=int,
+        default=1,
+        help="Number of concurrent worker threads (default: 1)",
     )
     worker_p.add_argument(
         "--no-auto-install",
