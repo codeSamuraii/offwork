@@ -1,208 +1,277 @@
 # Quick Start
 
+pyfuse lets you run any Python function on a remote worker -- with zero setup on the worker side. Decorate a function with `@trace`, and pyfuse captures its source code, dependencies, and imports automatically. The worker reconstructs and executes the function from scratch, installing missing packages as needed.
+
 ## Installation
 
 ```bash
 poetry install
 ```
 
-## Basic Usage
+For Redis-based remote execution:
 
-### 1. Trace functions with `@trace`
+```bash
+pip install redis
+```
 
-Decorate any function to register it in the dependency graph:
+## Run a function remotely
+
+### 1. Mark functions with `@trace`
 
 ```python
-import csv
-import json
-
+import math
 from pyfuse import trace
 
 
-def parse_csv(data: str) -> list[list[str]]:
-    return list(csv.reader(data.splitlines()))
-
-def to_json(data: object) -> str:
-    return json.dumps(data, indent=2)
+def add(a: int, b: int) -> int:
+    return a + b
 
 @trace
-def csv_to_json(data: str) -> str:
-    return to_json(parse_csv(data))
+def hypotenuse(a: float, b: float) -> float:
+    return math.sqrt(add(a**2, b**2))
 ```
 
-Functions called by a `@trace`d function are automatically discovered and included in the dependency graph, even without `@trace`.
-Standard library and third-party functions are kept as import statements.
+`@trace` captures the function's source and its entire dependency tree. `add()` is included automatically -- it doesn't need `@trace`.
 
-### 2. Serialize the dependency graph
+### 2. Start a worker
+
+```bash
+python -m pyfuse worker --backend redis://localhost:6379
+```
+
+The worker waits for tasks, reconstructs the function source on the fly, and executes it -- no prior knowledge of your code required.
+
+### 3. Submit work
+
+```python
+import pyfuse
+from pyfuse import trace
+
+pyfuse.connect("redis://localhost:6379")
+
+@trace
+def hypotenuse(a: float, b: float) -> float:
+    return math.sqrt(add(a**2, b**2))
+
+# Call locally (unchanged behavior)
+result = hypotenuse(3.0, 4.0)     # 5.0
+
+# Run on a remote worker
+future = hypotenuse.run(3.0, 4.0)
+result = future.result()           # 5.0 (blocks until worker returns)
+```
+
+`.run()` serializes the function and its dependencies, sends everything to the worker, and returns a `Result` future.
+
+## Retry and timeout
+
+```python
+@trace(timeout=30, retries=3)
+def flaky_task(url: str) -> str:
+    ...
+
+future = flaky_task.run("https://example.com")
+result = future.result()
+```
+
+Each attempt is capped at 30 seconds. On failure, retries use exponential backoff (1s, 2s, 4s).
+
+## Class methods
+
+`@trace` works on methods. Dependencies via `self.method()` are detected automatically:
+
+```python
+class Greeter:
+    @trace
+    def greet(self, name: str) -> str:
+        return self.format_greeting(f"Hello, {name}!")
+
+    def format_greeting(self, msg: str) -> str:
+        return f"*** {msg} ***"
+
+g = Greeter()
+future = g.greet.run(g, "pyfuse")
+print(future.result())  # "*** Hello, pyfuse! ***"
+```
+
+The worker reconstructs the entire class with all required methods.
+
+## Third-party dependencies
+
+Workers auto-install missing packages via pip. When the import name doesn't match the package name, use `install_package_as`:
+
+```python
+from pyfuse._deps import install_package_as
+
+with install_package_as("PyYAML"):
+    import yaml
+
+@trace
+def to_yaml(data: object) -> str:
+    return yaml.dump(data, default_flow_style=False)
+
+# The worker installs PyYAML before executing this
+future = to_yaml.run({"key": "value"})
+```
+
+Common mappings like `cv2` -> `opencv-python` and `PIL` -> `Pillow` are built in.
+
+## Batch submission
+
+Submit multiple tasks at once with `.map()`:
+
+```python
+futures = hypotenuse.map([(3.0, 4.0), (5.0, 12.0), (8.0, 15.0)])
+results = [f.result() for f in futures]  # [5.0, 13.0, 17.0]
+```
+
+## Worker options
+
+```bash
+# 4 concurrent threads
+python -m pyfuse worker --backend redis://localhost:6379 -c 4
+
+# Disable automatic pip installs
+python -m pyfuse worker --backend redis://localhost:6379 --no-auto-install
+```
+
+Or start a worker programmatically:
+
+```python
+import pyfuse
+pyfuse.serve("redis://localhost:6379", concurrency=4)
+```
+
+## Backends
+
+pyfuse supports pluggable transport backends:
+
+| Backend | URL scheme | Use case |
+|---------|-----------|----------|
+| Redis | `redis://` / `rediss://` | Production, multi-machine |
+| Shared memory | `shm://` | Same-machine IPC, zero-copy |
+
+```python
+# Redis (requires pip install redis)
+pyfuse.connect("redis://localhost:6379")
+
+# Shared memory (no external services needed)
+pyfuse.connect("shm://localhost:9847")
+```
+
+The backend can also be set via the `PYFUSE_BACKEND` environment variable:
+
+```bash
+export PYFUSE_BACKEND=redis://localhost:6379
+```
+
+## Result handling
+
+```python
+future = hypotenuse.run(3.0, 4.0)
+
+# Check status without blocking
+future.done()    # True / False
+future.status    # "pending", "success", or "error"
+
+# Block until result
+result = future.result(timeout=10)  # raises TimeoutError if too slow
+
+# Remote errors are re-raised on the client
+from pyfuse import RemoteError
+try:
+    future.result()
+except RemoteError as e:
+    print(e)  # includes the remote traceback
+```
+
+## Advanced: serialization and reconstruction
+
+Under the hood, pyfuse serializes functions into a content-addressable JSON store. You can use this directly for inspection, caching, or custom transports.
+
+### Serialize
 
 ```python
 from pyfuse import serialize
 
-# Serialize everything
+# Serialize a function and its dependencies
+graph_json = serialize(hypotenuse)
+
+# Or serialize all traced functions
 graph_json = serialize()
-
-# Or serialize only a function and its transitive dependencies
-graph_json = serialize(csv_to_json)
 ```
 
-### 3. Pack a function for remote execution
-
-`pack()` captures a function's subgraph and bundles it with arguments into a `Task` -- a serializable envelope ready to send to a worker:
-
-```python
-from pyfuse import pack
-
-task = pack(csv_to_json, "a,b\n1,2")
-print(task.task_id)        # auto-generated unique ID
-print(task.function_name)  # qualified name
-print(task.args)           # (\"a,b\\n1,2\",)
-
-# Serialize for transport (Redis, HTTP, file, etc.)
-task_json = task.to_json()
-```
-
-On the receiving side:
-
-```python
-from pyfuse import Task
-
-task = Task.from_json(task_json)
-```
-
-The result is a JSON string containing a content-addressable object store. Each function is stored once, identified by a content hash, with dependencies linked by hash:
+The output is a JSON string containing each function's source, imports, and dependency edges, identified by content hashes:
 
 ```json
 {
-  "version": "0.2.0",
+  "version": "0.3.0",
   "objects": {
-    "a1b2...": {"hash": "a1b2...", "name": "parse_csv", "source": "...", "deps": [], ...},
-    "c3d4...": {"hash": "c3d4...", "name": "csv_to_json", "source": "...", "deps": ["a1b2..."], ...}
+    "a1b2...": {"name": "add", "source": "...", "imports": [], ...},
+    "c3d4...": {"name": "hypotenuse", "source": "...", "imports": [...], ...}
   },
-  "refs": {
-    "mymodule.parse_csv": "a1b2...",
-    "mymodule.csv_to_json": "c3d4..."
-  }
+  "deps": {"c3d4...": ["a1b2..."]},
+  "refs": {"mymodule.add": "a1b2...", "mymodule.hypotenuse": "c3d4..."}
 }
 ```
 
-Shared dependencies are stored once and referenced by multiple callers. Workers can cache objects by hash and only request missing ones.
-
-### 4. Reconstruct source code
+### Reconstruct
 
 ```python
 from pyfuse import reconstruct
 
-source = reconstruct(graph_json, "csv_to_json")
+source = reconstruct(graph_json, "hypotenuse")
 print(source)
 ```
 
 Output:
 
 ```python
-import csv
-import json
+import math
 
 
-def parse_csv(data: str) -> list[list[str]]:
-    return list(csv.reader(data.splitlines()))
+def add(a: int, b: int) -> int:
+    return a + b
 
 
-def to_json(data: object) -> str:
-    return json.dumps(data, indent=2)
-
-
-def csv_to_json(data: str) -> str:
-    return to_json(parse_csv(data))
+def hypotenuse(a: float, b: float) -> float:
+    return math.sqrt(add(a ** 2, b ** 2))
 ```
 
-Functions are emitted in dependency order -- dependencies first, target function last. Imports are deduplicated across all functions. Dependencies are resolved by content hash, so the output is stable regardless of how functions are named or organized.
+Functions are emitted in dependency order with deduplicated imports -- a self-contained script ready to execute.
 
-### 5. Remote execution
-
-The simplest way to run a traced function remotely is with `.run()`:
+### Pack and execute manually
 
 ```python
-import pyfuse
-from pyfuse import trace
+from pyfuse import pack, execute, Task
 
-# Connect to a backend (Redis, etc.)
-pyfuse.connect("redis://localhost:6379")
+# Pack a function with arguments into a Task
+task = pack(hypotenuse, 3.0, 4.0)
+print(task.task_id)         # "a1b2c3d4e5f6"
+print(task.function_name)   # "mymodule.hypotenuse"
 
-@trace
-def csv_to_json(data: str) -> str:
-    return to_json(parse_csv(data))
+# Serialize for any transport
+task_json = task.to_json()
 
-# Call locally (unchanged behavior)
-result = csv_to_json("a,b\n1,2")
-
-# Submit to remote worker -- returns a Result future
-future = csv_to_json.run("a,b\n1,2")
-result = future.result()  # blocks until the worker returns
+# On the receiving side
+task = Task.from_json(task_json)
+result = execute(task)      # 5.0
 ```
 
-```python
-# With retry and timeout options
-@trace(timeout=30, retries=3)
-def flaky_task(url: str) -> str:
-    ...
-```
-
-Start a worker from the command line:
-
-```bash
-python -m pyfuse worker --backend redis://localhost:6379
-python -m pyfuse worker --backend redis://localhost:6379 -c 4  # 4 concurrent threads
-```
-
-Or programmatically:
-
-```python
-import pyfuse
-
-pyfuse.serve("redis://localhost:6379")
-```
-
-### 6. Manual worker execution
-
-`Worker` reconstructs and executes functions from serialized graphs. It caches compiled functions by subgraph content hash, so repeated calls with identical graphs skip reconstruction entirely. Missing third-party dependencies are auto-installed via pip.
-
-```python
-from pyfuse import Worker, pack
-
-task = pack(csv_to_json, "a,b\n1,2")
-
-# One-shot execution
-from pyfuse import execute
-result = execute(task)
-
-# Or with a persistent worker (caches compiled functions)
-worker = Worker()
-result = worker.run(task)
-
-# The worker also accepts raw JSON + function name
-result = worker.execute(graph_json, "csv_to_json", "a,b\n1,2")
-
-# Async support
-result = await worker.run_async(task)
-```
-
-### 7. Save and load graphs
-
-The serialized format is plain JSON text. Save it to a file and reconstruct later:
+### Save and load
 
 ```python
 from pathlib import Path
 
 Path("graph.json").write_text(graph_json)
 
-# Later...
 loaded = Path("graph.json").read_text()
-source = reconstruct(loaded, "parse_csv")
+source = reconstruct(loaded, "hypotenuse")
 ```
 
-### 8. Merge stores
+### Merge stores
 
-Two serialized stores can be merged by combining their `objects` and `refs` dictionaries. Identical content hashes guarantee safe deduplication:
+Two serialized stores can be safely merged -- identical content hashes guarantee deduplication:
 
 ```python
 import json
@@ -211,116 +280,58 @@ store_a = json.loads(serialize(func_a))
 store_b = json.loads(serialize(func_b))
 
 merged = json.dumps({
-    "version": "0.2.0",
+    "version": "0.3.0",
     "objects": {**store_a["objects"], **store_b["objects"]},
+    "deps": {**store_a["deps"], **store_b["deps"]},
     "refs": {**store_a["refs"], **store_b["refs"]},
 })
-
-# Shared dependencies appear only once in the merged store
-source = reconstruct(merged, "func_a")
 ```
 
-## Class Methods
+## What gets captured
 
-`@trace` works on class methods. Dependencies via `self.method()` are detected automatically:
+| Detected | How |
+|----------|-----|
+| Direct function calls (`helper()`) | AST analysis + auto-discovery |
+| `self.method()` / `cls.method()` | AST analysis |
+| `obj.method()` with type annotation | Type annotation resolution |
+| `obj.method()` without annotation | Runtime tracing on first call |
+| Standard library imports (`json`, `csv`) | Kept as import statements |
+| Third-party imports (`numpy`, `yaml`) | Kept as imports, auto-installed on worker |
+| Closure variables | Captured via `repr()` |
+| Generators and async functions | Supported with proxy wrappers |
 
-```python
-class Pipeline:
-    @trace
-    def step_a(self, x):
-        return x.strip()
+## What is NOT captured
 
-    @trace
-    def step_b(self, x):
-        return self.step_a(x).lower()
+- Functions without source code (builtins, `exec`'d, REPL-defined)
+- Dynamic imports (`__import__()`, `importlib.import_module()` in function bodies)
+- Relative star imports (`from . import *`)
+- Circular dependencies (raises `CycleError`)
 
-source = reconstruct(serialize(), "step_b")
-```
-
-Output:
-
-```python
-class Pipeline:
-    def step_a(self, x):
-        return x.strip()
-
-    def step_b(self, x):
-        return self.step_a(x).lower()
-```
-
-## Generator Functions
-
-`@trace` works on generator functions. Dependencies inside the generator body are captured during iteration:
+## Error handling
 
 ```python
-@trace
-def generate_items(items):
-    for item in items:
-        yield transform(item)  # dependency on transform() detected
-```
+from pyfuse import trace, Error, RemoteError
 
-## Async Functions and Async Generators
-
-`@trace` works on `async def` functions and async generators. Dependencies are captured both statically and at runtime (via `await` / `async for`):
-
-```python
-@trace
-async def fetch_data(url: str) -> dict:
-    return await async_helper(url)  # dependency on async_helper() detected
-
-@trace
-async def stream_items(items):
-    for item in items:
-        yield await transform(item)  # dependency on transform() detected
-```
-
-## Object Method Calls
-
-When a function parameter has a type annotation, `obj.method()` calls are resolved statically -- no execution needed:
-
-```python
-class Processor:
-    @trace
-    def step(self, x):
-        return x.upper()
-
-@trace
-def run(proc: Processor, data: str) -> str:
-    return proc.step(data)  # dependency on Processor.step detected via annotation
-
-source = reconstruct(serialize(), "run")
-```
-
-Without annotations, the dependency is detected at runtime when the function is called. Adding type annotations is recommended for complete static analysis.
-
-## Star Imports
-
-Star imports (`from os.path import *`) are resolved automatically. Only the names actually used by the function are included as explicit imports in the reconstructed code.
-
-## Definition Order
-
-Functions can be `@trace`d in any order. pyfuse automatically resolves dependencies regardless of which function is decorated first.
-
-## Error Handling
-
-Attempting to trace a function without available source code (builtins, `exec`'d functions, REPL definitions) raises `Error`:
-
-```python
-from pyfuse import trace, Error
-
+# Tracing errors
 try:
     trace(len)  # built-in, no source
 except Error as e:
     print(e)  # "Cannot trace function 'len': source code unavailable..."
+
+# Remote execution errors
+try:
+    future.result()
+except RemoteError as e:
+    print(e)  # includes remote traceback
 ```
 
-## Running the Examples
+## Running the examples
 
 ```bash
 # Serialization (no external services needed)
 poetry run python examples/serialization.py
 
-# Remote execution (requires Redis on localhost:6379 and `pip install redis`)
+# Remote execution (requires Redis on localhost:6379)
 python -m pyfuse worker --backend redis://localhost:6379   # Terminal 1
 poetry run python examples/remote_execution.py             # Terminal 2
 ```
