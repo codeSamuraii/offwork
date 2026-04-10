@@ -1,19 +1,27 @@
-"""Tests for the top-level pyfuse API additions: graph(), pack(), analyze() deprecation."""
+"""Tests for the top-level pyfuse API additions: get_graph(), graph, pack()."""
 from __future__ import annotations
 
 import warnings
 
 import pyfuse
-from pyfuse import FuseGraph, Task, graph, pack, trace
+from pyfuse import FuseGraph, Task, get_graph, pack, trace
 
 
-# -- graph() ----------------------------------------------------------------
+# -- get_graph() / graph ----------------------------------------------------
 
 class TestGraph:
-    def test_returns_default_graph(self) -> None:
-        g = graph()
+    def test_get_graph_returns_default(self) -> None:
+        g = get_graph()
         assert isinstance(g, FuseGraph)
         assert g is FuseGraph.default()
+
+    def test_graph_attribute_returns_default(self) -> None:
+        g = pyfuse.graph
+        assert isinstance(g, FuseGraph)
+        assert g is FuseGraph.default()
+
+    def test_graph_and_get_graph_agree(self) -> None:
+        assert pyfuse.graph is get_graph()
 
 
 # -- pack() -----------------------------------------------------------------

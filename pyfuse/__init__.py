@@ -1,6 +1,6 @@
 import inspect
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pyfuse._backend import Backend
 from pyfuse._decorator import trace
@@ -23,9 +23,28 @@ FuseGraph = Graph
 FuseStore = Store
 
 
-def graph() -> Graph:
-    """Return the default graph of all traced functions."""
+def get_graph() -> Graph:
+    """Return the default dependency graph.
+
+    The returned :class:`Graph` has :meth:`~Graph.to_mermaid` for
+    visualization::
+
+        print(pyfuse.get_graph().to_mermaid())           # full graph
+        print(pyfuse.get_graph().to_mermaid(my_func))    # subgraph of my_func
+
+    Also accessible as ``pyfuse.graph``.
+    """
     return Graph.default()
+
+
+if TYPE_CHECKING:
+    graph: Graph
+
+
+def __getattr__(name: str) -> object:
+    if name == "graph":
+        return get_graph()
+    raise AttributeError(f"module 'pyfuse' has no attribute {name!r}")
 
 
 def serialize(*funcs: Callable[..., object] | str) -> str:
@@ -77,6 +96,10 @@ __all__ = [
     # Errors
     "Error",
     "RemoteError",
+    # Graph
+    "get_graph",
+    "graph",
+    "Graph",
     # Power-user
     "Task",
     "Worker",

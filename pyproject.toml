@@ -17,8 +17,15 @@ redis = ["redis>=5.0"]
 dev = [
     "pytest (>=9.0.2,<10.0.0)",
     "mypy (>=1.19.1,<2.0.0)",
-    "ipython (>=9.11.0,<10.0.0)"
+    "ipython (>=9.11.0,<10.0.0)",
+    "isort (>=8.0.1,<9.0.0)"
 ]
+
+[tool.isort]
+profile = "black"
+length_sort = true
+order_by_type = true
+line_length = 180
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

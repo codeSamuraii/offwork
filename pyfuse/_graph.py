@@ -379,10 +379,11 @@ class Graph:
                 continue
             if func_obj.__name__ != name:
                 continue  # Skip aliased imports to avoid name mismatch
-            if self._auto_register(func_obj):
-                if func_obj.__module__ != module_name:
-                    matching = [i for i in node.imports if i.bound_name == name]
-                    imports_to_remove.extend(matching)
+            self._auto_register(func_obj)
+            qualified = f"{func_obj.__module__}.{func_obj.__qualname__}"
+            if qualified in self._nodes and func_obj.__module__ != module_name:
+                matching = [i for i in node.imports if i.bound_name == name]
+                imports_to_remove.extend(matching)
         if imports_to_remove:
             node.imports = [i for i in node.imports if i not in imports_to_remove]
 

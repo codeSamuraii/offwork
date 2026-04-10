@@ -1,10 +1,6 @@
 .mypy_cache/
 .pytest_cache/
-.claude/
-.vscode/
 __pycache__/
-
+dump.rdb
 poetry.lock
-*.pyc
-*.rdb
-.DS_Store
+tests/fixtures/stress_test_module/
