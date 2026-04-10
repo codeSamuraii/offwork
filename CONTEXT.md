@@ -1,0 +1,160 @@
+# CONTEXT.md -- AI Assistant Guide
+
+## What is pyfuse?
+
+pyfuse is a Python library for distributed function execution via automatic source code serialization. A `@trace` decorator captures a function's source, imports, and full dependency tree via AST analysis. Workers reconstruct and execute functions from scratch with zero prior knowledge of the code, installing missing packages automatically.
+
+**Version**: 0.3.0 | **License**: AGPL-3.0 | **Python**: 3.13+ | **Zero runtime dependencies**
+
+## Project structure
+
+```
+pyfuse/
+├── __init__.py              # Public API surface (trace, connect, serve, serialize, etc.)
+├── __main__.py              # CLI: worker, info, serialize, reconstruct
+├── py.typed                 # PEP 561 typed package marker
+├── core/
+│   ├── task.py              # Task dataclass: serializable envelope (graph + args + options)
+│   ├── models.py            # FunctionNode and ImportInfo dataclasses, content hashing
+│   ├── version.py           # _VERSION = "0.3.0"
+│   └── errors.py            # Error, WorkerError, RemoteError, DependencyError
+├── graph/
+│   ├── decorator.py         # @trace: marks functions, adds .run()/.map()/.delay()
+│   ├── graph.py             # Graph class: registration, auto-discovery, serialization
+│   ├── store.py             # Content-addressable store: serialize/reconstruct/merge
+│   ├── analyzer.py          # AST-based source capture, import extraction, dependency detection
+│   └── tracing.py           # Runtime call-stack tracing via contextvars (TracingMixin)
+└── worker/
+    ├── worker.py            # Worker: reconstruct, cache, execute with retry/timeout
+    ├── remote.py            # connect(), disconnect(), serve(), submit_remote()
+    ├── result.py            # Result (future) and ResultEnvelope (wire format)
+    ├── deps.py              # Third-party dependency extraction and pip installation
+    └── backends/
+        ├── base.py          # Backend ABC: submit, listen, send_result, get_result
+        ├── redis.py         # RedisBackend: RPUSH/BLPOP pattern
+        └── shm.py           # SharedMemoryBackend: multiprocessing shared memory IPC
+```
+
+## Architecture overview
+
+The system has three layers:
+
+### 1. Graph layer (`graph/`)
+
+Handles function analysis and serialization. The `@trace` decorator registers functions in a `Graph`, which uses `analyzer.py` to extract source code, imports, and dependency edges via AST walking. `TracingMixin` adds runtime call-stack recording for dependencies that static analysis can't resolve (e.g., untyped `obj.method()` calls).
+
+The `Store` is a content-addressable JSON format where each function is identified by a SHA-256 hash of its content (source, imports, name, module, owner_class, closure vars -- but NOT dependencies). This enables efficient caching: changing a dependency's edges doesn't invalidate a node's hash.
+
+### 2. Core layer (`core/`)
+
+Data models and error types. `FunctionNode` represents a function in the graph. `ImportInfo` represents a single import binding. `Task` is a frozen dataclass that bundles a serialized graph with function name, arguments, and execution options (timeout, retries).
+
+### 3. Worker layer (`worker/`)
+
+Handles remote execution. The `Worker` class reconstructs functions from serialized stores, caches compiled namespaces by subgraph content hash, and executes with retry/timeout policies. `remote.py` orchestrates the connection lifecycle and worker event loop. `Result` is a future-like object returned by `.run()`.
+
+## Data flow
+
+```
+@trace(func)
+  -> analyzer.get_function_source(func)         # extract + dedent source
+  -> analyzer.get_module_imports(func)           # parse file for imports
+  -> graph.register(func)                        # add FunctionNode to graph
+  -> graph._auto_register(func)                  # recursively discover deps
+
+func.run(*args)
+  -> graph.serialize(func)                       # build Store, export JSON
+  -> Task(graph_json, function_name, args, ...)  # package into Task
+  -> backend.submit(task.to_json())              # send via transport
+  -> return Result(task_id, backend)             # future handle
+
+Worker.run(task)
+  -> store = Store.from_json(task.graph_json)    # deserialize
+  -> deps.ensure_dependencies(store, func_name)  # pip install missing
+  -> store.reconstruct(func_name)                # emit Python source
+  -> compile() + exec() into namespace           # build callable
+  -> namespace[func_name](*args, **kwargs)       # execute
+  -> backend.send_result(task_id, envelope)      # return result
+```
+
+## Key patterns and conventions
+
+- **Strict mypy**: The project uses `mypy --strict`. All public APIs have type annotations.
+- **Frozen dataclasses**: `Task`, `ImportInfo`, `ResultEnvelope` are frozen. `FunctionNode` is mutable (dependencies are added after creation).
+- **Content hashing**: `FunctionNode.content_hash()` produces a 16-char hex SHA-256 digest. Dependencies are excluded from the hash so structural changes don't invalidate content caches.
+- **Auto-discovery**: When a traced function calls an untraced user-defined function, pyfuse automatically finds and registers it. This is recursive.
+- **Cross-module inlining**: Imports like `from utils import helper` where `helper` is a user function get converted from import statements to inline dependency edges, making reconstructed code self-contained.
+- **Closure handling**: Captured variables are serialized via `repr()` and hoisted as keyword-only parameters with defaults. Traced function references become dependency edges.
+- **Decorator stripping**: `@trace` lines are removed from captured source so reconstructed code doesn't depend on pyfuse.
+- **Backend auto-detection**: `connect()` picks Redis or shared memory based on URL scheme. Falls back to `PYFUSE_BACKEND` env var.
+- **Worker caching**: Keyed by SHA-256 of all reachable content hashes (sorted + joined). Same code from different clients = cache hit.
+
+## Serialization format (v0.3.0)
+
+```json
+{
+  "version": "0.3.0",
+  "objects": {
+    "<content_hash>": {
+      "name": "func_name",
+      "module": "module_name",
+      "source": "def func_name(...): ...",
+      "imports": [{"statement": "import x", "bound_name": "x", "package": null}],
+      "owner_class": null
+    }
+  },
+  "deps": {"<hash>": ["<dep_hash>", ...]},
+  "refs": {"module.qualified_name": "<hash>"}
+}
+```
+
+## Public API summary
+
+```python
+# Decorator
+@trace                                    # capture function
+@trace(timeout=30, retries=3)             # with execution options
+
+# Remote execution
+pyfuse.connect("redis://localhost:6379")  # configure backend
+pyfuse.serve("redis://...", concurrency=4)  # start worker loop
+func.run(*args)                           # -> Result (future)
+func.map([(a1, b1), (a2, b2)])            # -> list[Result]
+
+# Serialization
+pyfuse.serialize(func)                    # -> JSON string
+pyfuse.reconstruct(json_str, "name")      # -> Python source string
+pyfuse.pack(func, *args)                  # -> Task
+pyfuse.execute(task)                      # -> return value
+
+# Inspection
+pyfuse.get_graph()                        # -> Graph
+pyfuse.get_graph().to_mermaid(func)       # -> Mermaid diagram
+```
+
+## Testing
+
+```bash
+pytest                    # run all tests
+pytest tests/test_api.py  # specific module
+```
+
+14 test modules covering: API surface, AST analysis, auto-discovery, dependency management, graph operations, integration scenarios, remote execution, runtime tracing, shared memory backend, store operations, stress tests (47 functions across 7 files), task serialization, and worker caching/execution.
+
+## Development
+
+```bash
+poetry install                  # install with dev dependencies
+poetry install --extras redis   # include redis support
+mypy pyfuse/                    # type checking (strict mode)
+pytest                          # test suite
+```
+
+## Important notes for modifications
+
+- The `Store.reconstruct()` method in `graph/store.py` handles topological sorting, import deduplication, and class block assembly. This is the most complex reconstruction logic.
+- `analyzer.py` is the core of static analysis (~365 lines). Changes here affect what gets captured.
+- `tracing.py` uses `contextvars.ContextVar` for thread/async safety. The `_runtime_deps` dict is guarded by `threading.Lock`.
+- The `Task` wire format keeps `graph` as a JSON string (not nested object) to keep the envelope flat.
+- Backend implementations must satisfy the `Backend` ABC in `backends/base.py`.
+- `install_package_as()` is a no-op at runtime; the AST analyzer in `decorator.py`/`analyzer.py` detects the `with` block pattern and tags `ImportInfo` objects with the package name.

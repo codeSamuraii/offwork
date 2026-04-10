@@ -109,7 +109,7 @@ def install_packages(
         package = mapping.get(module, module)
         logger.info("Installing %s (package: %s)", module, package)
         proc = subprocess.run(
-            [sys.executable, "-m", "pip", "install", package, *extra_args],
+            [sys.executable, "-m", "pip", "install", package, "--break-system-packages", *extra_args],
             capture_output=True,
             text=True,
         )
