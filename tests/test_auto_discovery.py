@@ -5,8 +5,8 @@ import warnings
 from pathlib import Path
 
 from pyfuse import reconstruct, serialize
-from pyfuse._analyzer import find_bare_calls
-from pyfuse._graph import FuseGraph
+from pyfuse.graph.analyzer import find_bare_calls
+from pyfuse.graph.graph import Graph
 from tests.conftest import create_module
 
 
@@ -52,7 +52,7 @@ def test_auto_discover_same_module(tmp_path: Path) -> None:
             "    return [normalize(cell) for cell in row]\n"
         ),
     )
-    graph = FuseGraph.default()
+    graph = Graph.default()
     assert "adbasic.normalize" in graph.nodes
     assert "adbasic.parse_row" in graph.nodes
     deps = graph.nodes["adbasic.parse_row"].dependencies
@@ -75,7 +75,7 @@ def test_auto_discover_transitive(tmp_path: Path) -> None:
             "    return step_b(x)\n"
         ),
     )
-    graph = FuseGraph.default()
+    graph = Graph.default()
     assert "adtrans.step_a" in graph.nodes
     assert "adtrans.step_b" in graph.nodes
     assert "adtrans.step_c" in graph.nodes
@@ -98,7 +98,7 @@ def test_auto_discover_with_imports(tmp_path: Path) -> None:
             "    return parse(data)\n"
         ),
     )
-    graph = FuseGraph.default()
+    graph = Graph.default()
     node = graph.nodes["adimports.parse"]
     import_stmts = [imp.statement for imp in node.imports]
     assert "import csv" in import_stmts
@@ -117,7 +117,7 @@ def test_auto_discover_skips_builtins(tmp_path: Path) -> None:
             "    return list(range(10))\n"
         ),
     )
-    graph = FuseGraph.default()
+    graph = Graph.default()
     node_names = {n.name for n in graph.nodes.values()}
     assert "len" not in node_names
     assert "print" not in node_names
@@ -139,7 +139,7 @@ def test_auto_discover_skips_classes(tmp_path: Path) -> None:
             "    return MyClass()\n"
         ),
     )
-    graph = FuseGraph.default()
+    graph = Graph.default()
     assert "adclass.MyClass" not in graph.nodes
 
 
@@ -160,7 +160,7 @@ def test_auto_discover_no_duplicate(tmp_path: Path) -> None:
             "    return helper(x)\n"
         ),
     )
-    graph = FuseGraph.default()
+    graph = Graph.default()
     assert "adnodup.helper" in graph.nodes
     assert "adnodup.helper" in graph.nodes["adnodup.caller_a"].dependencies
     assert "adnodup.helper" in graph.nodes["adnodup.caller_b"].dependencies
@@ -189,7 +189,7 @@ def test_auto_discover_cross_module(tmp_path: Path) -> None:
             "    return helper(x)\n"
         ),
     )
-    graph = FuseGraph.default()
+    graph = Graph.default()
     assert "adutils.helper" in graph.nodes
     assert "adutils.helper" in graph.nodes["adcross.run"].dependencies
     # The import should be removed since the function is inlined
@@ -210,7 +210,7 @@ def test_auto_discover_preserves_stdlib_imports(tmp_path: Path) -> None:
             "    return json.dumps(data)\n"
         ),
     )
-    graph = FuseGraph.default()
+    graph = Graph.default()
     # json module functions should NOT be in graph
     for qname in graph.nodes:
         assert not qname.startswith("json.")
@@ -236,7 +236,7 @@ def test_auto_discover_skips_aliased_imports(tmp_path: Path) -> None:
             "    return h(x)\n"
         ),
     )
-    graph = FuseGraph.default()
+    graph = Graph.default()
     # helper should NOT be auto-registered (aliased)
     assert "adutils2.helper" not in graph.nodes
     # The import should be preserved
@@ -374,7 +374,7 @@ def test_auto_register_warns_on_source_unavailable(tmp_path: Path) -> None:
         )
         # The dynamically created function has no .py source file, so
         # get_function_source will fail and a warning should be emitted.
-        graph = FuseGraph.default()
+        graph = Graph.default()
         assert "adwarn.helper" not in graph.nodes
 
 

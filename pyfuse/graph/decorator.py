@@ -4,7 +4,7 @@ import logging
 from collections.abc import Callable
 from typing import TypeVar, overload
 
-from pyfuse._graph import Graph
+from pyfuse.graph.graph import Graph
 
 logger = logging.getLogger(__name__)
 

@@ -1,26 +1,19 @@
 import inspect
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from pyfuse._backend import Backend
-from pyfuse._decorator import trace
-from pyfuse._deps import install_package_as
-from pyfuse._errors import Error, DependencyError, RemoteError, WorkerError
-from pyfuse._graph import Graph
-from pyfuse._models import FunctionNode, ImportInfo
-from pyfuse._remote import connect, disconnect, serve
-from pyfuse._result import Result, ResultEnvelope
-from pyfuse._store import Store, MergeResult
-from pyfuse._task import Task
-from pyfuse._worker import Worker
-from pyfuse._worker import execute as execute
-
-# Backward-compat aliases
-PyFuseError = Error
-FuseResult = Result
-FuseWorker = Worker
-FuseGraph = Graph
-FuseStore = Store
+from pyfuse.worker.backends.base import Backend
+from pyfuse.graph.decorator import trace
+from pyfuse.worker.deps import install_package_as
+from pyfuse.core.errors import Error, DependencyError, RemoteError, WorkerError
+from pyfuse.graph.graph import Graph
+from pyfuse.core.models import FunctionNode, ImportInfo
+from pyfuse.worker.remote import connect, disconnect, serve
+from pyfuse.worker.result import Result, ResultEnvelope
+from pyfuse.graph.store import Store, MergeResult
+from pyfuse.core.task import Task
+from pyfuse.worker.worker import Worker
+from pyfuse.worker.worker import execute as execute
 
 
 def get_graph() -> Graph:
@@ -36,15 +29,6 @@ def get_graph() -> Graph:
     """
     return Graph.default()
 
-
-if TYPE_CHECKING:
-    graph: Graph
-
-
-def __getattr__(name: str) -> object:
-    if name == "graph":
-        return get_graph()
-    raise AttributeError(f"module 'pyfuse' has no attribute {name!r}")
 
 
 def serialize(*funcs: Callable[..., object] | str) -> str:
@@ -98,7 +82,6 @@ __all__ = [
     "RemoteError",
     # Graph
     "get_graph",
-    "graph",
     "Graph",
     # Power-user
     "Task",

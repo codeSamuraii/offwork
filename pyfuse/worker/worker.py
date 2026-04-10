@@ -8,10 +8,10 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
 from typing import Any
 
-from pyfuse._deps import ensure_dependencies
-from pyfuse._errors import WorkerError
-from pyfuse._store import Store
-from pyfuse._task import Task
+from pyfuse.worker.deps import ensure_dependencies
+from pyfuse.core.errors import WorkerError
+from pyfuse.graph.store import Store
+from pyfuse.core.task import Task
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +121,7 @@ class Worker:
 
     def run(self, task: Task) -> Any:
         """Execute a :class:`Task`, resolving serialized object arguments."""
-        from pyfuse._task import resolve_args
+        from pyfuse.core.task import resolve_args
 
         cached = self._get_cached(task.graph_json, task.function_name)
         args, kwargs = resolve_args(task.args, task.kwargs, cached.namespace)
@@ -130,7 +130,7 @@ class Worker:
 
     async def run_async(self, task: Task) -> Any:
         """Execute a :class:`Task` asynchronously, resolving serialized object arguments."""
-        from pyfuse._task import resolve_args
+        from pyfuse.core.task import resolve_args
 
         cached = self._get_cached(task.graph_json, task.function_name)
         args, kwargs = resolve_args(task.args, task.kwargs, cached.namespace)
@@ -221,7 +221,3 @@ def execute(
     if function_name is None:
         raise TypeError("function_name is required when passing a JSON string")
     return worker.execute(json_str_or_task, function_name, *args, **kwargs)
-
-
-# Backward-compat alias
-FuseWorker = Worker

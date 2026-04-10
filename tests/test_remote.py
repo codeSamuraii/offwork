@@ -1,4 +1,4 @@
-"""Tests for the remote execution API: Backend, ResultEnvelope, FuseResult, connect/disconnect/serve."""
+"""Tests for the remote execution API: Backend, ResultEnvelope, Result, connect/disconnect/serve."""
 from __future__ import annotations
 
 import collections
@@ -9,11 +9,11 @@ from typing import Any
 
 import pytest
 
-from pyfuse._backend import Backend
-from pyfuse._errors import RemoteError
-from pyfuse._result import FuseResult, ResultEnvelope
+from pyfuse.worker.backends.base import Backend
+from pyfuse.core.errors import RemoteError
+from pyfuse.worker.result import Result, ResultEnvelope
 from pyfuse import trace
-import pyfuse._remote as _remote
+import pyfuse.worker.remote as _remote
 
 
 # ---------------------------------------------------------------------------
@@ -131,16 +131,16 @@ class TestResultEnvelope:
 
 
 # ---------------------------------------------------------------------------
-# FuseResult
+# Result
 # ---------------------------------------------------------------------------
 
 
-class TestFuseResult:
+class TestResult:
     def test_result_success(self, backend: InMemoryBackend) -> None:
         env = ResultEnvelope.success("t1", 99)
         backend.send_result("t1", env.to_json())
 
-        future = FuseResult("t1", backend)
+        future = Result("t1", backend)
         assert future.task_id == "t1"
         assert future.result() == 99
 
@@ -148,7 +148,7 @@ class TestFuseResult:
         env = ResultEnvelope.failure("t2", ValueError("bad"))
         backend.send_result("t2", env.to_json())
 
-        future = FuseResult("t2", backend)
+        future = Result("t2", backend)
         with pytest.raises(RemoteError, match="ValueError: bad"):
             future.result()
 
@@ -156,25 +156,25 @@ class TestFuseResult:
         env = ResultEnvelope.success("t3", "cached")
         backend.send_result("t3", env.to_json())
 
-        future = FuseResult("t3", backend)
+        future = Result("t3", backend)
         assert future.result() == "cached"
         # Second call should use cached envelope (queue is empty now)
         assert future.result() == "cached"
 
     def test_done_false_when_no_result(self, backend: InMemoryBackend) -> None:
-        future = FuseResult("t4", backend)
+        future = Result("t4", backend)
         assert future.done() is False
 
     def test_done_true_when_result_available(self, backend: InMemoryBackend) -> None:
         env = ResultEnvelope.success("t5", True)
         backend.send_result("t5", env.to_json())
 
-        future = FuseResult("t5", backend)
+        future = Result("t5", backend)
         assert future.done() is True
         assert future.result() is True
 
     def test_timeout_raises(self, backend: InMemoryBackend) -> None:
-        future = FuseResult("missing", backend)
+        future = Result("missing", backend)
         with pytest.raises(TimeoutError):
             future.result(timeout=0)
 
@@ -237,7 +237,7 @@ class TestRunMethod:
             return x * 2
 
         future = double.run(7)
-        assert isinstance(future, FuseResult)
+        assert isinstance(future, Result)
         assert len(backend._tasks) == 1
 
         # Verify the submitted task is valid JSON with correct structure
@@ -253,7 +253,7 @@ class TestRunMethod:
             return a + b
 
         future = add.run(3, 4)
-        assert isinstance(future, FuseResult)
+        assert isinstance(future, Result)
         assert future.task_id  # non-empty
 
 
@@ -278,11 +278,11 @@ class TestServe:
         _remote._active_backend = backend
 
         # Run the worker loop (will stop after exhausting the queue)
-        from pyfuse._worker import FuseWorker
+        from pyfuse.worker.worker import Worker
 
-        worker = FuseWorker(auto_install=False)
+        worker = Worker(auto_install=False)
 
-        from pyfuse._task import Task
+        from pyfuse.core.task import Task
 
         for task_json in backend.listen():
             t = Task.from_json(task_json)
@@ -310,10 +310,10 @@ class TestServe:
         task = pack(failing)
         backend.submit(task.to_json())
 
-        from pyfuse._worker import FuseWorker
-        from pyfuse._task import Task
+        from pyfuse.worker.worker import Worker
+        from pyfuse.core.task import Task
 
-        worker = FuseWorker(auto_install=False)
+        worker = Worker(auto_install=False)
 
         for task_json in backend.listen():
             t = Task.from_json(task_json)

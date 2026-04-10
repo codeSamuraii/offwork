@@ -5,7 +5,7 @@ Usage:
 """
 
 from pyfuse import pack, serialize, reconstruct, Graph
-from pyfuse._worker import Worker
+from pyfuse.worker.worker import Worker
 
 from tests.fixtures.stress_test_module import pipeline
 from tests.fixtures.stress_test_module.generators import generate_measurements

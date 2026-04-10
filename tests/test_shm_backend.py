@@ -7,12 +7,12 @@ from collections.abc import Iterator
 
 import pytest
 
-from pyfuse._shm_backend import (
+from pyfuse.worker.backends.shm import (
     SharedMemoryBackend,
     _read_shm_block,
     _write_shm_block,
 )
-import pyfuse._remote as _remote
+import pyfuse.worker.remote as _remote
 
 
 # ---------------------------------------------------------------------------
@@ -172,9 +172,9 @@ class TestEndToEnd:
     def test_submit_execute_result(self) -> None:
         """Full cycle: submit task on shm backend, execute in worker thread, read result."""
         from pyfuse import pack, trace
-        from pyfuse._result import ResultEnvelope
-        from pyfuse._task import Task
-        from pyfuse._worker import FuseWorker
+        from pyfuse.worker.result import ResultEnvelope
+        from pyfuse.core.task import Task
+        from pyfuse.worker.worker import Worker
 
         @trace
         def add(a: int, b: int) -> int:
@@ -189,7 +189,7 @@ class TestEndToEnd:
             client.submit(task.to_json())
 
             # Worker side: pop one task, execute, push result
-            worker = FuseWorker(auto_install=False)
+            worker = Worker(auto_install=False)
             for task_json in server.listen():
                 t = Task.from_json(task_json)
                 try:
@@ -211,9 +211,9 @@ class TestEndToEnd:
     def test_worker_thread(self) -> None:
         """Worker running in a background thread processes tasks submitted from main thread."""
         from pyfuse import pack, trace
-        from pyfuse._result import ResultEnvelope
-        from pyfuse._task import Task
-        from pyfuse._worker import FuseWorker
+        from pyfuse.worker.result import ResultEnvelope
+        from pyfuse.core.task import Task
+        from pyfuse.worker.worker import Worker
 
         @trace
         def multiply(a: int, b: int) -> int:
@@ -226,7 +226,7 @@ class TestEndToEnd:
         worker_done = threading.Event()
 
         def worker_loop() -> None:
-            worker = FuseWorker(auto_install=False)
+            worker = Worker(auto_install=False)
             for task_json in server.listen():
                 t = Task.from_json(task_json)
                 try:

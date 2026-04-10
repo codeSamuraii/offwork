@@ -21,7 +21,7 @@ def _cmd_worker(args: argparse.Namespace) -> None:
         print("Error: --backend is required (or set PYFUSE_BACKEND).", file=sys.stderr)
         sys.exit(1)
 
-    from pyfuse._remote import serve
+    from pyfuse.worker.remote import serve
 
     serve(backend, concurrency=args.concurrency, auto_install=not args.no_auto_install)
 

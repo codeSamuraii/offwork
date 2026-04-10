@@ -7,12 +7,11 @@ from dataclasses import dataclass, field
 from graphlib import TopologicalSorter
 from typing import Any
 
-from pyfuse._analyzer import hoist_closure_func_refs, hoist_closure_vars
-from pyfuse._models import FunctionNode, ImportInfo
+from pyfuse.core.models import FunctionNode, ImportInfo
+from pyfuse.core.version import _VERSION
+from pyfuse.graph.analyzer import hoist_closure_func_refs, hoist_closure_vars
 
 logger = logging.getLogger(__name__)
-
-_VERSION = "0.3.0"
 
 
 @dataclass
@@ -322,14 +321,10 @@ class Store:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Store:
-        """Import from dict. Supports v0.2.0 and v0.3.0 formats."""
+        """Import from dict."""
         store = cls()
-        version = data.get("version", "0.2.0")
         refs = data.get("refs", {})
         hash_to_qname = {h: qn for qn, h in refs.items()}
-
-        if version < "0.3.0":
-            return cls._from_v020(data)
 
         for h, blob in data.get("objects", {}).items():
             out = dict(blob)
@@ -367,39 +362,3 @@ class Store:
             f"Function '{function_name}' not found in store"
         )
 
-    @classmethod
-    def _from_v020(cls, data: dict[str, Any]) -> Store:
-        """Import from v0.2.0 format (deps inside objects, hash field)."""
-        store = cls()
-        refs = data.get("refs", {})
-        hash_to_qname = {h: qn for qn, h in refs.items()}
-
-        for h, obj in data.get("objects", {}).items():
-            blob: dict[str, Any] = {
-                "name": obj["name"],
-                "module": obj["module"],
-                "source": obj["source"],
-                "imports": obj["imports"],
-                "owner_class": obj.get("owner_class"),
-            }
-            if obj.get("closure_vars"):
-                blob["closure_vars"] = dict(obj["closure_vars"])
-            if obj.get("closure_func_refs"):
-                blob["closure_func_refs"] = {
-                    var: hash_to_qname.get(ref_h, ref_h)
-                    for var, ref_h in obj["closure_func_refs"].items()
-                }
-            store.put_blob(h, blob)
-
-            deps = obj.get("deps", [])
-            if deps:
-                store.set_deps(h, deps)
-
-        for name, h in refs.items():
-            store.set_ref(name, h)
-
-        return store
-
-
-# Backward-compat alias
-FuseStore = Store

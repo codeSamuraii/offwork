@@ -10,10 +10,10 @@ import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from pyfuse._models import ImportInfo
+from pyfuse.core.models import ImportInfo
 
 if TYPE_CHECKING:
-    from pyfuse._models import FunctionNode
+    from pyfuse.core.models import FunctionNode
 
 logger = logging.getLogger(__name__)
 

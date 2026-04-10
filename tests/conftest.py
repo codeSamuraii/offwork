@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from pyfuse._graph import FuseGraph
+from pyfuse.graph.graph import Graph
 
 
 def create_module(
@@ -25,4 +25,4 @@ def create_module(
 
 @pytest.fixture(autouse=True)
 def _reset_default_graph() -> None:
-    FuseGraph.reset_default()
+    Graph.reset_default()

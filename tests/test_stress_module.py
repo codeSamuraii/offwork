@@ -10,7 +10,7 @@ import json
 import pytest
 
 from pyfuse import Graph, pack, reconstruct, serialize
-from pyfuse._worker import Worker
+from pyfuse.worker.worker import Worker
 
 import tests.fixtures.stress_test_module.validators as _validators_mod
 import tests.fixtures.stress_test_module.analyzers as _analyzers_mod

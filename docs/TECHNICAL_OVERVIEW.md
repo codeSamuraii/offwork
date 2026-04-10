@@ -395,6 +395,3 @@ python -m pyfuse serialize mymodule:csv_to_json
 python -m pyfuse reconstruct graph.json csv_to_json
 ```
 
-## Backward compatibility
-
-All renamed classes have aliases at their original names: `FuseGraph`, `FuseStore`, `FuseWorker`, `FuseResult`, and `PyFuseError` remain importable.

@@ -17,7 +17,7 @@ import math
 
 import pyfuse
 from pyfuse import trace
-from pyfuse._deps import install_package_as
+from pyfuse.worker.deps import install_package_as
 
 
 # -- Plain functions ---------------------------------------------------------

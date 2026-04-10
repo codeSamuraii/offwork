@@ -6,9 +6,10 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-from pyfuse._backend import Backend, RedisBackend
-from pyfuse._result import Result, ResultEnvelope
-from pyfuse._task import Task
+from pyfuse.worker.backends.base import Backend
+from pyfuse.worker.backends.redis import RedisBackend
+from pyfuse.worker.result import Result, ResultEnvelope
+from pyfuse.core.task import Task
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ def _create_backend(url: str, **kwargs: Any) -> Backend:
     if scheme in ("redis", "rediss"):
         return RedisBackend(url, **kwargs)
     if scheme == "shm":
-        from pyfuse._shm_backend import SharedMemoryBackend
+        from pyfuse.worker.backends.shm import SharedMemoryBackend
 
         return SharedMemoryBackend(url, **kwargs)
     raise ValueError(
@@ -113,7 +114,7 @@ def submit_remote(
 
     Called internally by ``traced_func.run(...)``.
     """
-    from pyfuse._graph import Graph
+    from pyfuse.graph.graph import Graph
 
     if isinstance(_backend, str):
         backend = _create_backend(_backend)
@@ -192,7 +193,7 @@ def serve(
     """
     from concurrent.futures import ThreadPoolExecutor
 
-    from pyfuse._worker import Worker
+    from pyfuse.worker.worker import Worker
 
     backend = connect(url)
     worker = Worker(

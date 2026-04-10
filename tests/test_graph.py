@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from pyfuse._errors import PyFuseError
-from pyfuse._graph import FuseGraph
+from pyfuse.core.errors import Error
+from pyfuse.graph.graph import Graph
 from tests.conftest import create_module
 
 
-def _make_graph(tmp_path: Path) -> FuseGraph:
+def _make_graph(tmp_path: Path) -> Graph:
     mod = create_module(
         tmp_path,
         "gmod",
@@ -27,7 +27,7 @@ def _make_graph(tmp_path: Path) -> FuseGraph:
             "    return js.dumps(rows)\n"
         ),
     )
-    return FuseGraph.default()
+    return Graph.default()
 
 
 def test_register_populates_graph(tmp_path: Path) -> None:
@@ -79,7 +79,7 @@ def test_serialize_subgraph_with_deps(tmp_path: Path) -> None:
 def test_deserialize_roundtrip(tmp_path: Path) -> None:
     graph = _make_graph(tmp_path)
     json_str = graph.serialize()
-    restored = FuseGraph.deserialize_graph(json_str)
+    restored = Graph.deserialize_graph(json_str)
     assert set(restored.nodes.keys()) == set(graph.nodes.keys())
     for qn in graph.nodes:
         assert restored.nodes[qn].source == graph.nodes[qn].source
@@ -89,7 +89,7 @@ def test_deserialize_roundtrip(tmp_path: Path) -> None:
 def test_reconstruct_single_function(tmp_path: Path) -> None:
     graph = _make_graph(tmp_path)
     json_str = graph.serialize()
-    source = FuseGraph.reconstruct(json_str, "parse")
+    source = Graph.reconstruct(json_str, "parse")
     assert "import csv" in source
     assert "def parse(data):" in source
     assert "def transform" not in source
@@ -98,7 +98,7 @@ def test_reconstruct_single_function(tmp_path: Path) -> None:
 def test_reconstruct_with_dependencies(tmp_path: Path) -> None:
     graph = _make_graph(tmp_path)
     json_str = graph.serialize()
-    source = FuseGraph.reconstruct(json_str, "transform")
+    source = Graph.reconstruct(json_str, "transform")
     assert "import csv" in source
     assert "import json as js" in source
     assert "def parse(data):" in source
@@ -120,9 +120,9 @@ def test_reconstruct_deduplicates_imports(tmp_path: Path) -> None:
             "def b(x):\n    return csv.writer(a(x))\n"
         ),
     )
-    graph = FuseGraph.default()
+    graph = Graph.default()
     json_str = graph.serialize()
-    source = FuseGraph.reconstruct(json_str, "b")
+    source = Graph.reconstruct(json_str, "b")
     assert source.count("import csv") == 1
 
 
@@ -130,23 +130,23 @@ def test_reconstruct_unknown_function_raises(tmp_path: Path) -> None:
     graph = _make_graph(tmp_path)
     json_str = graph.serialize()
     try:
-        FuseGraph.reconstruct(json_str, "nonexistent")
+        Graph.reconstruct(json_str, "nonexistent")
         assert False, "Expected KeyError"
     except KeyError:
         pass
 
 
 def test_register_sourceless_function_raises() -> None:
-    graph = FuseGraph()
-    with pytest.raises(PyFuseError, match="source code unavailable"):
+    graph = Graph()
+    with pytest.raises(Error, match="source code unavailable"):
         graph.register(len)
 
 
 def test_register_exec_function_raises() -> None:
     ns: dict[str, object] = {}
     exec("def dynamic(): return 1", ns)  # noqa: S102
-    graph = FuseGraph()
-    with pytest.raises(PyFuseError, match="source code unavailable"):
+    graph = Graph()
+    with pytest.raises(Error, match="source code unavailable"):
         graph.register(ns["dynamic"])  # type: ignore[arg-type]
 
 
@@ -162,7 +162,7 @@ def test_auto_refresh_on_register(tmp_path: Path) -> None:
             "def callee():\n    return 42\n"
         ),
     )
-    graph = FuseGraph.default()
+    graph = Graph.default()
     assert "autoref.callee" in graph.nodes["autoref.caller"].dependencies
 
 
@@ -178,7 +178,7 @@ def test_class_method_registration(tmp_path: Path) -> None:
             "        return data.split(',')\n"
         ),
     )
-    graph = FuseGraph.default()
+    graph = Graph.default()
     node = graph.nodes["clsreg.Parser.parse"]
     assert node.name == "parse"
     assert node.owner_class == "Parser"
@@ -200,9 +200,9 @@ def test_class_method_reconstruction(tmp_path: Path) -> None:
             "        return self.helper(data)\n"
         ),
     )
-    graph = FuseGraph.default()
+    graph = Graph.default()
     json_str = graph.serialize()
-    source = FuseGraph.reconstruct(json_str, "parse")
+    source = Graph.reconstruct(json_str, "parse")
     assert "class Parser:" in source
     assert "    def helper(self, data):" in source
     assert "    def parse(self, data):" in source
@@ -228,7 +228,7 @@ def test_nested_function_closure_captured(tmp_path: Path) -> None:
     import importlib
     mod = importlib.import_module("closure_mod")
     mod.outer()
-    graph = FuseGraph.default()
+    graph = Graph.default()
     node = graph.nodes["closure_mod.outer.<locals>.inner"]
     assert node.closure_vars == {"x": "10"}
 
@@ -267,7 +267,7 @@ def test_to_mermaid_class_methods(tmp_path: Path) -> None:
             "        return self.step_a(x).lower()\n"
         ),
     )
-    graph = FuseGraph.default()
+    graph = Graph.default()
     mermaid = graph.to_mermaid()
     assert "subgraph Pipeline" in mermaid
     assert '"step_a"' in mermaid
@@ -283,7 +283,7 @@ def test_to_mermaid_direction(tmp_path: Path) -> None:
 
 
 def test_to_mermaid_empty_graph() -> None:
-    graph = FuseGraph()
+    graph = Graph()
     mermaid = graph.to_mermaid()
     assert mermaid == "graph TD\n"
 
@@ -298,7 +298,7 @@ def test_content_hash_deterministic(tmp_path: Path) -> None:
 
 
 def test_content_hash_changes_on_source_change(tmp_path: Path) -> None:
-    from pyfuse._models import FunctionNode
+    from pyfuse.core.models import FunctionNode
     node_a = FunctionNode(
         qualified_name="m.f", name="f", module="m",
         source="def f(): return 1",
@@ -311,7 +311,7 @@ def test_content_hash_changes_on_source_change(tmp_path: Path) -> None:
 
 
 def test_content_hash_stable_on_dep_change(tmp_path: Path) -> None:
-    from pyfuse._models import FunctionNode
+    from pyfuse.core.models import FunctionNode
     node_a = FunctionNode(
         qualified_name="m.f", name="f", module="m",
         source="def f(): pass", dependencies=[],
@@ -337,7 +337,7 @@ def test_deduplication_shared_dep(tmp_path: Path) -> None:
             "def caller_b():\n    return shared()\n"
         ),
     )
-    graph = FuseGraph.default()
+    graph = Graph.default()
     data = json.loads(graph.serialize())
     # shared() appears once in objects, referenced by both callers
     shared_hash = data["refs"]["dedup_shared.shared"]

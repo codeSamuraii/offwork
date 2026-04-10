@@ -12,7 +12,3 @@ class DependencyError(Error):
 
 class RemoteError(WorkerError):
     """Raised on the client side when a remote execution fails."""
-
-
-# Backward-compat alias
-PyFuseError = Error

@@ -17,7 +17,7 @@ from multiprocessing.managers import BaseManager
 from multiprocessing.shared_memory import SharedMemory
 from urllib.parse import parse_qs, urlparse
 
-from pyfuse._backend import Backend
+from pyfuse.worker.backends.base import Backend
 
 logger = logging.getLogger(__name__)
 

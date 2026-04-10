@@ -10,8 +10,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
-from pyfuse._errors import DependencyError
-from pyfuse._store import Store
+from pyfuse.core.errors import DependencyError
+from pyfuse.graph.store import Store
 
 logger = logging.getLogger(__name__)
 

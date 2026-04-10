@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from pyfuse._task import Task
+from pyfuse.core.task import Task
 
 
 class TestTaskCreation:

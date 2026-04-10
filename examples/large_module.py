@@ -25,9 +25,8 @@ from tests.fixtures.stress_test_module.transformers import compute_deltas, norma
 
 @trace
 def full_sensor_report(sensor_count: int, readings_per_sensor: int, seed: int = 42) -> str:
-    """Full pipeline: generate → validate → clean → analyze → format.
-
-    Calls functions from 6 different files. None of them have @trace --
+    """
+    Calls functions from multiple modules, with complex dependency chains.
     pyfuse captures their source and dependencies automatically.
     """
     measurements = generate_measurements(sensor_count, readings_per_sensor, seed)
@@ -49,29 +48,16 @@ def full_sensor_report(sensor_count: int, readings_per_sensor: int, seed: int = 
     return format_text_report(report)
 
 
-DIM = "\033[2m"
-BOLD = "\033[1m"
-ITALIC = "\033[3m"
-GREEN = "\033[32m"
-RED = "\033[31m"
-RESET = "\033[0m"
-
 if __name__ == "__main__":
-    # ── Local call ───────────────────────────────────────────────────
-    print("--- Local ---")
-    local_result = full_sensor_report(3, 50, seed=42)
-    print(f"{DIM+ITALIC}{local_result}{RESET}")
-
-    # ── Remote call (same function, same args, on a worker) ──────────
-    print("--- Remote ---")
+    # Connect to the worker
     pyfuse.connect("redis://localhost:6379")
-    remote_result = full_sensor_report.run(3, 50, seed=42).result()
-    pyfuse.disconnect()
-    print(f"{DIM+ITALIC}{remote_result}{RESET}")
 
-    # ── Compare ──────────────────────────────────────────────────────
-    if local_result == remote_result:
-        tag = f"{BOLD}{GREEN}MATCH{RESET}"
-    else:
-        tag = f"{BOLD}{RED}MISMATCH{RESET}"
-    print(f"{BOLD}--- {tag}{BOLD} (local={len(local_result)} chars, remote={len(remote_result)} chars) ---{RESET}")
+    # Local call
+    local_result = full_sensor_report(3, 50, seed=42)
+
+    # Remote call (same function, same args, on a worker)
+    remote_result = full_sensor_report.run(3, 50, seed=42).result()
+
+    assert local_result == remote_result
+
+    pyfuse.disconnect()

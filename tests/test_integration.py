@@ -3,9 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from pyfuse import reconstruct, serialize
-from pyfuse._deps import _collect_package_hints
-from pyfuse._graph import FuseGraph
-from pyfuse._store import FuseStore
+from pyfuse.worker.deps import _collect_package_hints
+from pyfuse.graph.graph import Graph
+from pyfuse.graph.store import Store
 from tests.conftest import create_module
 
 
@@ -155,7 +155,7 @@ def test_order_independent_registration(tmp_path: Path) -> None:
         ),
     )
 
-    graph = FuseGraph.default()
+    graph = Graph.default()
     # Auto-refresh means dependencies are resolved regardless of order
     assert "late.callee" in graph.nodes["late.caller"].dependencies
 
@@ -257,7 +257,7 @@ def test_install_package_as_end_to_end(tmp_path: Path) -> None:
     graph_json = serialize()
 
     # Verify the package hint survives serialization
-    store = FuseStore.from_json(graph_json)
+    store = Store.from_json(graph_json)
     hints = _collect_package_hints(store, "process_image")
     assert hints == {"cv2": "opencv-python"}
 

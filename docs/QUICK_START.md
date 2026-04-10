@@ -101,7 +101,7 @@ The worker reconstructs the entire class with all required methods.
 Workers auto-install missing packages via pip. When the import name doesn't match the package name, use `install_package_as`:
 
 ```python
-from pyfuse._deps import install_package_as
+from pyfuse import install_package_as
 
 with install_package_as("PyYAML"):
     import yaml

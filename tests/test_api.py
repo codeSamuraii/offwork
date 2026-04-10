@@ -4,7 +4,7 @@ from __future__ import annotations
 import warnings
 
 import pyfuse
-from pyfuse import FuseGraph, Task, get_graph, pack, trace
+from pyfuse import Graph, Task, get_graph, pack, trace
 
 
 # -- get_graph() / graph ----------------------------------------------------
@@ -12,16 +12,12 @@ from pyfuse import FuseGraph, Task, get_graph, pack, trace
 class TestGraph:
     def test_get_graph_returns_default(self) -> None:
         g = get_graph()
-        assert isinstance(g, FuseGraph)
-        assert g is FuseGraph.default()
+        assert isinstance(g, Graph)
+        assert g is Graph.default()
 
-    def test_graph_attribute_returns_default(self) -> None:
-        g = pyfuse.graph
-        assert isinstance(g, FuseGraph)
-        assert g is FuseGraph.default()
-
-    def test_graph_and_get_graph_agree(self) -> None:
-        assert pyfuse.graph is get_graph()
+    def test_graph_subpackage_accessible(self) -> None:
+        assert hasattr(pyfuse.graph, 'Graph')
+        assert pyfuse.graph.Graph is Graph
 
 
 # -- pack() -----------------------------------------------------------------

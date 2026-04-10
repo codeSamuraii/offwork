@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pyfuse._analyzer import (
+from pyfuse.graph.analyzer import (
     _resolve_owner_class,
     detect_traced_dependencies,
     filter_imports,
@@ -10,7 +10,7 @@ from pyfuse._analyzer import (
     get_module_imports,
     get_used_names,
 )
-from pyfuse._models import FunctionNode, ImportInfo
+from pyfuse.core.models import FunctionNode, ImportInfo
 from tests.conftest import create_module
 
 

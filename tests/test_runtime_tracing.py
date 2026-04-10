@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from pyfuse import reconstruct, serialize
-from pyfuse._graph import FuseGraph
+from pyfuse.graph.graph import Graph
 from tests.conftest import create_module
 
 
@@ -74,7 +74,7 @@ def test_static_typed_obj_method_no_execution(tmp_path: Path) -> None:
         ),
     )
     # Do NOT call mod.run() -- dependency should be detected statically
-    graph = FuseGraph.default()
+    graph = Graph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
     run_deps = _get_dep_names(data, "staticobj.run")
@@ -100,7 +100,7 @@ def test_runtime_dep_obj_method_call(tmp_path: Path) -> None:
     p = mod.Processor()
     mod.run(p, "hello")
 
-    graph = FuseGraph.default()
+    graph = Graph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
     run_deps = _get_dep_names(data, "objcall.run")
@@ -124,7 +124,7 @@ def test_runtime_dep_direct_call(tmp_path: Path) -> None:
     )
     mod.caller(5)
 
-    graph = FuseGraph.default()
+    graph = Graph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
     assert "dircall.helper" in _get_dep_names(data, "dircall.caller")
@@ -150,7 +150,7 @@ def test_runtime_dep_chain(tmp_path: Path) -> None:
     )
     mod.step_c(1)
 
-    graph = FuseGraph.default()
+    graph = Graph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
     assert "rtchain.step_b" in _get_dep_names(data, "rtchain.step_c")
@@ -173,7 +173,7 @@ def test_runtime_dep_no_self_dependency(tmp_path: Path) -> None:
     )
     mod.factorial(5)
 
-    graph = FuseGraph.default()
+    graph = Graph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
     deps = _get_dep_names(data, "selfcall.factorial")
@@ -206,7 +206,7 @@ def test_runtime_dep_merges_with_static(tmp_path: Path) -> None:
     w = mod.Worker()
     mod.caller(w, 1)
 
-    graph = FuseGraph.default()
+    graph = Graph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
     deps = _get_dep_names(data, "merge.caller")
@@ -264,7 +264,7 @@ def test_generator_body_dep_detected(tmp_path: Path) -> None:
     )
     assert list(mod.gen_func([1, 2, 3])) == [2, 3, 4]
 
-    graph = FuseGraph.default()
+    graph = Graph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
     deps = _get_dep_names(data, "genbody.gen_func")
@@ -288,7 +288,7 @@ def test_generator_caller_dep_detected(tmp_path: Path) -> None:
     )
     assert mod.caller() == [1, 2, 3]
 
-    graph = FuseGraph.default()
+    graph = Graph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
     deps = _get_dep_names(data, "gencaller.caller")
@@ -324,7 +324,7 @@ def test_generator_send_maintains_context(tmp_path: Path) -> None:
     except StopIteration:
         pass
 
-    graph = FuseGraph.default()
+    graph = Graph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
     deps = _get_dep_names(data, "gensend.accumulator")
@@ -419,7 +419,7 @@ def test_generator_throw_maintains_context(tmp_path: Path) -> None:
     result = gen.throw(ValueError("bad"))
     assert result == 0
 
-    graph = FuseGraph.default()
+    graph = Graph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
     deps = _get_dep_names(data, "genthrow.resilient")
@@ -469,7 +469,7 @@ def test_generator_nested_chain(tmp_path: Path) -> None:
     )
     assert list(mod.gen_outer()) == [10, 20]
 
-    graph = FuseGraph.default()
+    graph = Graph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
     deps = _get_dep_names(data, "genchain.gen_outer")
@@ -515,7 +515,7 @@ def test_closure_vars_captured(tmp_path: Path) -> None:
         ),
     )
     mod.make_multiplier(3)
-    graph = FuseGraph.default()
+    graph = Graph.default()
     node = graph.nodes["cvcap.make_multiplier.<locals>.multiply"]
     assert node.closure_vars == {"factor": "3"}
 
@@ -535,9 +535,9 @@ def test_closure_vars_serialized(tmp_path: Path) -> None:
         ),
     )
     mod.outer(2.5, "val:")
-    graph = FuseGraph.default()
+    graph = Graph.default()
     json_str = graph.serialize()
-    restored = FuseGraph.deserialize_graph(json_str)
+    restored = Graph.deserialize_graph(json_str)
     node = restored.nodes["cvser.outer.<locals>.inner"]
     assert node.closure_vars == {"scale": "2.5", "label": "'val:'"}
 
@@ -602,7 +602,7 @@ def test_deserialize_no_closure_vars() -> None:
             "mod.func": node_hash,
         },
     })
-    graph = FuseGraph.deserialize_graph(store_json)
+    graph = Graph.deserialize_graph(store_json)
     node = graph.nodes["mod.func"]
     assert node.closure_vars == {}
     assert node.closure_func_refs == {}
@@ -630,7 +630,7 @@ def test_closure_valid_repr_accepted(tmp_path: Path) -> None:
         ),
     )
     mod.outer()
-    graph = FuseGraph.default()
+    graph = Graph.default()
     node = graph.nodes["cvvalid.outer.<locals>.inner"]
     assert node.closure_vars == {"x": "42", "label": "'hello'"}
     assert node.closure_func_refs == {}
@@ -655,7 +655,7 @@ def test_closure_traced_func_detected_as_dep(tmp_path: Path) -> None:
         ),
     )
     mod.outer()
-    graph = FuseGraph.default()
+    graph = Graph.default()
     node = graph.nodes["cvfunc.outer.<locals>.inner"]
     # fn should NOT be in closure_vars (repr is not valid Python)
     assert "fn" not in node.closure_vars
@@ -710,7 +710,7 @@ def test_closure_func_refs_survive_refresh(tmp_path: Path) -> None:
         ),
     )
     mod.outer()
-    graph = FuseGraph.default()
+    graph = Graph.default()
     graph.refresh()  # explicit refresh
     node = graph.nodes["cvrefresh.outer.<locals>.inner"]
     assert "cvrefresh.helper" in node.dependencies
@@ -736,9 +736,9 @@ def test_closure_func_refs_serialization_roundtrip(tmp_path: Path) -> None:
         ),
     )
     mod.outer()
-    graph = FuseGraph.default()
+    graph = Graph.default()
     json_str = graph.serialize()
-    restored = FuseGraph.deserialize_graph(json_str)
+    restored = Graph.deserialize_graph(json_str)
     node = restored.nodes["cvserial.outer.<locals>.inner"]
     assert node.closure_func_refs == {"fn": "cvserial.helper"}
     assert "cvserial.helper" in node.dependencies
@@ -877,7 +877,7 @@ def test_async_caller_to_async_callee(tmp_path: Path) -> None:
     )
     assert asyncio.run(mod.async_caller(5)) == 6
 
-    graph = FuseGraph.default()
+    graph = Graph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
     deps = _get_dep_names(data, "asynccall.async_caller")
@@ -901,7 +901,7 @@ def test_async_caller_to_sync_callee(tmp_path: Path) -> None:
     )
     assert asyncio.run(mod.async_caller(5)) == 6
 
-    graph = FuseGraph.default()
+    graph = Graph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
     deps = _get_dep_names(data, "asyncsync.async_caller")
@@ -928,7 +928,7 @@ def test_async_dep_chain(tmp_path: Path) -> None:
     )
     asyncio.run(mod.step_c(1))
 
-    graph = FuseGraph.default()
+    graph = Graph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
     assert "asyncchain.step_b" in _get_dep_names(data, "asyncchain.step_c")
@@ -951,7 +951,7 @@ def test_async_no_self_dependency(tmp_path: Path) -> None:
     )
     assert asyncio.run(mod.factorial(5)) == 120
 
-    graph = FuseGraph.default()
+    graph = Graph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
     deps = _get_dep_names(data, "asyncself.factorial")
@@ -982,7 +982,7 @@ def test_async_runtime_dep_merges_with_static(tmp_path: Path) -> None:
     w = mod.Worker()
     asyncio.run(mod.caller(w, 1))
 
-    graph = FuseGraph.default()
+    graph = Graph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
     deps = _get_dep_names(data, "asyncmerge.caller")
@@ -1044,7 +1044,7 @@ def test_async_concurrent_tasks_isolated(tmp_path: Path) -> None:
 
     asyncio.run(main())
 
-    graph = FuseGraph.default()
+    graph = Graph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
     deps_a = _get_dep_names(data, "asynciso.task_a")
@@ -1082,7 +1082,7 @@ def test_async_gen_body_dep_detected(tmp_path: Path) -> None:
 
     assert asyncio.run(main()) == [2, 3, 4]
 
-    graph = FuseGraph.default()
+    graph = Graph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
     deps = _get_dep_names(data, "agenbody.async_gen")
@@ -1107,7 +1107,7 @@ def test_async_gen_caller_dep_detected(tmp_path: Path) -> None:
     )
     assert asyncio.run(mod.caller()) == [1, 2, 3]
 
-    graph = FuseGraph.default()
+    graph = Graph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
     deps = _get_dep_names(data, "agencaller.caller")
@@ -1168,7 +1168,7 @@ def test_async_gen_asend(tmp_path: Path) -> None:
 
     asyncio.run(main())
 
-    graph = FuseGraph.default()
+    graph = Graph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
     deps = _get_dep_names(data, "agensend.accumulator")
@@ -1203,7 +1203,7 @@ def test_async_gen_athrow(tmp_path: Path) -> None:
     result = asyncio.run(main())
     assert result == 0
 
-    graph = FuseGraph.default()
+    graph = Graph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
     deps = _get_dep_names(data, "agenthrow.resilient")
@@ -1279,7 +1279,7 @@ def test_async_gen_nested_chain(tmp_path: Path) -> None:
 
     assert asyncio.run(main()) == [10, 20]
 
-    graph = FuseGraph.default()
+    graph = Graph.default()
     graph_json = graph.serialize()
     data = json.loads(graph_json)
     deps = _get_dep_names(data, "agenchain.outer")

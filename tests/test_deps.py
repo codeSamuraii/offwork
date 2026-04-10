@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from pyfuse._deps import (
+from pyfuse.worker.deps import (
     DEFAULT_IMPORT_TO_PACKAGE,
     InstallResult,
     _collect_package_hints,
@@ -11,8 +11,8 @@ from pyfuse._deps import (
     install_package_as,
     is_installed,
 )
-from pyfuse._models import FunctionNode, ImportInfo
-from pyfuse._store import FuseStore
+from pyfuse.core.models import FunctionNode, ImportInfo
+from pyfuse.graph.store import Store
 
 
 # -- Helpers -----------------------------------------------------------------
@@ -34,14 +34,14 @@ def _node(
     )
 
 
-def _store_with_imports(*import_statements: str) -> FuseStore:
+def _store_with_imports(*import_statements: str) -> Store:
     """Build a single-function store with the given imports."""
     imports = [
         ImportInfo(statement=s, bound_name=s.split()[-1])
         for s in import_statements
     ]
     node = _node("f", imports=imports)
-    store = FuseStore()
+    store = Store()
     h = store.put(node)
     store.set_ref("m.f", h)
     return store
@@ -95,7 +95,7 @@ class TestExtractThirdPartyModules:
         """Same module imported by two functions in the subgraph."""
         a = _node("a", imports=[ImportInfo("import requests", "requests")])
         b = _node("b", imports=[ImportInfo("import requests", "requests")])
-        store = FuseStore()
+        store = Store()
         ha, hb = store.put(a), store.put(b)
         store.set_ref("m.a", ha)
         store.set_ref("m.b", hb)
@@ -166,7 +166,7 @@ class TestCollectPackageHints:
             ImportInfo("import cv2", "cv2", package="opencv-python"),
             ImportInfo("import os", "os"),
         ])
-        store = FuseStore()
+        store = Store()
         h = store.put(node)
         store.set_ref("m.f", h)
         hints = _collect_package_hints(store, "f")
@@ -182,7 +182,7 @@ class TestCollectPackageHints:
         b = _node("b", imports=[
             ImportInfo("import cv2", "cv2", package="opencv-python"),
         ])
-        store = FuseStore()
+        store = Store()
         ha, hb = store.put(a), store.put(b)
         store.set_ref("m.a", ha)
         store.set_ref("m.b", hb)

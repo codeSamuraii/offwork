@@ -5,8 +5,8 @@ import traceback as tb_mod
 from dataclasses import dataclass
 from typing import Any, Self
 
-from pyfuse._backend import Backend
-from pyfuse._errors import RemoteError
+from pyfuse.worker.backends.base import Backend
+from pyfuse.core.errors import RemoteError
 
 
 _MISSING = object()
@@ -124,7 +124,3 @@ class Result:
     def __repr__(self) -> str:
         s = "pending" if self._envelope is None else self._envelope.status
         return f"Result(task_id={self._task_id!r}, status={s!r})"
-
-
-# Backward-compat alias
-FuseResult = Result
