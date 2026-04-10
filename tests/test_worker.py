@@ -9,7 +9,7 @@ from pyfuse.core.errors import WorkerError
 from pyfuse.core.models import FunctionNode, ImportInfo
 from pyfuse.graph.store import Store
 from pyfuse.core.task import Task
-from pyfuse.worker.worker import Worker, _compute_subgraph_key, execute
+from pyfuse.worker.worker import BuildInfo, Worker, _compute_subgraph_key, execute
 
 
 # -- Helpers -----------------------------------------------------------------
@@ -214,6 +214,43 @@ class TestRun:
         worker.run(task)
         assert worker.cache_info()["size"] == 1
 
+
+# -- BuildInfo tracking -------------------------------------------------------
+
+class TestBuildInfo:
+    def test_initial_none(self) -> None:
+        worker = Worker(auto_install=False)
+        assert worker.last_build_info() is None
+
+    def test_cache_miss(self) -> None:
+        _, json_str = _simple_store()
+        worker = Worker(auto_install=False)
+        worker.execute(json_str, "f", 1)
+        info = worker.last_build_info()
+        assert info is not None
+        assert info.cache_hit is False
+        assert info.installed_packages == []
+
+    def test_cache_hit(self) -> None:
+        _, json_str = _simple_store()
+        worker = Worker(auto_install=False)
+        worker.execute(json_str, "f", 1)
+        worker.execute(json_str, "f", 2)
+        info = worker.last_build_info()
+        assert info is not None
+        assert info.cache_hit is True
+
+    def test_run_tracks_build_info(self) -> None:
+        _, json_str = _simple_store()
+        task = Task(graph_json=json_str, function_name="f", args=(5,))
+        worker = Worker(auto_install=False)
+        worker.run(task)
+        info = worker.last_build_info()
+        assert info is not None
+        assert info.cache_hit is False
+
+
+# -- Convenience function ---------------------------------------------------
 
 class TestConvenienceExecute:
     def test_execute_function(self) -> None:

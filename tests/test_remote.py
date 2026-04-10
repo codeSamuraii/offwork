@@ -68,6 +68,7 @@ def _clean_backend() -> Iterator[None]:
     """Ensure no global backend leaks between tests."""
     yield
     _remote._active_backend = None
+    _remote._atexit_registered = False
 
 
 @pytest.fixture
@@ -206,6 +207,38 @@ class TestConnectDisconnect:
         _remote._active_backend = backend
         assert _remote.get_backend() is backend
 
+    def test_atexit_registered_on_connect(
+        self, backend: InMemoryBackend, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import atexit
+
+        registered: list[Any] = []
+        monkeypatch.setattr(atexit, "register", lambda fn: registered.append(fn))
+        monkeypatch.setattr(
+            _remote, "_create_backend", lambda *a, **kw: backend
+        )
+        _remote.connect("redis://localhost")
+        assert _remote.disconnect in registered
+
+    def test_atexit_registered_only_once(
+        self, backend: InMemoryBackend, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import atexit
+
+        call_count = 0
+
+        def mock_register(fn: Any) -> None:
+            nonlocal call_count
+            call_count += 1
+
+        monkeypatch.setattr(atexit, "register", mock_register)
+        monkeypatch.setattr(
+            _remote, "_create_backend", lambda *a, **kw: backend
+        )
+        _remote.connect("redis://localhost")
+        _remote.connect("redis://localhost")
+        assert call_count == 1
+
 
 # ---------------------------------------------------------------------------
 # .run() on traced functions
@@ -255,6 +288,81 @@ class TestRunMethod:
         future = add.run(3, 4)
         assert isinstance(future, Result)
         assert future.task_id  # non-empty
+
+
+# ---------------------------------------------------------------------------
+# _handle_task output
+# ---------------------------------------------------------------------------
+
+
+class TestHandleTaskOutput:
+    def test_output_build_on_first_call(
+        self, backend: InMemoryBackend, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from pyfuse import pack
+        from pyfuse.worker.worker import Worker
+
+        @trace
+        def add_one(x: int) -> int:
+            return x + 1
+
+        task = pack(add_one, 5)
+        backend.submit(task.to_json())
+
+        worker = Worker(auto_install=False)
+        for task_json in backend.listen():
+            _remote._handle_task(worker, backend, task_json)
+
+        out = capsys.readouterr().out
+        assert "(build)" in out
+        assert "ms" in out
+        assert "[ok ]" in out or "[ok" in out
+
+    def test_output_cached_on_second_call(
+        self, backend: InMemoryBackend, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from pyfuse import pack
+        from pyfuse.worker.worker import Worker
+
+        @trace
+        def double(x: int) -> int:
+            return x * 2
+
+        task1 = pack(double, 3)
+        task2 = pack(double, 7)
+        backend.submit(task1.to_json())
+        backend.submit(task2.to_json())
+
+        worker = Worker(auto_install=False)
+        for task_json in backend.listen():
+            _remote._handle_task(worker, backend, task_json)
+
+        lines = capsys.readouterr().out.strip().split("\n")
+        assert len(lines) == 2
+        assert "(build)" in lines[0]
+        assert "(cached)" in lines[1]
+
+    def test_output_error(
+        self, backend: InMemoryBackend, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from pyfuse import pack
+        from pyfuse.worker.worker import Worker
+
+        @trace
+        def boom() -> None:
+            raise RuntimeError("intentional")
+
+        task = pack(boom)
+        backend.submit(task.to_json())
+
+        worker = Worker(auto_install=False)
+        for task_json in backend.listen():
+            _remote._handle_task(worker, backend, task_json)
+
+        out = capsys.readouterr().out
+        assert "[err]" in out
+        assert "RuntimeError" in out
+        assert "intentional" in out
 
 
 # ---------------------------------------------------------------------------

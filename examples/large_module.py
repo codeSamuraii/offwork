@@ -59,5 +59,3 @@ if __name__ == "__main__":
     remote_result = full_sensor_report.run(3, 50, seed=42).result()
 
     assert local_result == remote_result
-
-    pyfuse.disconnect()

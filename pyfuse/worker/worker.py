@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from pyfuse.worker.deps import ensure_dependencies
@@ -14,6 +15,14 @@ from pyfuse.graph.store import Store
 from pyfuse.core.task import Task
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class BuildInfo:
+    """Metadata about how a function was resolved for execution."""
+
+    cache_hit: bool
+    installed_packages: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -82,6 +91,7 @@ class Worker:
         self._import_to_package = import_to_package
         self._auto_install = auto_install
         self._cache: dict[str, _CachedFunction] = {}
+        self._local = threading.local()
 
     def _get_cached(self, json_str: str, function_name: str) -> _CachedFunction:
         """Return the cached (or freshly built) function for *function_name*."""
@@ -89,6 +99,8 @@ class Worker:
         key = _compute_subgraph_key(store, function_name)
         if key not in self._cache:
             self._cache[key] = self._build(store, function_name, key)
+        else:
+            self._local.last_build_info = BuildInfo(cache_hit=True)
         return self._cache[key]
 
     def execute(
@@ -181,13 +193,24 @@ class Worker:
 
     # -- internals -------------------------------------------------------------
 
+    def last_build_info(self) -> BuildInfo | None:
+        """Return metadata about the most recent execution's build phase."""
+        return getattr(self._local, "last_build_info", None)
+
     def _build(
         self, store: Store, function_name: str, key: str
     ) -> _CachedFunction:
+        installed_packages: list[str] = []
         if self._auto_install:
-            ensure_dependencies(
+            install_result = ensure_dependencies(
                 store, function_name, self._import_to_package
             )
+            installed_packages = install_result.installed
+
+        self._local.last_build_info = BuildInfo(
+            cache_hit=False,
+            installed_packages=installed_packages,
+        )
 
         source = store.reconstruct(function_name)
         logger.debug("Reconstructed source for %s:\n%s", function_name, source)

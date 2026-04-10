@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import atexit
 import inspect
 import logging
 import os
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -14,6 +16,7 @@ from pyfuse.core.task import Task
 logger = logging.getLogger(__name__)
 
 _active_backend: Backend | None = None
+_atexit_registered = False
 
 _ENV_VAR = "PYFUSE_BACKEND"
 
@@ -67,9 +70,12 @@ def connect(url: str | None = None, **kwargs: Any) -> Backend:
     Backend
         The connected backend instance.
     """
-    global _active_backend
+    global _active_backend, _atexit_registered
     resolved = _resolve_url(url)
     _active_backend = _create_backend(resolved, **kwargs)
+    if not _atexit_registered:
+        atexit.register(disconnect)
+        _atexit_registered = True
     logger.info("Connected to backend: %s", resolved)
     return _active_backend
 
@@ -152,20 +158,32 @@ def _handle_task(
     task = Task.from_json(task_json)
     logger.info("Received task %s: %s", task.task_id, task.function_name)
 
+    error_msg = ""
+    t0 = time.monotonic()
     try:
         result = worker.run_with_policy(task)  # type: ignore[union-attr]
         envelope = ResultEnvelope.success(task.task_id, result)
     except Exception as exc:
         logger.exception("Task %s failed", task.task_id)
         envelope = ResultEnvelope.failure(task.task_id, exc)
+        error_msg = f"  {type(exc).__name__}: {exc}"
+    elapsed_ms = (time.monotonic() - t0) * 1000
 
     backend.send_result(task.task_id, envelope.to_json())
 
-    cache = worker.cache_info()  # type: ignore[union-attr]
-    status = "ok" if envelope.status == "ok" else "error"
+    build_info = worker.last_build_info()  # type: ignore[union-attr]
+    if build_info is not None and build_info.cache_hit:
+        detail = "cached"
+    elif build_info is not None and build_info.installed_packages:
+        pkgs = ", ".join(build_info.installed_packages)
+        detail = f"build + install {pkgs}"
+    else:
+        detail = "build"
+
+    status = "ok" if envelope.status == "ok" else "err"
     print(
-        f"  [{status}] {task.function_name:<30} "
-        f"cache size: {cache['size']}",
+        f"  [{status:<3}] {task.function_name:<40} "
+        f"{elapsed_ms:>6.0f}ms  ({detail}){error_msg}",
         flush=True,
     )
 

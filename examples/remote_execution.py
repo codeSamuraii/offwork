@@ -91,5 +91,3 @@ if __name__ == "__main__":
     print("--- Retry + timeout ---")
     future = fragile_add.run(10, 20)
     print(f"  fragile_add(10, 20) = {future.result()}")
-
-    pyfuse.disconnect()
