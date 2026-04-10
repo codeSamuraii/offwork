@@ -13,6 +13,7 @@ import argparse
 import importlib
 import os
 import sys
+from collections.abc import Callable
 
 
 def _cmd_worker(args: argparse.Namespace) -> None:
@@ -45,7 +46,7 @@ def _cmd_info(_args: argparse.Namespace) -> None:
             print(f"  {dep}: not installed")
 
 
-def _import_target(target: str) -> object:
+def _import_target(target: str) -> Callable[..., object]:
     """Import ``module:function`` and return the callable."""
     if ":" not in target:
         print(
@@ -56,7 +57,7 @@ def _import_target(target: str) -> object:
 
     module_path, func_name = target.rsplit(":", 1)
     mod = importlib.import_module(module_path)
-    func = getattr(mod, func_name, None)
+    func: Callable[..., object] | None = getattr(mod, func_name, None)
     if func is None:
         print(
             f"Error: {func_name!r} not found in module {module_path!r}",

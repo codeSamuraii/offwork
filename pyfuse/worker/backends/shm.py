@@ -17,6 +17,8 @@ from multiprocessing.managers import BaseManager
 from multiprocessing.shared_memory import SharedMemory
 from urllib.parse import parse_qs, urlparse
 
+from typing import Any
+
 from pyfuse.worker.backends.base import Backend
 
 logger = logging.getLogger(__name__)
@@ -35,8 +37,10 @@ def _write_shm_block(payload: str) -> str:
     name = f"pf_{uuid.uuid4().hex[:12]}"
     block = SharedMemory(create=True, size=_SHM_HEADER_SIZE + len(data), name=name)
     try:
-        struct.pack_into("Q", block.buf, 0, len(data))
-        block.buf[_SHM_HEADER_SIZE : _SHM_HEADER_SIZE + len(data)] = data
+        buf = block.buf
+        assert buf is not None
+        struct.pack_into("Q", buf, 0, len(data))
+        buf[_SHM_HEADER_SIZE : _SHM_HEADER_SIZE + len(data)] = data
     finally:
         block.close()
     return name
@@ -49,8 +53,10 @@ def _read_shm_block(name: str, *, unlink: bool = True) -> str:
     """
     block = SharedMemory(name=name, create=False)
     try:
-        length = struct.unpack_from("Q", block.buf, 0)[0]
-        data = bytes(block.buf[_SHM_HEADER_SIZE : _SHM_HEADER_SIZE + length])
+        buf = block.buf
+        assert buf is not None
+        length = struct.unpack_from("Q", buf, 0)[0]
+        data = bytes(buf[_SHM_HEADER_SIZE : _SHM_HEADER_SIZE + length])
         return data.decode("utf-8")
     finally:
         block.close()
@@ -225,6 +231,7 @@ class SharedMemoryBackend(Backend):
         self._is_server = False
         self._server_manager: _PyfuseManager | None = None
         self._client: _PyfuseManagerClient | None = None
+        self._broker: Any = None
         self._tracker = _ShmBlockTracker()
         atexit.register(self._tracker.cleanup)
 
@@ -243,7 +250,8 @@ class SharedMemoryBackend(Backend):
                     time.sleep(0.1)
                     self._connect_client(host, port, auth)
 
-        self._broker = self._client.broker()  # type: ignore[union-attr]
+        assert self._client is not None
+        self._broker = self._client.broker()
         logger.info(
             "SharedMemoryBackend ready (server=%s, %s:%d)",
             self._is_server, host, port,

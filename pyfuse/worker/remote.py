@@ -6,12 +6,15 @@ import logging
 import os
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pyfuse.worker.backends.base import Backend
 from pyfuse.worker.backends.redis import RedisBackend
 from pyfuse.worker.result import Result, ResultEnvelope
 from pyfuse.core.task import Task
+
+if TYPE_CHECKING:
+    from pyfuse.worker.worker import Worker
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +153,7 @@ def submit_remote(
 
 
 def _handle_task(
-    worker: object,
+    worker: Worker,
     backend: Backend,
     task_json: str,
 ) -> None:
@@ -161,7 +164,7 @@ def _handle_task(
     error_msg = ""
     t0 = time.monotonic()
     try:
-        result = worker.run_with_policy(task)  # type: ignore[union-attr]
+        result = worker.run_with_policy(task)
         envelope = ResultEnvelope.success(task.task_id, result)
     except Exception as exc:
         logger.exception("Task %s failed", task.task_id)
@@ -171,7 +174,7 @@ def _handle_task(
 
     backend.send_result(task.task_id, envelope.to_json())
 
-    build_info = worker.last_build_info()  # type: ignore[union-attr]
+    build_info = worker.last_build_info()
     if build_info is not None and build_info.cache_hit:
         detail = "cached"
     elif build_info is not None and build_info.installed_packages:

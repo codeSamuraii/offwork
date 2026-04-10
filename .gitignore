@@ -7,4 +7,7 @@ __pycache__/
 poetry.lock
 *.pyc
 *.rdb
+*.egg-info/
+dist/
+build/
 .DS_Store

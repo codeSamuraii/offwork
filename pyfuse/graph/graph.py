@@ -160,7 +160,7 @@ class Graph(TracingMixin):
         # Unwrap if already traced
         original = func
         while hasattr(original, "__wrapped__"):
-            original = original.__wrapped__  # type: ignore[attr-defined]
+            original = original.__wrapped__
 
         qualified_name = f"{original.__module__}.{original.__qualname__}"
         logger.info("Registering %s", qualified_name)

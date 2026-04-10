@@ -11,7 +11,10 @@ import sysconfig
 import threading
 from collections.abc import AsyncGenerator, Callable, Generator
 from pathlib import Path
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
+
+if TYPE_CHECKING:
+    from pyfuse.worker.backends.base import Backend
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +28,7 @@ def _make_run_method(
 ) -> Callable[..., object]:
     """Create the ``.run()`` / ``.delay()`` method attached to a traced wrapper."""
 
-    def run(*args: object, backend: object | None = None, **kwargs: object) -> object:
+    def run(*args: object, backend: str | Backend | None = None, **kwargs: object) -> object:
         from pyfuse.worker.remote import submit_remote
 
         return submit_remote(func, wrapper, *args, _backend=backend, **kwargs)
