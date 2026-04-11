@@ -2,16 +2,16 @@ import inspect
 from collections.abc import Callable
 from typing import Any
 
-from pyfuse.worker.backends.base import Backend
-from pyfuse.graph.decorator import trace
-from pyfuse.worker.deps import install_package_as
-from pyfuse.core.errors import Error, DependencyError, RemoteError, WorkerError
-from pyfuse.graph.graph import Graph
+from pyfuse.core.errors import DependencyError, Error, RemoteError, WorkerError
 from pyfuse.core.models import FunctionNode, ImportInfo
+from pyfuse.core.task import Task
+from pyfuse.graph.decorator import trace
+from pyfuse.graph.graph import Graph
+from pyfuse.graph.store import MergeResult, Store
+from pyfuse.worker.backends.base import Backend
+from pyfuse.worker.deps import install_package_as
 from pyfuse.worker.remote import connect, disconnect, serve
 from pyfuse.worker.result import Result, ResultEnvelope
-from pyfuse.graph.store import Store, MergeResult
-from pyfuse.core.task import Task
 from pyfuse.worker.worker import Worker
 from pyfuse.worker.worker import execute as execute
 

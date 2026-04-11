@@ -5,8 +5,8 @@ import traceback as tb_mod
 from dataclasses import dataclass
 from typing import Any, Self
 
-from pyfuse.worker.backends.base import Backend
 from pyfuse.core.errors import RemoteError
+from pyfuse.worker.backends.base import Backend
 
 
 _MISSING = object()

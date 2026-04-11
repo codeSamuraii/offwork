@@ -47,6 +47,16 @@ def _make_map_method(
     return map
 
 
+def _attach_traced_attrs(
+    wrapper: Callable[..., object], func: Callable[..., object]
+) -> None:
+    """Attach pyfuse metadata and .run()/.map() to a traced wrapper."""
+    wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
+    run = _make_run_method(wrapper, func)
+    wrapper.run = run  # type: ignore[attr-defined]
+    wrapper.map = _make_map_method(run)  # type: ignore[attr-defined]
+
+
 def _get_stdlib_dirs() -> list[str]:
     dirs: list[str] = []
     for key in ("stdlib", "platstdlib"):
@@ -148,9 +158,7 @@ class TracingMixin:
                 async_gen = func(*args, **kwargs)
                 return self._proxy_async_generator(async_gen, qualified_name)
 
-            async_gen_wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
-            async_gen_wrapper.run = _make_run_method(async_gen_wrapper, func)  # type: ignore[attr-defined]
-            async_gen_wrapper.map = _make_map_method(async_gen_wrapper.run)  # type: ignore[attr-defined]
+            _attach_traced_attrs(async_gen_wrapper, func)
             return async_gen_wrapper  # type: ignore[return-value]
 
         if inspect.iscoroutinefunction(func):
@@ -166,9 +174,7 @@ class TracingMixin:
                 finally:
                     stack.pop()
 
-            async_wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
-            async_wrapper.run = _make_run_method(async_wrapper, func)  # type: ignore[attr-defined]
-            async_wrapper.map = _make_map_method(async_wrapper.run)  # type: ignore[attr-defined]
+            _attach_traced_attrs(async_wrapper, func)
             return async_wrapper  # type: ignore[return-value]
 
         if inspect.isgeneratorfunction(func):
@@ -180,9 +186,7 @@ class TracingMixin:
                 gen = func(*args, **kwargs)
                 return self._proxy_generator(gen, qualified_name)
 
-            gen_wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
-            gen_wrapper.run = _make_run_method(gen_wrapper, func)  # type: ignore[attr-defined]
-            gen_wrapper.map = _make_map_method(gen_wrapper.run)  # type: ignore[attr-defined]
+            _attach_traced_attrs(gen_wrapper, func)
             return gen_wrapper  # type: ignore[return-value]
 
         logger.debug("Creating wrapper for %s", qualified_name)
@@ -197,9 +201,7 @@ class TracingMixin:
             finally:
                 stack.pop()
 
-        wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
-        wrapper.run = _make_run_method(wrapper, func)  # type: ignore[attr-defined]
-        wrapper.map = _make_map_method(wrapper.run)  # type: ignore[attr-defined]
+        _attach_traced_attrs(wrapper, func)
         return wrapper  # type: ignore[return-value]
 
     def _proxy_generator(

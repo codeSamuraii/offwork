@@ -7,7 +7,8 @@ import logging
 import textwrap
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from pyfuse.core.models import ImportInfo
 
@@ -338,6 +339,163 @@ def _resolve_root_var(node: ast.expr) -> str | None:
             return None
 
 
+def _prefer_same_module(
+    matches: list[FunctionNode], func_module: str
+) -> FunctionNode:
+    """Pick a node from the same module when possible, otherwise first match."""
+    same_module = [m for m in matches if m.module == func_module]
+    return same_module[0] if same_module else matches[0]
+
+
+def _classify_calls(
+    tree: ast.Module,
+) -> tuple[set[str], set[str], set[tuple[str, str]]]:
+    """Walk the AST and classify calls into bare, self/cls, and obj.method."""
+    bare_calls: set[str] = set()
+    self_calls: set[str] = set()
+    obj_method_calls: set[tuple[str, str]] = set()
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name):
+            bare_calls.add(node.func.id)
+        elif isinstance(node.func, ast.Attribute):
+            root_var = _resolve_root_var(node.func.value)
+            if root_var is None:
+                continue
+            if root_var in ("self", "cls"):
+                self_calls.add(node.func.attr)
+            else:
+                obj_method_calls.add((root_var, node.func.attr))
+
+    return bare_calls, self_calls, obj_method_calls
+
+
+def _extract_param_types(tree: ast.Module) -> dict[str, set[str]]:
+    """Extract parameter type annotation names from the first function def."""
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        param_types: dict[str, set[str]] = {}
+        for arg in node.args.args + node.args.kwonlyargs:
+            if arg.annotation is not None:
+                param_types[arg.arg] = _extract_annotation_type_names(arg.annotation)
+        if param_types:
+            logger.debug("Type annotations: %s", {k: sorted(v) for k, v in param_types.items()})
+        return param_types
+    return {}
+
+
+def _resolve_bare_calls(
+    called_names: set[str],
+    func_module: str,
+    registry: dict[str, FunctionNode],
+) -> list[str]:
+    """Match bare function calls (``helper()``) against the registry."""
+    deps: list[str] = []
+    for called in called_names:
+        matches = [node for node in registry.values() if node.name == called]
+        if matches:
+            chosen = _prefer_same_module(matches, func_module)
+            logger.debug("Bare call %s() -> %s", called, chosen.qualified_name)
+            deps.append(chosen.qualified_name)
+            continue
+        # Check for class constructor: ClassName() -> ClassName.__init__
+        init_matches = [
+            node for node in registry.values()
+            if node.name == "__init__" and node.owner_class == called
+        ]
+        if init_matches:
+            chosen = _prefer_same_module(init_matches, func_module)
+            logger.debug("Constructor call %s() -> %s", called, chosen.qualified_name)
+            deps.append(chosen.qualified_name)
+    return deps
+
+
+def _resolve_self_calls(
+    self_calls: set[str],
+    owner_class: str,
+    func_module: str,
+    registry: dict[str, FunctionNode],
+    existing_deps: list[str],
+) -> list[str]:
+    """Match ``self.method()`` / ``cls.method()`` calls against the registry."""
+    deps: list[str] = []
+    for method_name in self_calls:
+        matches = [
+            node for node in registry.values()
+            if node.name == method_name and node.owner_class == owner_class
+        ]
+        if not matches:
+            continue
+        chosen = _prefer_same_module(matches, func_module)
+        if chosen.qualified_name not in existing_deps:
+            logger.debug("self/cls call .%s() -> %s", method_name, chosen.qualified_name)
+            deps.append(chosen.qualified_name)
+    return deps
+
+
+def _build_class_method_index(
+    registry: dict[str, FunctionNode],
+) -> dict[str, dict[str, str]]:
+    """Build lookup: simple class name -> {method_name -> qualified_name}."""
+    index: dict[str, dict[str, str]] = {}
+    for node in registry.values():
+        if node.owner_class is None:
+            continue
+        simple_class = node.owner_class.rsplit(".", 1)[-1]
+        index.setdefault(simple_class, {})[node.name] = node.qualified_name
+    return index
+
+
+def _resolve_obj_method_calls(
+    obj_method_calls: set[tuple[str, str]],
+    param_types: dict[str, set[str]],
+    registry: dict[str, FunctionNode],
+    existing_deps: list[str],
+) -> list[str]:
+    """Match ``obj.method()`` calls via type annotations or unambiguous match."""
+    class_methods = _build_class_method_index(registry)
+    deps: list[str] = []
+
+    for var_name, method_name in obj_method_calls:
+        resolved = _resolve_single_obj_method(
+            var_name, method_name, param_types, class_methods, registry,
+        )
+        if resolved is not None and resolved not in existing_deps:
+            deps.append(resolved)
+
+    return deps
+
+
+def _resolve_single_obj_method(
+    var_name: str,
+    method_name: str,
+    param_types: dict[str, set[str]],
+    class_methods: dict[str, dict[str, str]],
+    registry: dict[str, FunctionNode],
+) -> str | None:
+    """Resolve a single ``obj.method()`` call to a qualified name."""
+    if var_name in param_types:
+        for type_name in param_types[var_name]:
+            methods = class_methods.get(type_name)
+            if methods and method_name in methods:
+                resolved = methods[method_name]
+                logger.debug("%s.%s() resolved via annotation -> %s", var_name, method_name, resolved)
+                return resolved
+        return None
+
+    candidates = [
+        node.qualified_name for node in registry.values()
+        if node.name == method_name and node.owner_class is not None
+    ]
+    if len(candidates) == 1:
+        logger.debug("%s.%s() resolved via unambiguous match -> %s", var_name, method_name, candidates[0])
+        return candidates[0]
+    return None
+
+
 def detect_traced_dependencies(
     func_source: str,
     func_module: str,
@@ -346,121 +504,19 @@ def detect_traced_dependencies(
 ) -> list[str]:
     """Find qualified names of traced functions called in func_source."""
     tree = ast.parse(func_source)
-    called_names: set[str] = set()
-    self_method_calls: set[str] = set()
-    obj_method_calls: set[tuple[str, str]] = set()
+    called_names, self_calls, obj_method_calls = _classify_calls(tree)
+    param_types = _extract_param_types(tree)
 
-    # Extract parameter type annotations
-    param_types: dict[str, set[str]] = {}
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            for arg in node.args.args + node.args.kwonlyargs:
-                if arg.annotation is not None:
-                    param_types[arg.arg] = _extract_annotation_type_names(
-                        arg.annotation
-                    )
-            break
-    if param_types:
-        logger.debug(
-            "Type annotations: %s",
-            {k: sorted(v) for k, v in param_types.items()},
-        )
+    deps = _resolve_bare_calls(called_names, func_module, registry)
 
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            root_var = _resolve_root_var(node.func.value)
-            if root_var is not None:
-                if root_var in ("self", "cls"):
-                    self_method_calls.add(node.func.attr)
-                else:
-                    obj_method_calls.add((root_var, node.func.attr))
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            called_names.add(node.func.id)
+    if owner_class and self_calls:
+        deps.extend(_resolve_self_calls(
+            self_calls, owner_class, func_module, registry, deps,
+        ))
 
-    deps: list[str] = []
-    for called in called_names:
-        matches = [n for n in registry.values() if n.name == called]
-        if not matches:
-            # Check for class constructor: ClassName() -> ClassName.__init__
-            init_matches = [
-                n for n in registry.values()
-                if n.name == "__init__" and n.owner_class == called
-            ]
-            if init_matches:
-                same_module = [m for m in init_matches if m.module == func_module]
-                chosen = same_module[0] if same_module else init_matches[0]
-                logger.debug("Constructor call %s() -> %s", called, chosen.qualified_name)
-                deps.append(chosen.qualified_name)
-            continue
-        same_module = [m for m in matches if m.module == func_module]
-        chosen = same_module[0] if same_module else matches[0]
-        logger.debug("Bare call %s() -> %s", called, chosen.qualified_name)
-        deps.append(chosen.qualified_name)
-
-    if owner_class and self_method_calls:
-        for method_name in self_method_calls:
-            matches = [
-                n
-                for n in registry.values()
-                if n.name == method_name and n.owner_class == owner_class
-            ]
-            if not matches:
-                continue
-            same_module = [m for m in matches if m.module == func_module]
-            chosen = same_module[0] if same_module else matches[0]
-            if chosen.qualified_name not in deps:
-                logger.debug(
-                    "self/cls call .%s() -> %s",
-                    method_name,
-                    chosen.qualified_name,
-                )
-                deps.append(chosen.qualified_name)
-
-    # Resolve obj.method() calls via type annotations or unambiguous match
     if obj_method_calls:
-        # Build lookup: simple class name -> {method_name -> qualified_name}
-        class_methods: dict[str, dict[str, str]] = {}
-        for n in registry.values():
-            if n.owner_class is not None:
-                simple_class = n.owner_class.rsplit(".", 1)[-1]
-                class_methods.setdefault(simple_class, {})[n.name] = (
-                    n.qualified_name
-                )
-
-        for var_name, method_name in obj_method_calls:
-            resolved: str | None = None
-
-            if var_name in param_types:
-                # Type annotation present -- use it to resolve
-                type_names = param_types[var_name]
-                for type_name in type_names:
-                    methods = class_methods.get(type_name)
-                    if methods and method_name in methods:
-                        resolved = methods[method_name]
-                        logger.debug(
-                            "%s.%s() resolved via annotation -> %s",
-                            var_name,
-                            method_name,
-                            resolved,
-                        )
-                        break
-            else:
-                # No annotation -- fallback to unambiguous match
-                candidates = [
-                    n.qualified_name
-                    for n in registry.values()
-                    if n.name == method_name and n.owner_class is not None
-                ]
-                if len(candidates) == 1:
-                    resolved = candidates[0]
-                    logger.debug(
-                        "%s.%s() resolved via unambiguous match -> %s",
-                        var_name,
-                        method_name,
-                        resolved,
-                    )
-
-            if resolved is not None and resolved not in deps:
-                deps.append(resolved)
+        deps.extend(_resolve_obj_method_calls(
+            obj_method_calls, param_types, registry, deps,
+        ))
 
     return sorted(deps)

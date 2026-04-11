@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from graphlib import TopologicalSorter
 from typing import Any
@@ -12,6 +11,100 @@ from pyfuse.core.version import _VERSION
 from pyfuse.graph.analyzer import hoist_closure_func_refs, hoist_closure_vars
 
 logger = logging.getLogger(__name__)
+
+
+# -- Reconstruction helpers (used by Store.reconstruct) ----------------------
+
+
+def _topological_order(nodes: dict[str, FunctionNode]) -> list[str]:
+    """Return qualified names in dependency-first order."""
+    sorter: TopologicalSorter[str] = TopologicalSorter()
+    for qname, node in nodes.items():
+        sorter.add(qname, *[dep for dep in node.dependencies if dep in nodes])
+    return list(sorter.static_order())
+
+
+def _collect_imports(
+    nodes: dict[str, FunctionNode], order: list[str]
+) -> list[str]:
+    """Deduplicate and sort import statements across all nodes."""
+    seen: dict[str, None] = {}
+    for qname in order:
+        for imp in nodes[qname].imports:
+            seen.setdefault(imp.statement, None)
+    return sorted(seen)
+
+
+def _collect_module_vars(
+    nodes: dict[str, FunctionNode], order: list[str]
+) -> list[str]:
+    """Deduplicate module-level variable assignments across all nodes."""
+    seen: dict[str, str] = {}
+    func_and_class_names = {node.name for node in nodes.values()}
+    for qname in order:
+        for var_name, var_src in nodes[qname].module_vars.items():
+            if var_name not in seen and var_name not in func_and_class_names:
+                seen[var_name] = var_src
+    return list(seen.values())
+
+
+def _group_by_class(
+    nodes: dict[str, FunctionNode], order: list[str]
+) -> dict[str, list[str]]:
+    """Group qualified names by owner_class, preserving topological order."""
+    groups: dict[str, list[str]] = {}
+    for qname in order:
+        owner = nodes[qname].owner_class
+        if owner is not None:
+            groups.setdefault(owner, []).append(qname)
+    return groups
+
+
+def _apply_closure_transforms(
+    node: FunctionNode, all_nodes: dict[str, FunctionNode]
+) -> str:
+    """Apply closure variable and function reference hoisting to source."""
+    source = node.source
+    if node.closure_vars:
+        source = hoist_closure_vars(source, node.closure_vars)
+    if node.closure_func_refs:
+        source = hoist_closure_func_refs(source, node.closure_func_refs, all_nodes)
+    return source
+
+
+def _indent_method(source: str) -> str:
+    """Indent a method source for embedding inside a class block."""
+    return "\n".join(
+        ("    " + line if line.strip() else "")
+        for line in source.rstrip().splitlines()
+    )
+
+
+def _build_class_block(
+    owner_class: str,
+    member_qnames: list[str],
+    nodes: dict[str, FunctionNode],
+) -> str:
+    """Build a complete ``class ... :`` block from member nodes."""
+    class_name = owner_class.rsplit(".", 1)[-1]
+
+    method_sources = [
+        _indent_method(_apply_closure_transforms(nodes[qname], nodes))
+        for qname in member_qnames
+    ]
+
+    bases: list[str] = []
+    for qname in member_qnames:
+        if nodes[qname].class_bases:
+            bases = nodes[qname].class_bases
+            break
+
+    if bases:
+        header = f"class {class_name}({', '.join(bases)}):\n"
+    else:
+        header = f"class {class_name}:\n"
+
+    return header + "\n\n".join(method_sources)
 
 
 @dataclass
@@ -179,44 +272,50 @@ class Store:
         Raises :class:`KeyError` if *function_name* is not found.
         """
         hash_to_qname = {h: qn for qn, h in self._refs.items()}
-
         target_hash = self._resolve_function_hash(function_name)
-
         reachable = self.walk(target_hash)
 
         needed: dict[str, FunctionNode] = {}
-        for h in reachable:
-            blob = self._objects.get(h)
+        for content_hash in reachable:
+            blob = self._objects.get(content_hash)
             if blob is None:
                 continue
-            qn = hash_to_qname.get(h, f"{blob['module']}.{blob['name']}")
-            closure_func_refs = {
-                var: hash_to_qname.get(ref_h, ref_h)
-                for var, ref_h in blob.get("closure_func_refs", {}).items()
-            }
-            dep_qnames = [
-                hash_to_qname.get(d, d)
-                for d in self._deps.get(h, [])
-            ]
-            node = FunctionNode(
-                qualified_name=qn,
-                name=blob["name"],
-                module=blob["module"],
-                source=blob["source"],
-                imports=[ImportInfo.from_dict(imp) for imp in blob["imports"]],
-                dependencies=dep_qnames,
-                owner_class=blob.get("owner_class"),
-                closure_vars=blob.get("closure_vars", {}),
-                closure_func_refs=closure_func_refs,
-                module_vars=blob.get("module_vars", {}),
-                class_bases=blob.get("class_bases", []),
+            needed[hash_to_qname.get(content_hash, f"{blob['module']}.{blob['name']}")] = (
+                self._blob_to_node(content_hash, blob, hash_to_qname)
             )
-            needed[qn] = node
 
-        target_qname = hash_to_qname.get(
-            target_hash, f"unknown.{function_name}"
-        )
+        target_qname = hash_to_qname.get(target_hash, f"unknown.{function_name}")
         return target_qname, needed
+
+    def _blob_to_node(
+        self,
+        content_hash: str,
+        blob: dict[str, Any],
+        hash_to_qname: dict[str, str],
+    ) -> FunctionNode:
+        """Convert a raw content blob into a FunctionNode."""
+        qname = hash_to_qname.get(content_hash, f"{blob['module']}.{blob['name']}")
+        closure_func_refs = {
+            var: hash_to_qname.get(ref_hash, ref_hash)
+            for var, ref_hash in blob.get("closure_func_refs", {}).items()
+        }
+        dep_qnames = [
+            hash_to_qname.get(dep_hash, dep_hash)
+            for dep_hash in self._deps.get(content_hash, [])
+        ]
+        return FunctionNode(
+            qualified_name=qname,
+            name=blob["name"],
+            module=blob["module"],
+            source=blob["source"],
+            imports=[ImportInfo.from_dict(imp) for imp in blob["imports"]],
+            dependencies=dep_qnames,
+            owner_class=blob.get("owner_class"),
+            closure_vars=blob.get("closure_vars", {}),
+            closure_func_refs=closure_func_refs,
+            module_vars=blob.get("module_vars", {}),
+            class_bases=blob.get("class_bases", []),
+        )
 
     def reconstruct(self, function_name: str) -> str:
         """Reconstruct executable Python source for *function_name*."""
@@ -224,91 +323,33 @@ class Store:
 
         logger.debug(
             "Reconstructing %s: %d dependencies",
-            target_qname,
-            len(needed) - 1,
+            target_qname, len(needed) - 1,
         )
 
-        sorter: TopologicalSorter[str] = TopologicalSorter()
-        for qn, node in needed.items():
-            sorter.add(qn, *[d for d in node.dependencies if d in needed])
-        order = list(sorter.static_order())
+        order = _topological_order(needed)
         logger.debug("Topological order: %s", order)
 
-        # Collect and deduplicate imports
-        seen_statements: dict[str, None] = {}
-        for qn in order:
-            for imp in needed[qn].imports:
-                seen_statements.setdefault(imp.statement, None)
-        import_lines = sorted(seen_statements.keys())
+        import_lines = _collect_imports(needed, order)
+        module_var_lines = _collect_module_vars(needed, order)
+        class_groups = _group_by_class(needed, order)
 
-        # Group nodes by owner_class
-        class_groups: dict[str, list[str]] = {}
-        for qn in order:
-            oc = needed[qn].owner_class
-            if oc is not None:
-                class_groups.setdefault(oc, []).append(qn)
-
-        # Collect and deduplicate module-level variable assignments
-        seen_vars: dict[str, str] = {}
-        func_and_class_names = {node.name for node in needed.values()}
-        for qn in order:
-            for var_name, var_src in needed[qn].module_vars.items():
-                if var_name not in seen_vars and var_name not in func_and_class_names:
-                    seen_vars[var_name] = var_src
-
-        # Assemble script
         parts: list[str] = []
         if import_lines:
             parts.append("\n".join(import_lines))
-        if seen_vars:
-            parts.append("\n".join(seen_vars.values()))
+        if module_var_lines:
+            parts.append("\n".join(module_var_lines))
 
         emitted_classes: set[str] = set()
-        for qn in order:
-            node = needed[qn]
-            source = node.source
-            if node.closure_vars:
-                source = hoist_closure_vars(source, node.closure_vars)
-            if node.closure_func_refs:
-                source = hoist_closure_func_refs(
-                    source, node.closure_func_refs, needed
-                )
+        for qname in order:
+            node = needed[qname]
+            source = _apply_closure_transforms(node, needed)
             if node.owner_class is None:
                 parts.append(source.rstrip())
             elif node.owner_class not in emitted_classes:
                 emitted_classes.add(node.owner_class)
-                class_name = node.owner_class.rsplit(".", 1)[-1]
-                method_sources: list[str] = []
-                for member_qn in class_groups[node.owner_class]:
-                    member_node = needed[member_qn]
-                    member_src = member_node.source
-                    if member_node.closure_vars:
-                        member_src = hoist_closure_vars(
-                            member_src, member_node.closure_vars
-                        )
-                    if member_node.closure_func_refs:
-                        member_src = hoist_closure_func_refs(
-                            member_src, member_node.closure_func_refs, needed
-                        )
-                    member_src = member_src.rstrip()
-                    indented = "\n".join(
-                        ("    " + line if line.strip() else "")
-                        for line in member_src.splitlines()
-                    )
-                    method_sources.append(indented)
-                # Collect class bases from any member node
-                bases: list[str] = []
-                for member_qn in class_groups[node.owner_class]:
-                    member_bases = needed[member_qn].class_bases
-                    if member_bases:
-                        bases = member_bases
-                        break
-                if bases:
-                    class_header = f"class {class_name}({', '.join(bases)}):\n"
-                else:
-                    class_header = f"class {class_name}:\n"
-                class_block = class_header + "\n\n".join(method_sources)
-                parts.append(class_block)
+                parts.append(_build_class_block(
+                    node.owner_class, class_groups[node.owner_class], needed,
+                ))
 
         return "\n\n\n".join(parts) + "\n"
 

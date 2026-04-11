@@ -15,9 +15,8 @@ import uuid
 from collections.abc import Iterator
 from multiprocessing.managers import BaseManager
 from multiprocessing.shared_memory import SharedMemory
-from urllib.parse import parse_qs, urlparse
-
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from pyfuse.worker.backends.base import Backend
 

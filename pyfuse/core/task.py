@@ -36,26 +36,30 @@ class _TaskEncoder(json.JSONEncoder):
         }
 
 
+def _reconstruct_object(info: dict[str, Any], namespace: dict[str, Any]) -> Any:
+    """Rebuild a single serialized object from its sentinel payload."""
+    cls = namespace.get(info["class"])
+    if cls is None:
+        return {_OBJECT_SENTINEL: info}
+    obj = cls.__new__(cls)
+    state = {k: _resolve(v, namespace) for k, v in info.get("state", {}).items()}
+    if hasattr(obj, "__dict__"):
+        obj.__dict__.update(state)
+    else:
+        for key, val in state.items():
+            object.__setattr__(obj, key, val)
+    return obj
+
+
 def _resolve(value: Any, namespace: dict[str, Any]) -> Any:
     """Recursively resolve serialized object sentinels using *namespace*."""
-    if isinstance(value, dict):
-        if len(value) == 1 and _OBJECT_SENTINEL in value:
-            info = value[_OBJECT_SENTINEL]
-            cls = namespace.get(info["class"])
-            if cls is None:
-                return value
-            obj = cls.__new__(cls)
-            state = {k: _resolve(v, namespace) for k, v in info.get("state", {}).items()}
-            if hasattr(obj, "__dict__"):
-                obj.__dict__.update(state)
-            else:
-                for key, val in state.items():
-                    object.__setattr__(obj, key, val)
-            return obj
-        return {k: _resolve(v, namespace) for k, v in value.items()}
     if isinstance(value, list):
         return [_resolve(v, namespace) for v in value]
-    return value
+    if not isinstance(value, dict):
+        return value
+    if len(value) == 1 and _OBJECT_SENTINEL in value:
+        return _reconstruct_object(value[_OBJECT_SENTINEL], namespace)
+    return {k: _resolve(v, namespace) for k, v in value.items()}
 
 
 def resolve_args(

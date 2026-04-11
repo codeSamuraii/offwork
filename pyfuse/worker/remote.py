@@ -8,11 +8,11 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from pyfuse.core.task import Task
 from pyfuse.core.version import _VERSION
 from pyfuse.worker.backends.base import Backend
 from pyfuse.worker.backends.redis import RedisBackend
 from pyfuse.worker.result import Result, ResultEnvelope
-from pyfuse.core.task import Task
 
 if TYPE_CHECKING:
     from pyfuse.worker.worker import Worker
@@ -153,6 +153,19 @@ def submit_remote(
     return Result(task.task_id, backend)
 
 
+def _build_detail_tags(worker: Worker) -> str:
+    """Build a comma-separated detail string from the last build info."""
+    build_info = worker.last_build_info()
+    parts: list[str] = []
+    if build_info is not None and build_info.cache_hit:
+        parts.append("cached")
+    else:
+        parts.append("build")
+    if build_info is not None and build_info.installed_packages:
+        parts.append("pip " + " ".join(build_info.installed_packages))
+    return ", ".join(parts)
+
+
 def _handle_task(
     worker: Worker,
     backend: Backend,
@@ -160,10 +173,8 @@ def _handle_task(
 ) -> None:
     """Process a single task: deserialize, execute with policy, send result."""
     task = Task.from_json(task_json)
-    short_id = task.task_id[:8]
     logger.debug("Received task %s: %s", task.task_id, task.function_name)
 
-    error_msg = ""
     t0 = time.monotonic()
     try:
         result = worker.run_with_policy(task)
@@ -171,29 +182,22 @@ def _handle_task(
     except Exception as exc:
         logger.debug("Task %s failed", task.task_id, exc_info=True)
         envelope = ResultEnvelope.failure(task.task_id, exc)
-        error_msg = f"  {type(exc).__name__}: {exc}"
-    elapsed_ms = (time.monotonic() - t0) * 1000
 
+    elapsed_ms = (time.monotonic() - t0) * 1000
     backend.send_result(task.task_id, envelope.to_json())
 
-    build_info = worker.last_build_info()
-    details: list[str] = []
-    if build_info is not None and build_info.cache_hit:
-        details.append("cached")
-    else:
-        details.append("build")
-    if build_info is not None and build_info.installed_packages:
-        details.append("pip " + " ".join(build_info.installed_packages))
-
+    short_id = task.task_id[:8]
+    details = _build_detail_tags(worker)
     if envelope.status == "ok":
         logger.info(
             "\u2713  %-40s %6.0fms  %s  %s",
-            task.function_name, elapsed_ms, short_id, ", ".join(details),
+            task.function_name, elapsed_ms, short_id, details,
         )
     else:
+        error_msg = f"  {envelope.error_type}: {envelope.error_message}"
         logger.warning(
             "\u2717  %-40s %6.0fms  %s  %s%s",
-            task.function_name, elapsed_ms, short_id, ", ".join(details), error_msg,
+            task.function_name, elapsed_ms, short_id, details, error_msg,
         )
 
 
