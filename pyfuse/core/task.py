@@ -13,15 +13,27 @@ class _TaskEncoder(json.JSONEncoder):
 
     def default(self, o: object) -> Any:
         if hasattr(o, "__dict__"):
-            return {
-                _OBJECT_SENTINEL: {
-                    "class": type(o).__name__,
-                    "state": o.__dict__,
-                }
+            state = o.__dict__
+        elif hasattr(type(o), "__slots__"):
+            all_slots: set[str] = set()
+            for klass in type(o).__mro__:
+                all_slots.update(getattr(klass, "__slots__", ()))
+            all_slots -= {"__weakref__", "__dict__"}
+            state = {
+                slot: getattr(o, slot)
+                for slot in sorted(all_slots)
+                if hasattr(o, slot)
             }
-        raise TypeError(
-            f"Object of type {type(o).__name__} is not JSON serializable"
-        )
+        else:
+            raise TypeError(
+                f"Object of type {type(o).__name__} is not JSON serializable"
+            )
+        return {
+            _OBJECT_SENTINEL: {
+                "class": type(o).__name__,
+                "state": state,
+            }
+        }
 
 
 def _resolve(value: Any, namespace: dict[str, Any]) -> Any:
@@ -34,7 +46,11 @@ def _resolve(value: Any, namespace: dict[str, Any]) -> Any:
                 return value
             obj = cls.__new__(cls)
             state = {k: _resolve(v, namespace) for k, v in info.get("state", {}).items()}
-            obj.__dict__.update(state)
+            if hasattr(obj, "__dict__"):
+                obj.__dict__.update(state)
+            else:
+                for key, val in state.items():
+                    object.__setattr__(obj, key, val)
             return obj
         return {k: _resolve(v, namespace) for k, v in value.items()}
     if isinstance(value, list):

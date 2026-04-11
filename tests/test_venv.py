@@ -156,6 +156,54 @@ class TestDetectScriptPackages:
         # os is stdlib
         assert "os" not in packages
 
+    def test_skips_local_packages(self, tmp_path: pytest.TempPathFactory) -> None:
+        from pyfuse.__main__ import _detect_script_packages
+
+        # Create a local package directory
+        local_pkg = tmp_path / "mylocalpkg"  # type: ignore[operator]
+        local_pkg.mkdir()
+        (local_pkg / "__init__.py").write_text("")
+
+        script = tmp_path / "test_local.py"  # type: ignore[operator]
+        script.write_text(
+            "from mylocalpkg import utils\nimport requests\n"
+        )
+        packages = _detect_script_packages(str(script))
+        assert "requests" in packages
+        assert "mylocalpkg" not in packages
+
+    def test_skips_local_module_file(self, tmp_path: pytest.TempPathFactory) -> None:
+        from pyfuse.__main__ import _detect_script_packages
+
+        # Create a local .py module
+        (tmp_path / "helpers.py").write_text("x = 1\n")  # type: ignore[operator]
+
+        script = tmp_path / "test_local.py"  # type: ignore[operator]
+        script.write_text("import helpers\nimport requests\n")
+        packages = _detect_script_packages(str(script))
+        assert "requests" in packages
+        assert "helpers" not in packages
+
+    def test_install_package_as(self, tmp_path: pytest.TempPathFactory) -> None:
+        from pyfuse.__main__ import _detect_script_packages
+
+        script = tmp_path / "test_ipa.py"  # type: ignore[operator]
+        script.write_text(
+            "from pyfuse.worker.deps import install_package_as\n"
+            "import requests\n"
+            'with install_package_as("PyYAML"):\n'
+            "    import yaml\n"
+            'with install_package_as("python-dateutil"):\n'
+            "    from dateutil import parser\n"
+        )
+        packages = _detect_script_packages(str(script))
+        assert "requests" in packages
+        assert "PyYAML" in packages
+        assert "python-dateutil" in packages
+        # Raw module names should NOT appear since they have explicit packages
+        assert "yaml" not in packages
+        assert "dateutil" not in packages
+
 
 class TestDetectPyfuseExtras:
     def test_connect_redis(self, tmp_path: pytest.TempPathFactory) -> None:

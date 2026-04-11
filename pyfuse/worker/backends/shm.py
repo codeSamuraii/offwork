@@ -35,7 +35,10 @@ def _write_shm_block(payload: str) -> str:
     """Write *payload* into a new ``SharedMemory`` block. Returns the block name."""
     data = payload.encode("utf-8")
     name = f"pf_{uuid.uuid4().hex[:12]}"
-    block = SharedMemory(create=True, size=_SHM_HEADER_SIZE + len(data), name=name)
+    # track=False: cleanup is handled by _ShmBlockTracker and the consumer's
+    # unlink(), so we don't need the resource_tracker (which would warn on
+    # exit about blocks already unlinked by the consumer).
+    block = SharedMemory(create=True, size=_SHM_HEADER_SIZE + len(data), name=name, track=False)
     try:
         buf = block.buf
         assert buf is not None
@@ -51,7 +54,7 @@ def _read_shm_block(name: str, *, unlink: bool = True) -> str:
 
     Unlinks the block by default (consumer cleans up).
     """
-    block = SharedMemory(name=name, create=False)
+    block = SharedMemory(name=name, create=False, track=False)
     try:
         buf = block.buf
         assert buf is not None
@@ -88,7 +91,7 @@ class _ShmBlockTracker:
         with self._lock:
             for name in list(self._blocks):
                 try:
-                    block = SharedMemory(name=name, create=False)
+                    block = SharedMemory(name=name, create=False, track=False)
                     block.close()
                     block.unlink()
                 except FileNotFoundError:

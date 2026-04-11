@@ -160,26 +160,78 @@ def _parse_script(script: str) -> tuple[str, ast.Module | None]:
         return source, None
 
 
+def _is_local_package(module_name: str, script_dir: str) -> bool:
+    """Return True if *module_name* resolves to a local directory or .py file."""
+    from pathlib import Path
+
+    for base in (Path(script_dir), Path.cwd()):
+        if (base / module_name).is_dir():
+            return True
+        if (base / f"{module_name}.py").is_file():
+            return True
+    return False
+
+
+def _parse_install_package_as(node: ast.With) -> str | None:
+    """Return the package name if *node* is ``with install_package_as(...)``."""
+    if len(node.items) != 1:
+        return None
+    ctx = node.items[0].context_expr
+    if not (
+        isinstance(ctx, ast.Call)
+        and isinstance(ctx.func, ast.Name)
+        and ctx.func.id == "install_package_as"
+        and len(ctx.args) == 1
+        and isinstance(ctx.args[0], ast.Constant)
+        and isinstance(ctx.args[0].value, str)
+    ):
+        return None
+    return ctx.args[0].value
+
+
+def _extract_top_modules(node: ast.AST) -> list[str]:
+    """Extract top-level module names from an Import or ImportFrom node."""
+    if isinstance(node, ast.Import):
+        return [alias.name.split(".")[0] for alias in node.names]
+    if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+        return [node.module.split(".")[0]]
+    return []
+
+
 def _detect_script_packages(script: str) -> list[str]:
     """Parse a script file and return pip package names for third-party imports."""
+    from pathlib import Path
+
     from pyfuse.worker.deps import DEFAULT_IMPORT_TO_PACKAGE
 
     _source, tree = _parse_script(script)
     if tree is None:
         return []
 
-    modules: set[str] = set()
-    for node in ast.iter_child_nodes(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                modules.add(alias.name.split(".")[0])
-        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-            modules.add(node.module.split(".")[0])
+    script_dir = str(Path(script).resolve().parent)
 
-    third_party = sorted(
-        m for m in modules if m not in sys.stdlib_module_names and m != "pyfuse"
-    )
-    return [DEFAULT_IMPORT_TO_PACKAGE.get(m, m) for m in third_party]
+    # module name -> pip package name (None means use default mapping)
+    modules: dict[str, str | None] = {}
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for m in _extract_top_modules(node):
+                modules.setdefault(m, None)
+        elif isinstance(node, ast.With):
+            package = _parse_install_package_as(node)
+            if package is not None:
+                for child in node.body:
+                    for m in _extract_top_modules(child):
+                        modules[m] = package
+
+    packages: dict[str, None] = {}
+    for m, explicit_package in sorted(modules.items()):
+        if m in sys.stdlib_module_names or m == "pyfuse":
+            continue
+        if _is_local_package(m, script_dir):
+            continue
+        pkg = explicit_package or DEFAULT_IMPORT_TO_PACKAGE.get(m, m)
+        packages.setdefault(pkg, None)
+    return list(packages)
 
 
 def _detect_pyfuse_extras(script: str) -> list[str]:
@@ -245,8 +297,14 @@ def _cmd_run(args: argparse.Namespace) -> None:
         if script_args and script_args[0] == "--":
             script_args = script_args[1:]
 
+        # Add cwd to PYTHONPATH so local packages (tests/, etc.) are importable
+        env = os.environ.copy()
+        cwd = os.getcwd()
+        existing = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = cwd if not existing else f"{cwd}{os.pathsep}{existing}"
+
         cmd = [str(venv.python), str(script), *script_args]
-        proc = subprocess.Popen(cmd)
+        proc = subprocess.Popen(cmd, env=env)
 
         prev_term = signal.signal(signal.SIGTERM, lambda s, f: proc.send_signal(s))
         prev_int = signal.signal(signal.SIGINT, lambda s, f: proc.send_signal(s))

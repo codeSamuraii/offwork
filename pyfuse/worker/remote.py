@@ -80,7 +80,7 @@ def connect(url: str | None = None, **kwargs: Any) -> Backend:
     if not _atexit_registered:
         atexit.register(disconnect)
         _atexit_registered = True
-    logger.info("Connected to backend: %s", resolved)
+    logger.debug("Connected to backend: %s", resolved)
     return _active_backend
 
 
@@ -160,7 +160,8 @@ def _handle_task(
 ) -> None:
     """Process a single task: deserialize, execute with policy, send result."""
     task = Task.from_json(task_json)
-    logger.info("Received task %s: %s", task.task_id, task.function_name)
+    short_id = task.task_id[:8]
+    logger.debug("Received task %s: %s", task.task_id, task.function_name)
 
     error_msg = ""
     t0 = time.monotonic()
@@ -176,23 +177,24 @@ def _handle_task(
     backend.send_result(task.task_id, envelope.to_json())
 
     build_info = worker.last_build_info()
+    details: list[str] = []
     if build_info is not None and build_info.cache_hit:
-        detail = "cached"
-    elif build_info is not None and build_info.installed_packages:
-        pkgs = ", ".join(build_info.installed_packages)
-        detail = f"build + install {pkgs}"
+        details.append("cached")
     else:
-        detail = "build"
+        details.append("build")
+    if build_info is not None and build_info.installed_packages:
+        details.append("pip " + " ".join(build_info.installed_packages))
 
-    status = "ok" if envelope.status == "ok" else "err"
-    msg = (
-        f"[{status:<3}] {task.function_name:<40} "
-        f"{elapsed_ms:>6.0f}ms  {task.task_id}  ({detail}){error_msg}"
-    )
     if envelope.status == "ok":
-        logger.info(msg)
+        logger.info(
+            "\u2713  %-40s %6.0fms  %s  %s",
+            task.function_name, elapsed_ms, short_id, ", ".join(details),
+        )
     else:
-        logger.warning(msg)
+        logger.warning(
+            "\u2717  %-40s %6.0fms  %s  %s%s",
+            task.function_name, elapsed_ms, short_id, ", ".join(details), error_msg,
+        )
 
 
 def serve(
@@ -223,10 +225,11 @@ def serve(
 
     resolved = _resolve_url(url)
 
-    logger.info("pyfuse v%s", _VERSION)
-    logger.info("  backend:      %s", resolved)
-    logger.info("  concurrency:  %d", concurrency)
-    logger.info("  auto_install: %s", "on" if auto_install else "off")
+    auto_tag = "on" if auto_install else "off"
+    logger.info(
+        "pyfuse worker v%s  \u2502  %s  \u2502  concurrency=%d  \u2502  auto_install=%s",
+        _VERSION, resolved, concurrency, auto_tag,
+    )
 
     try:
         backend = connect(resolved)
@@ -239,7 +242,7 @@ def serve(
         import_to_package=import_to_package,
     )
 
-    logger.info("Listening for tasks. Press Ctrl+C to stop.")
+    logger.info("Listening for tasks \u2014 Ctrl+C to stop.")
 
     try:
         if concurrency > 1:

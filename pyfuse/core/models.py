@@ -42,6 +42,8 @@ class FunctionNode:
     owner_class: str | None = None
     closure_vars: dict[str, str] = field(default_factory=dict)
     closure_func_refs: dict[str, str] = field(default_factory=dict)
+    module_vars: dict[str, str] = field(default_factory=dict)
+    class_bases: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -57,6 +59,10 @@ class FunctionNode:
             d["closure_vars"] = dict(self.closure_vars)
         if self.closure_func_refs:
             d["closure_func_refs"] = dict(self.closure_func_refs)
+        if self.module_vars:
+            d["module_vars"] = dict(self.module_vars)
+        if self.class_bases:
+            d["class_bases"] = list(self.class_bases)
         return d
 
     def to_content_blob(self) -> dict[str, Any]:
@@ -76,6 +82,10 @@ class FunctionNode:
             blob["closure_vars"] = dict(self.closure_vars)
         if self.closure_func_refs:
             blob["closure_func_refs"] = dict(self.closure_func_refs)
+        if self.module_vars:
+            blob["module_vars"] = dict(self.module_vars)
+        if self.class_bases:
+            blob["class_bases"] = list(self.class_bases)
         return blob
 
     def content_hash(self) -> str:
@@ -95,6 +105,8 @@ class FunctionNode:
             "owner_class": self.owner_class,
             "closure_vars": dict(sorted(self.closure_vars.items())),
             "closure_func_refs": dict(sorted(self.closure_func_refs.items())),
+            "module_vars": dict(sorted(self.module_vars.items())),
+            "class_bases": list(self.class_bases),
         }
         raw = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
@@ -111,4 +123,6 @@ class FunctionNode:
             owner_class=data.get("owner_class"),
             closure_vars=data.get("closure_vars", {}),
             closure_func_refs=data.get("closure_func_refs", {}),
+            module_vars=data.get("module_vars", {}),
+            class_bases=data.get("class_bases", []),
         )

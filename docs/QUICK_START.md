@@ -133,6 +133,9 @@ python -m pyfuse worker --backend redis://localhost:6379 -c 4
 
 # Disable automatic pip installs
 python -m pyfuse worker --backend redis://localhost:6379 --no-auto-install
+
+# Run in an isolated temporary venv (auto-cleaned on exit)
+python -m pyfuse worker --backend redis://localhost:6379 --tmp
 ```
 
 Or start a worker programmatically:
@@ -140,6 +143,14 @@ Or start a worker programmatically:
 ```python
 import pyfuse
 pyfuse.serve("redis://localhost:6379", concurrency=4)
+```
+
+## Running scripts in a temporary venv
+
+The `run` command creates an isolated venv, auto-detects third-party dependencies from the script (including `install_package_as` blocks), installs them, and runs the script:
+
+```bash
+python -m pyfuse run examples/remote_execution.py
 ```
 
 ## Backends
@@ -292,12 +303,17 @@ merged = json.dumps({
 | Detected | How |
 |----------|-----|
 | Direct function calls (`helper()`) | AST analysis + auto-discovery |
+| Class constructors (`MyClass()`) | Auto-registers all methods of the class |
 | `self.method()` / `cls.method()` | AST analysis |
+| `@staticmethod` / `@classmethod` | Descriptor unwrapping + auto-discovery |
+| `super()` calls and inheritance | Base class discovery + dependency edges |
 | `obj.method()` with type annotation | Type annotation resolution |
 | `obj.method()` without annotation | Runtime tracing on first call |
+| Module-level constants (`MAX = 5`) | Captured and emitted in reconstructed source |
 | Standard library imports (`json`, `csv`) | Kept as import statements |
 | Third-party imports (`numpy`, `yaml`) | Kept as imports, auto-installed on worker |
 | Closure variables | Captured via `repr()` |
+| `__slots__` objects as arguments | Serialized via MRO slot inspection |
 | Generators and async functions | Supported with proxy wrappers |
 
 ## What is NOT captured
@@ -305,6 +321,7 @@ merged = json.dumps({
 - Functions without source code (builtins, `exec`'d, REPL-defined)
 - Dynamic imports (`__import__()`, `importlib.import_module()` in function bodies)
 - Relative star imports (`from . import *`)
+- Metaclasses and `__init_subclass__` hooks
 - Circular dependencies (raises `CycleError`)
 
 ## Error handling
@@ -328,10 +345,10 @@ except RemoteError as e:
 ## Running the examples
 
 ```bash
-# Serialization (no external services needed)
-poetry run python examples/serialization.py
-
-# Remote execution (requires Redis on localhost:6379)
-python -m pyfuse worker --backend redis://localhost:6379   # Terminal 1
-poetry run python examples/remote_execution.py             # Terminal 2
+# Remote execution
+python -m pyfuse worker --backend shm://localhost:9847 --tmp    # Terminal 1
+python -m pyfuse run examples/remote_execution.py               # Terminal 2
 ```
+
+The `--tmp` flag creates an isolated temporary venv for the worker, which is auto-cleaned on exit.
+The `pyfuse run` command also creates a temporary venv, auto-detects dependencies from the script, installs them, and runs the script -- no setup required.

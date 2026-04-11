@@ -116,7 +116,7 @@ class Worker:
         graphs skip reconstruction entirely.
         """
         cached = self._get_cached(json_str, function_name)
-        logger.info("Executing %s (cache key: %s)", function_name, cached.subgraph_key)
+        logger.debug("Executing %s (cache key: %s)", function_name, cached.subgraph_key)
         return cached.func(*args, **kwargs)
 
     async def execute_async(
@@ -128,7 +128,7 @@ class Worker:
     ) -> Any:
         """Like :meth:`execute` but ``await``s the target coroutine."""
         cached = self._get_cached(json_str, function_name)
-        logger.info("Executing async %s (cache key: %s)", function_name, cached.subgraph_key)
+        logger.debug("Executing async %s (cache key: %s)", function_name, cached.subgraph_key)
         return await cached.func(*args, **kwargs)
 
     def run(self, task: Task) -> Any:
@@ -137,7 +137,7 @@ class Worker:
 
         cached = self._get_cached(task.graph_json, task.function_name)
         args, kwargs = resolve_args(task.args, task.kwargs, cached.namespace)
-        logger.info("Executing %s (cache key: %s)", task.function_name, cached.subgraph_key)
+        logger.debug("Executing %s (cache key: %s)", task.function_name, cached.subgraph_key)
         return cached.func(*args, **kwargs)
 
     async def run_async(self, task: Task) -> Any:
@@ -146,7 +146,7 @@ class Worker:
 
         cached = self._get_cached(task.graph_json, task.function_name)
         args, kwargs = resolve_args(task.args, task.kwargs, cached.namespace)
-        logger.info("Executing async %s (cache key: %s)", task.function_name, cached.subgraph_key)
+        logger.debug("Executing async %s (cache key: %s)", task.function_name, cached.subgraph_key)
         return await cached.func(*args, **kwargs)
 
     def run_with_policy(self, task: Task) -> Any:

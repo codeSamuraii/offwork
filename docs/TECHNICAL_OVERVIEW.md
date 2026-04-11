@@ -21,21 +21,29 @@ pyfuse enables remote execution of Python functions without deploying code to wo
 
 ```
 pyfuse/
-    __init__.py      Public API: trace, connect, serve, serialize, reconstruct, ...
-    __main__.py      CLI: python -m pyfuse worker ...
-    _decorator.py    @trace: marks functions for remote execution
-    _analyzer.py     AST-based source and dependency analysis
-    _graph.py        Dependency graph: registration, subgraph extraction, runtime tracing
-    _store.py        Content-addressable store: serialization, reconstruction
-    _models.py       FunctionNode, ImportInfo dataclasses (incl. content hashing)
-    _task.py         Task: serializable envelope bundling graph + arguments
-    _worker.py       Worker: reconstruct, install deps, execute with caching
-    _backend.py      Backend ABC + RedisBackend: pluggable transport
-    _shm_backend.py  SharedMemoryBackend: same-machine IPC via shared memory
-    _remote.py       connect/disconnect/serve/submit_remote: remote execution orchestration
-    _result.py       Result (future) + ResultEnvelope: result handling
-    _deps.py         Third-party dependency extraction and pip installation
-    _errors.py       Error, WorkerError, RemoteError, DependencyError
+    __init__.py              Public API: trace, connect, serve, serialize, reconstruct, ...
+    __main__.py              CLI: python -m pyfuse worker/run/info/serialize/reconstruct
+    _venv.py                 Temporary virtual environment management
+    core/
+        models.py            FunctionNode, ImportInfo dataclasses (incl. content hashing)
+        task.py              Task: serializable envelope bundling graph + arguments
+        version.py           Version constant
+        errors.py            Error, WorkerError, RemoteError, DependencyError
+    graph/
+        decorator.py         @trace: marks functions for remote execution
+        analyzer.py          AST-based source and dependency analysis
+        graph.py             Dependency graph: registration, auto-discovery, runtime tracing
+        store.py             Content-addressable store: serialization, reconstruction
+        tracing.py           Runtime call-stack tracing via contextvars
+    worker/
+        worker.py            Worker: reconstruct, install deps, execute with caching
+        remote.py            connect/disconnect/serve/submit_remote: orchestration
+        result.py            Result (future) + ResultEnvelope: result handling
+        deps.py              Third-party dependency extraction and pip installation
+        backends/
+            base.py          Backend ABC: pluggable transport interface
+            redis.py         RedisBackend: RPUSH/BLPOP pattern
+            shm.py           SharedMemoryBackend: same-machine IPC via shared memory
 ```
 
 ## Remote execution flow
@@ -129,7 +137,11 @@ When a traced function calls an untraced user-defined function, pyfuse automatic
 
 Cross-module imports (e.g., `from utils import helper`) are converted from import statements to inline dependency edges, so the reconstructed code is self-contained.
 
-**Not auto-discovered:** standard library functions, third-party packages (kept as imports), method calls, class constructors.
+Class constructors (`MyClass()`) are auto-discovered: pyfuse registers all user-defined methods of the class. `@staticmethod` and `@classmethod` descriptors are unwrapped and registered correctly. When a method uses `super()`, base classes and their methods are discovered recursively, and `class Foo(Base):` headers are emitted in reconstructed source.
+
+Module-level constants and variables referenced by traced functions (e.g., `MAX_RETRIES = 5`) are captured and emitted in reconstructed source.
+
+**Not auto-discovered:** standard library functions, third-party packages (kept as imports).
 
 ### 5. Closure capture
 
@@ -170,7 +182,7 @@ The returned wrapper gains:
 
 ### Object serialization in arguments
 
-When arguments contain class instances, a custom JSON encoder serializes them via `class_name + __dict__`. On the worker side, after reconstructing the function's namespace, `resolve_args()` rebuilds the objects using the class from the reconstructed namespace.
+When arguments contain class instances, a custom JSON encoder serializes them via `class_name + __dict__`. Objects using `__slots__` are supported by walking the MRO to collect all slot names. On the worker side, after reconstructing the function's namespace, `resolve_args()` rebuilds the objects using the class from the reconstructed namespace.
 
 ### Wire format
 
@@ -260,7 +272,8 @@ Functions are stored in a content-addressable JSON format. Each function is iden
       "module": "mymodule",
       "source": "def hypotenuse(a: float, b: float) -> float:\n    ...",
       "imports": [{"statement": "import math", "bound_name": "math"}],
-      "owner_class": null
+      "owner_class": null,
+      "module_vars": {"PRECISION": "PRECISION = 1e-10"}
     }
   },
   "deps": {
@@ -273,6 +286,8 @@ Functions are stored in a content-addressable JSON format. Each function is iden
 }
 ```
 
+Optional fields (`closure_vars`, `closure_func_refs`, `module_vars`, `class_bases`) are omitted when empty.
+
 ### Content hashing
 
 | Included in hash | Excluded from hash |
@@ -280,6 +295,7 @@ Functions are stored in a content-addressable JSON format. Each function is iden
 | `name`, `module`, `source` | `qualified_name` (derived, fragile on rename) |
 | `imports` (sorted), `owner_class` | `deps` (structural, not content) |
 | `closure_vars`, `closure_func_refs` (sorted) | |
+| `module_vars` (sorted), `class_bases` | |
 
 Because dependencies are excluded from the hash, adding or removing an edge never changes a node's hash. This enables workers to cache objects by hash and request only missing ones: `missing = incoming.keys() - cached.keys()`.
 
@@ -291,7 +307,7 @@ Given a store and a target function name:
 2. **Walk** -- BFS through `deps` to collect all transitive dependencies.
 3. **Sort** -- Topological sort: dependencies before dependents.
 4. **Deduplicate imports** -- Merge imports across all functions.
-5. **Assemble** -- Emit imports at the top, then functions in order. Methods are grouped into `class` blocks. Closure variables become keyword-only parameters with defaults.
+5. **Assemble** -- Emit imports, then module-level variable assignments, then functions in order. Methods are grouped into `class` blocks with proper base classes. Closure variables become keyword-only parameters with defaults.
 
 ## Data model
 
@@ -322,6 +338,8 @@ One function in the dependency graph:
 | `owner_class` | `"ClassName"` for methods, `None` for standalone functions |
 | `closure_vars` | `dict[str, str]` -- captured closure variable `repr()` values |
 | `closure_func_refs` | `dict[str, str]` -- references to traced functions captured in closures |
+| `module_vars` | `dict[str, str]` -- module-level variable assignments (name -> source) |
+| `class_bases` | `list[str]` -- base class names for methods in classes with inheritance |
 
 ## Dependency auto-installation
 
@@ -377,6 +395,10 @@ When a module contains `from X import *`:
 - Relative star imports (`from . import *`) are not supported.
 - Aliased cross-module imports (`from utils import helper as h`) are skipped to avoid name mismatches.
 
+### Classes
+- Metaclasses and `__init_subclass__` hooks are not replayed on the worker.
+- Class-level attributes that aren't assignments (e.g., descriptors created by external decorators) may not be captured.
+
 ## CLI reference
 
 ```bash
@@ -384,6 +406,10 @@ When a module contains `from X import *`:
 python -m pyfuse worker --backend redis://localhost:6379
 python -m pyfuse worker --backend redis://localhost:6379 -c 4
 python -m pyfuse worker --backend redis://localhost:6379 --no-auto-install
+python -m pyfuse worker --backend redis://localhost:6379 --tmp   # isolated temp venv
+
+# Run a script in a temporary venv (auto-detects and installs dependencies)
+python -m pyfuse run examples/script.py
 
 # Show configuration
 python -m pyfuse info

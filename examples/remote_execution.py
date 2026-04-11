@@ -6,18 +6,18 @@ from io import StringIO
 import pyfuse
 from pyfuse import trace
 
-pyfuse.connect("redis://localhost:6379")
+pyfuse.connect("shm://localhost:9847")
 
 def load_config() -> dict:
-    config_content = textwrap.dedent( \
+    config_content = textwrap.dedent(
     """
     test_yaml:
         host: localhost
         port: 5432
         name: mydb
-    """)
+    """
+    )
     yml = yaml.safe_load(StringIO(config_content))
-    print(yml)
     return yml
 
 def add(a: int, b: int) -> int:

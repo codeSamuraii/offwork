@@ -81,3 +81,79 @@ class TestTaskSerialization:
         restored = Task.from_json(task.to_json())
         assert restored.args == ()
         assert restored.kwargs == {}
+
+
+class TestSlotsObjectSerialization:
+    """Test serialization of objects with __slots__."""
+
+    def test_slots_object_roundtrip(self) -> None:
+        from pyfuse.core.task import _TaskEncoder, _resolve
+
+        class Point:
+            __slots__ = ("x", "y")
+
+            def __init__(self, x: int, y: int) -> None:
+                self.x = x
+                self.y = y
+
+        p = Point(3, 4)
+        encoded = json.loads(json.dumps(p, cls=_TaskEncoder))
+        restored = _resolve(encoded, {"Point": Point})
+        assert isinstance(restored, Point)
+        assert restored.x == 3
+        assert restored.y == 4
+
+    def test_slots_inherited(self) -> None:
+        from pyfuse.core.task import _TaskEncoder, _resolve
+
+        class Base:
+            __slots__ = ("a",)
+
+        class Child(Base):
+            __slots__ = ("b",)
+
+            def __init__(self, a: int, b: int) -> None:
+                self.a = a
+                self.b = b
+
+        c = Child(1, 2)
+        encoded = json.loads(json.dumps(c, cls=_TaskEncoder))
+        restored = _resolve(encoded, {"Child": Child})
+        assert isinstance(restored, Child)
+        assert restored.a == 1
+        assert restored.b == 2
+
+    def test_slots_uninitialized(self) -> None:
+        from pyfuse.core.task import _TaskEncoder, _resolve
+
+        class Partial:
+            __slots__ = ("x", "y")
+
+            def __init__(self, x: int) -> None:
+                self.x = x
+                # y intentionally not set
+
+        p = Partial(5)
+        encoded = json.loads(json.dumps(p, cls=_TaskEncoder))
+        restored = _resolve(encoded, {"Partial": Partial})
+        assert isinstance(restored, Partial)
+        assert restored.x == 5
+        assert not hasattr(restored, "y")
+
+    def test_slots_with_dict(self) -> None:
+        """Class with __slots__ including __dict__ uses __dict__ path."""
+        from pyfuse.core.task import _TaskEncoder, _resolve
+
+        class Mixed:
+            __slots__ = ("__dict__", "x")
+
+            def __init__(self, x: int, y: int) -> None:
+                self.x = x
+                self.y = y  # stored in __dict__
+
+        m = Mixed(1, 2)
+        encoded = json.loads(json.dumps(m, cls=_TaskEncoder))
+        restored = _resolve(encoded, {"Mixed": Mixed})
+        assert isinstance(restored, Mixed)
+        # __dict__-based objects use the __dict__ path
+        assert restored.y == 2

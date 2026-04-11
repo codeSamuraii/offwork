@@ -117,6 +117,7 @@ def temp_venv(
     def _cleanup() -> None:
         if os.path.isdir(tmpdir):
             logger.info("Cleaning up temporary venv at %s", tmpdir)
+            print(f"Cleaning up temporary venv at {tmpdir}...", file=sys.stderr)
             shutil.rmtree(tmpdir, ignore_errors=True)
 
     # Safety net: atexit ensures cleanup even if the context manager is

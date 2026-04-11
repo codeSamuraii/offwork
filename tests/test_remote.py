@@ -318,9 +318,9 @@ class TestHandleTaskOutput:
                 _remote._handle_task(worker, backend, task_json)
 
         out = caplog.text
-        assert "(build)" in out
+        assert "build" in out
         assert "ms" in out
-        assert "[ok ]" in out or "[ok" in out
+        assert "\u2713" in out
 
     def test_output_cached_on_second_call(
         self,
@@ -344,10 +344,10 @@ class TestHandleTaskOutput:
             for task_json in backend.listen():
                 _remote._handle_task(worker, backend, task_json)
 
-        records = [r.message for r in caplog.records if "[ok" in r.message]
+        records = [r.message for r in caplog.records if "\u2713" in r.message]
         assert len(records) == 2
-        assert "(build)" in records[0]
-        assert "(cached)" in records[1]
+        assert "build" in records[0]
+        assert "cached" in records[1]
 
     def test_output_error(
         self,
@@ -370,7 +370,7 @@ class TestHandleTaskOutput:
                 _remote._handle_task(worker, backend, task_json)
 
         out = caplog.text
-        assert "[err]" in out
+        assert "\u2717" in out
         assert "RuntimeError" in out
         assert "intentional" in out
 

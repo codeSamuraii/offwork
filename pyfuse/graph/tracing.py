@@ -59,25 +59,42 @@ def _get_stdlib_dirs() -> list[str]:
 _STDLIB_DIRS = _get_stdlib_dirs()
 
 
-def _is_user_function(func: Callable[..., object]) -> bool:
-    """Return True if func is user-defined (not stdlib or third-party)."""
-    if not inspect.isfunction(func):
+def _is_user_defined(obj: object) -> bool:
+    """Return True if *obj* (function or class) is user-defined."""
+    if inspect.isfunction(obj):
+        module = obj.__module__
+    elif inspect.isclass(obj):
+        module = obj.__module__
+    else:
         return False
-    top_module = func.__module__.split(".")[0]
+    top_module = module.split(".")[0]
     if hasattr(sys, "stdlib_module_names") and top_module in sys.stdlib_module_names:
         return False
     try:
-        source_file = inspect.getfile(func)
+        source_file = inspect.getfile(obj)
     except (TypeError, OSError):
         return False
     resolved = str(Path(source_file).resolve())
     for stdlib_dir in _STDLIB_DIRS:
         if resolved.startswith(stdlib_dir):
             return False
-    # Heuristic: anything under a site-packages directory is third-party
     if f"{os.sep}site-packages{os.sep}" in resolved:
         return False
     return True
+
+
+def _is_user_function(func: Callable[..., object]) -> bool:
+    """Return True if func is user-defined (not stdlib or third-party)."""
+    if not inspect.isfunction(func):
+        return False
+    return _is_user_defined(func)
+
+
+def _is_user_class(cls: type) -> bool:
+    """Return True if cls is user-defined (not stdlib or third-party)."""
+    if not inspect.isclass(cls):
+        return False
+    return _is_user_defined(cls)
 
 
 class TracingMixin:

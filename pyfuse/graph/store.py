@@ -208,6 +208,8 @@ class Store:
                 owner_class=blob.get("owner_class"),
                 closure_vars=blob.get("closure_vars", {}),
                 closure_func_refs=closure_func_refs,
+                module_vars=blob.get("module_vars", {}),
+                class_bases=blob.get("class_bases", []),
             )
             needed[qn] = node
 
@@ -220,7 +222,7 @@ class Store:
         """Reconstruct executable Python source for *function_name*."""
         target_qname, needed = self.collect(function_name)
 
-        logger.info(
+        logger.debug(
             "Reconstructing %s: %d dependencies",
             target_qname,
             len(needed) - 1,
@@ -246,10 +248,20 @@ class Store:
             if oc is not None:
                 class_groups.setdefault(oc, []).append(qn)
 
+        # Collect and deduplicate module-level variable assignments
+        seen_vars: dict[str, str] = {}
+        func_and_class_names = {node.name for node in needed.values()}
+        for qn in order:
+            for var_name, var_src in needed[qn].module_vars.items():
+                if var_name not in seen_vars and var_name not in func_and_class_names:
+                    seen_vars[var_name] = var_src
+
         # Assemble script
         parts: list[str] = []
         if import_lines:
             parts.append("\n".join(import_lines))
+        if seen_vars:
+            parts.append("\n".join(seen_vars.values()))
 
         emitted_classes: set[str] = set()
         for qn in order:
@@ -284,10 +296,18 @@ class Store:
                         for line in member_src.splitlines()
                     )
                     method_sources.append(indented)
-                class_block = (
-                    f"class {class_name}:\n"
-                    + "\n\n".join(method_sources)
-                )
+                # Collect class bases from any member node
+                bases: list[str] = []
+                for member_qn in class_groups[node.owner_class]:
+                    member_bases = needed[member_qn].class_bases
+                    if member_bases:
+                        bases = member_bases
+                        break
+                if bases:
+                    class_header = f"class {class_name}({', '.join(bases)}):\n"
+                else:
+                    class_header = f"class {class_name}:\n"
+                class_block = class_header + "\n\n".join(method_sources)
                 parts.append(class_block)
 
         return "\n\n\n".join(parts) + "\n"

@@ -18,12 +18,15 @@ from pyfuse.graph.analyzer import (
     filter_imports,
     find_bare_calls,
     find_self_calls,
+    get_class_bases_from_source,
     get_function_source,
+    get_module_assignments,
     get_module_imports,
     get_used_names,
+    has_super_call,
 )
 from pyfuse.graph.store import Store
-from pyfuse.graph.tracing import TracingMixin, _BUILTIN_NAMES, _is_user_function
+from pyfuse.graph.tracing import TracingMixin, _BUILTIN_NAMES, _is_user_class, _is_user_function
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +59,53 @@ class Graph(TracingMixin):
     def nodes(self) -> dict[str, FunctionNode]:
         return dict(self._nodes)
 
+    def _auto_register_class(self, cls: type) -> None:
+        """Auto-register all user-defined methods of a class into the graph."""
+        class_name = cls.__name__
+        module_name = cls.__module__
+
+        for attr_name, raw in cls.__dict__.items():
+            if isinstance(raw, (classmethod, staticmethod)):
+                func = raw.__func__
+            elif inspect.isfunction(raw):
+                func = raw
+            else:
+                continue
+            if not _is_user_function(func):
+                continue
+            qname = f"{module_name}.{class_name}.{attr_name}"
+            if qname in self._nodes:
+                continue
+            self._auto_register(func)
+
+        # Detect class bases and propagate to registered methods
+        self._resolve_class_bases(cls)
+
+    def _resolve_class_bases(self, cls: type) -> None:
+        """Detect class bases and store them on method nodes.
+
+        Also auto-registers user-defined base classes and adds dependency
+        edges from child methods (that use ``super()``) to parent methods.
+        """
+        class_name = cls.__name__
+        module_name = cls.__module__
+
+        bases = get_class_bases_from_source(cls)
+        if not bases:
+            return
+
+        # Store bases on all method nodes of this class
+        for qname, node in self._nodes.items():
+            if node.owner_class == class_name and node.module == module_name:
+                node.class_bases = bases
+
+        # Auto-register user-defined base classes
+        for base_cls in cls.__mro__[1:]:  # skip cls itself
+            if base_cls is object:
+                continue
+            if _is_user_class(base_cls):
+                self._auto_register_class(base_cls)
+
     def _auto_register(self, func: Callable[..., object]) -> bool:
         """Auto-register an untraced function into the graph.
 
@@ -81,8 +131,25 @@ class Graph(TracingMixin):
             return False
 
         used_names = get_used_names(source)
-        imports = filter_imports(all_imports, used_names)
         owner_class = _resolve_owner_class(func.__qualname__)
+
+        # Capture module-level variables referenced by this function
+        try:
+            all_assignments = get_module_assignments(func)
+        except (OSError, TypeError):
+            all_assignments = {}
+        module_vars = {
+            name: src
+            for name, src in all_assignments.items()
+            if name in used_names
+        }
+        # Include names used by module_vars in import filtering
+        for var_src in module_vars.values():
+            used_names |= get_used_names(var_src)
+
+        imports = filter_imports(all_imports, used_names)
+        # Remove module_var names from imports (they are assignments, not imports)
+        imports = [imp for imp in imports if imp.bound_name not in module_vars]
 
         dependencies = [
             d for d in detect_traced_dependencies(
@@ -99,6 +166,7 @@ class Graph(TracingMixin):
             imports=imports,
             dependencies=dependencies,
             owner_class=owner_class,
+            module_vars=module_vars,
         )
         self._nodes[qualified_name] = node
         self._funcs[qualified_name] = func
@@ -129,14 +197,24 @@ class Graph(TracingMixin):
         for name in bare_calls:
             if name in _BUILTIN_NAMES:
                 continue
-            func_obj = getattr(module_obj, name, None)
-            if func_obj is None or not inspect.isfunction(func_obj):
+            obj = getattr(module_obj, name, None)
+            if obj is None:
                 continue
-            if func_obj.__name__ != name:
+            # Class constructor: MyClass(...)
+            if inspect.isclass(obj) and _is_user_class(obj):
+                self._auto_register_class(obj)
+                qualified = f"{obj.__module__}.{obj.__qualname__}"
+                if obj.__module__ != module_name:
+                    matching = [i for i in node.imports if i.bound_name == name]
+                    imports_to_remove.extend(matching)
+                continue
+            if not inspect.isfunction(obj):
+                continue
+            if obj.__name__ != name:
                 continue  # Skip aliased imports to avoid name mismatch
-            self._auto_register(func_obj)
-            qualified = f"{func_obj.__module__}.{func_obj.__qualname__}"
-            if qualified in self._nodes and func_obj.__module__ != module_name:
+            self._auto_register(obj)
+            qualified = f"{obj.__module__}.{obj.__qualname__}"
+            if qualified in self._nodes and obj.__module__ != module_name:
                 matching = [i for i in node.imports if i.bound_name == name]
                 imports_to_remove.extend(matching)
         if imports_to_remove:
@@ -152,9 +230,17 @@ class Graph(TracingMixin):
                 method_qname = f"{module_name}.{class_simple}.{method_name}"
                 if method_qname in self._nodes:
                     continue
-                method_obj = getattr(cls_obj, method_name, None)
-                if method_obj is not None and inspect.isfunction(method_obj):
-                    self._auto_register(method_obj)
+                # Access __dict__ to get raw descriptors (classmethod/staticmethod)
+                raw = cls_obj.__dict__.get(method_name)
+                if raw is not None and isinstance(raw, (classmethod, staticmethod)):
+                    self._auto_register(raw.__func__)
+                else:
+                    method_obj = getattr(cls_obj, method_name, None)
+                    if method_obj is not None and inspect.isfunction(method_obj):
+                        self._auto_register(method_obj)
+            # Resolve class bases (super() support, inheritance)
+            if inspect.isclass(cls_obj):
+                self._resolve_class_bases(cls_obj)
 
     def register(self, func: Callable[..., object]) -> None:
         # Unwrap if already traced
@@ -178,14 +264,35 @@ class Graph(TracingMixin):
             ) from exc
 
         used_names = get_used_names(source)
-        imports = filter_imports(all_imports, used_names)
         owner_class = _resolve_owner_class(original.__qualname__)
+
+        # Capture module-level variables referenced by this function
+        try:
+            all_assignments = get_module_assignments(original)
+        except (OSError, TypeError):
+            all_assignments = {}
+        module_vars = {
+            name: src
+            for name, src in all_assignments.items()
+            if name in used_names
+        }
+        # Include names used by module_vars in import filtering
+        for var_src in module_vars.values():
+            used_names |= get_used_names(var_src)
+
+        imports = filter_imports(all_imports, used_names)
+        # Remove module_var names from imports (they are assignments, not imports)
+        imports = [imp for imp in imports if imp.bound_name not in module_vars]
 
         closure_vars: dict[str, str] = {}
         closure_func_refs: dict[str, str] = {}
         if original.__code__.co_freevars:
-            cv = inspect.getclosurevars(original)
-            for name, value in cv.nonlocals.items():
+            try:
+                cv = inspect.getclosurevars(original)
+            except ValueError:
+                # Empty cell — e.g. implicit __class__ from super()
+                cv = None
+            for name, value in (cv.nonlocals.items() if cv else ()):
                 try:
                     repr_value = repr(value)
                 except Exception:
@@ -241,6 +348,7 @@ class Graph(TracingMixin):
             owner_class=owner_class,
             closure_vars=closure_vars,
             closure_func_refs=closure_func_refs,
+            module_vars=module_vars,
         )
         self._nodes[qualified_name] = node
         self._funcs[qualified_name] = original
@@ -276,6 +384,21 @@ class Graph(TracingMixin):
                 if ref_qname != qname and ref_qname not in deps:
                     deps.append(ref_qname)
             node.dependencies = deps
+
+    def _add_super_deps(self) -> None:
+        """Add dependency edges from methods using super() to parent class methods."""
+        for qname, node in self._nodes.items():
+            if not node.owner_class or not node.class_bases:
+                continue
+            if not has_super_call(node.source):
+                continue
+            # Find parent class methods in the graph
+            for pqn, pnode in self._nodes.items():
+                if pnode.owner_class is None:
+                    continue
+                if pnode.owner_class in node.class_bases and pqn not in node.dependencies:
+                    node.dependencies.append(pqn)
+                    logger.debug("Super dep: %s -> %s", qname, pqn)
 
     def _collect_subgraph(self, root_names: list[str]) -> dict[str, FunctionNode]:
         collected: dict[str, FunctionNode] = {}
@@ -328,6 +451,11 @@ class Graph(TracingMixin):
             *funcs: If given, only include these functions and their
                 transitive dependencies.  Otherwise the full graph.
         """
+        # Re-run discovery now that all modules are fully loaded.
+        # This catches deps that were missed at registration time
+        # (e.g. self.method() calls in classes that hadn't been created yet).
+        self.refresh()
+        self._add_super_deps()
         self._merge_runtime_deps()
 
         if funcs:
@@ -390,6 +518,8 @@ class Graph(TracingMixin):
                 owner_class=blob.get("owner_class"),
                 closure_vars=blob.get("closure_vars", {}),
                 closure_func_refs=closure_func_refs,
+                module_vars=blob.get("module_vars", {}),
+                class_bases=blob.get("class_bases", []),
             )
             graph._nodes[node.qualified_name] = node
         return graph

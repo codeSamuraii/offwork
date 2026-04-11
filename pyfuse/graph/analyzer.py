@@ -4,7 +4,6 @@ import ast
 import importlib
 import inspect
 import logging
-import re
 import textwrap
 import warnings
 from pathlib import Path
@@ -17,18 +16,43 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_TRACE_PATTERN = re.compile(r"^\s*@trace\s*(\(.*\))?\s*$")
+
+def _is_trace_decorator(node: ast.expr) -> bool:
+    """Return True if *node* is a ``@trace`` or ``@trace(...)`` decorator."""
+    if isinstance(node, ast.Name) and node.id == "trace":
+        return True
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "trace"
+    ):
+        return True
+    return False
 
 
 def get_function_source(func: Callable[..., object]) -> str:
     """Get dedented source of func with @trace decorator lines stripped."""
     source = textwrap.dedent(inspect.getsource(func))
-    lines = source.splitlines(keepends=True)
-    result = "".join(line for line in lines if not _TRACE_PATTERN.match(line))
+    tree = ast.parse(source)
+    func_def = tree.body[0]
+    if isinstance(func_def, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        lines_to_remove: set[int] = set()
+        for decorator in func_def.decorator_list:
+            if _is_trace_decorator(decorator):
+                for line_no in range(decorator.lineno, (decorator.end_lineno or decorator.lineno) + 1):
+                    lines_to_remove.add(line_no)
+        if lines_to_remove:
+            src_lines = source.splitlines(keepends=True)
+            source = "".join(
+                line for i, line in enumerate(src_lines, 1)
+                if i not in lines_to_remove
+            )
     logger.debug(
-        "Extracted source for %s (%d lines)", func.__qualname__, len(lines)
+        "Extracted source for %s (%d lines)",
+        func.__qualname__,
+        source.count("\n"),
     )
-    return result
+    return source
 
 
 def get_module_imports(func: Callable[..., object]) -> list[ImportInfo]:
@@ -58,6 +82,37 @@ def get_module_imports(func: Callable[..., object]) -> list[ImportInfo]:
         "Found %d import bindings in %s", len(imports), source_file
     )
     return imports
+
+
+def get_module_assignments(func: Callable[..., object]) -> dict[str, str]:
+    """Extract top-level variable assignments from the module where func is defined.
+
+    Returns a dict mapping variable name to its assignment source code.
+    Skips dunder names, function/class definitions, and TYPE_CHECKING blocks.
+    """
+    source_file = inspect.getfile(func)
+    source_text = Path(source_file).read_text()
+    tree = ast.parse(source_text)
+    assignments: dict[str, str] = {}
+
+    for node in tree.body:
+        # Simple assignment: x = ...
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and not target.id.startswith("__"):
+                    assignments[target.id] = ast.get_source_segment(source_text, node) or ast.unparse(node)
+
+        # Annotated assignment: x: int = ...
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            if isinstance(node.target, ast.Name) and not node.target.id.startswith("__"):
+                assignments[node.target.id] = ast.get_source_segment(source_text, node) or ast.unparse(node)
+
+    logger.debug(
+        "Found %d module-level assignments in %s",
+        len(assignments),
+        source_file,
+    )
+    return assignments
 
 
 def _parse_install_package_as(node: ast.With) -> str | None:
@@ -141,6 +196,42 @@ def get_used_names(func_source: str) -> set[str]:
     """Collect all Name identifiers referenced in the given source code."""
     tree = ast.parse(func_source)
     return {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+
+
+def has_super_call(func_source: str) -> bool:
+    """Return True if the function source contains a ``super()`` call."""
+    tree = ast.parse(func_source)
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "super"
+        ):
+            return True
+    return False
+
+
+def get_class_bases_from_source(cls: type) -> list[str]:
+    """Extract base class names from the class definition source AST.
+
+    Returns simple base class names (not fully qualified). Skips ``object``
+    since it's implicit.
+    """
+    try:
+        source = textwrap.dedent(inspect.getsource(cls))
+    except (OSError, TypeError):
+        return []
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == cls.__name__:
+            bases: list[str] = []
+            for base in node.bases:
+                bases.append(ast.unparse(base))
+            return [b for b in bases if b != "object"]
+    return []
 
 
 def find_bare_calls(func_source: str) -> set[str]:
@@ -290,6 +381,16 @@ def detect_traced_dependencies(
     for called in called_names:
         matches = [n for n in registry.values() if n.name == called]
         if not matches:
+            # Check for class constructor: ClassName() -> ClassName.__init__
+            init_matches = [
+                n for n in registry.values()
+                if n.name == "__init__" and n.owner_class == called
+            ]
+            if init_matches:
+                same_module = [m for m in init_matches if m.module == func_module]
+                chosen = same_module[0] if same_module else init_matches[0]
+                logger.debug("Constructor call %s() -> %s", called, chosen.qualified_name)
+                deps.append(chosen.qualified_name)
             continue
         same_module = [m for m in matches if m.module == func_module]
         chosen = same_module[0] if same_module else matches[0]

@@ -125,8 +125,8 @@ def test_auto_discover_skips_builtins(tmp_path: Path) -> None:
     assert "range" not in node_names
 
 
-def test_auto_discover_skips_classes(tmp_path: Path) -> None:
-    """Class constructors are not auto-registered."""
+def test_auto_discover_class_no_init(tmp_path: Path) -> None:
+    """Class with no custom __init__ doesn't break discovery."""
     create_module(
         tmp_path,
         "adclass",
@@ -139,8 +139,8 @@ def test_auto_discover_skips_classes(tmp_path: Path) -> None:
             "    return MyClass()\n"
         ),
     )
-    graph = Graph.default()
-    assert "adclass.MyClass" not in graph.nodes
+    # No error raised; class without __init__ is silently handled
+    Graph.default()
 
 
 def test_auto_discover_no_duplicate(tmp_path: Path) -> None:
@@ -402,6 +402,59 @@ def test_auto_discover_no_warning_for_local_variables(tmp_path: Path) -> None:
     assert pyfuse_warnings == []
 
 
+def test_auto_discover_staticmethod(tmp_path: Path) -> None:
+    """@staticmethod methods are auto-discovered via self.method() calls."""
+    create_module(
+        tmp_path,
+        "adstaticmethod",
+        (
+            "from pyfuse import trace\n\n"
+            "class Calc:\n"
+            "    @trace\n"
+            "    def run(self, x):\n"
+            "        return self.double(x)\n\n"
+            "    @staticmethod\n"
+            "    def double(x):\n"
+            "        return x * 2\n"
+        ),
+    )
+    source = reconstruct(serialize(), "run")
+    assert "class Calc:" in source
+    assert "@staticmethod" in source
+    assert "def double(x):" in source
+
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    calc = ns["Calc"]()
+    assert calc.run(5) == 10
+
+
+def test_auto_discover_classmethod(tmp_path: Path) -> None:
+    """@classmethod methods are auto-discovered via cls.method() calls."""
+    create_module(
+        tmp_path,
+        "adclassmethod",
+        (
+            "from pyfuse import trace\n\n"
+            "class MyClass:\n"
+            "    @trace\n"
+            "    def run(cls):\n"
+            "        return cls.create(42)\n\n"
+            "    @classmethod\n"
+            "    def create(cls, val):\n"
+            "        return val * 2\n"
+        ),
+    )
+    source = reconstruct(serialize(), "run")
+    assert "class MyClass:" in source
+    assert "@classmethod" in source
+    assert "def create(cls, val):" in source
+
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    assert ns["MyClass"].create(42) == 84
+
+
 def test_auto_discover_no_warning_for_closure_vars(tmp_path: Path) -> None:
     """No spurious warning for closure-captured function references."""
     with warnings.catch_warnings(record=True) as caught:
@@ -428,3 +481,282 @@ def test_auto_discover_no_warning_for_closure_vars(tmp_path: Path) -> None:
         if "pyfuse" in str(w.filename) and "fn" in str(w.message)
     ]
     assert pyfuse_warnings == []
+
+
+# ---------------------------------------------------------------------------
+# Class constructor auto-discovery
+# ---------------------------------------------------------------------------
+
+
+def test_auto_discover_class_constructor(tmp_path: Path) -> None:
+    """Class __init__ and its deps are discovered when constructor is called."""
+    create_module(
+        tmp_path,
+        "adctor",
+        (
+            "from pyfuse import trace\n\n"
+            "class Processor:\n"
+            "    def __init__(self, scale):\n"
+            "        self.scale = scale\n\n"
+            "    def run(self, x):\n"
+            "        return x * self.scale\n\n"
+            "@trace\n"
+            "def process(x):\n"
+            "    p = Processor(10)\n"
+            "    return p.run(x)\n"
+        ),
+    )
+    source = reconstruct(serialize(), "process")
+    assert "class Processor:" in source
+    assert "def __init__(self, scale):" in source
+    assert "def process(x):" in source
+
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    assert ns["process"](5) == 50  # type: ignore[operator]
+
+
+def test_auto_discover_class_init_with_deps(tmp_path: Path) -> None:
+    """__init__ calling self.method() triggers further discovery."""
+    create_module(
+        tmp_path,
+        "adctordeps",
+        (
+            "from pyfuse import trace\n\n"
+            "class Builder:\n"
+            "    def __init__(self, data):\n"
+            "        self.result = self.transform(data)\n\n"
+            "    def transform(self, data):\n"
+            "        return [x * 2 for x in data]\n\n"
+            "@trace\n"
+            "def build(data):\n"
+            "    return Builder(data).result\n"
+        ),
+    )
+    source = reconstruct(serialize(), "build")
+    assert "class Builder:" in source
+    assert "def __init__" in source
+    assert "def transform" in source
+    assert "def build" in source
+
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    assert ns["build"]([1, 2, 3]) == [2, 4, 6]  # type: ignore[operator]
+
+
+def test_auto_discover_class_skips_stdlib_classes(tmp_path: Path) -> None:
+    """Stdlib classes (dict, list, etc.) are not auto-registered."""
+    create_module(
+        tmp_path,
+        "adstdclass",
+        (
+            "from collections import OrderedDict\n"
+            "from pyfuse import trace\n\n"
+            "@trace\n"
+            "def run():\n"
+            "    return OrderedDict(a=1)\n"
+        ),
+    )
+    graph_json = serialize()
+    data = json.loads(graph_json)
+    # OrderedDict should NOT be in the graph
+    for ref in data["refs"]:
+        assert "OrderedDict" not in ref
+
+
+# ---------------------------------------------------------------------------
+# Module-level constants
+# ---------------------------------------------------------------------------
+
+
+def test_module_constant_int(tmp_path: Path) -> None:
+    """Module-level integer constant is captured and available at execution."""
+    create_module(
+        tmp_path,
+        "adconst_int",
+        (
+            "from pyfuse import trace\n\n"
+            "MAX_RETRIES = 5\n\n"
+            "@trace\n"
+            "def get_retries():\n"
+            "    return MAX_RETRIES\n"
+        ),
+    )
+    source = reconstruct(serialize(), "get_retries")
+    assert "MAX_RETRIES = 5" in source
+    assert "def get_retries():" in source
+
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    assert ns["get_retries"]() == 5  # type: ignore[operator]
+
+
+def test_module_constant_dict(tmp_path: Path) -> None:
+    """Module-level dict constant is captured."""
+    create_module(
+        tmp_path,
+        "adconst_dict",
+        (
+            "from pyfuse import trace\n\n"
+            "CONFIG = {'debug': True, 'workers': 4}\n\n"
+            "@trace\n"
+            "def get_config():\n"
+            "    return CONFIG\n"
+        ),
+    )
+    source = reconstruct(serialize(), "get_config")
+    assert "CONFIG" in source
+    assert "def get_config():" in source
+
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    result = ns["get_config"]()  # type: ignore[operator]
+    assert result == {"debug": True, "workers": 4}
+
+
+def test_module_constant_with_import(tmp_path: Path) -> None:
+    """Module-level constant that depends on an import."""
+    create_module(
+        tmp_path,
+        "adconst_import",
+        (
+            "import os\n"
+            "from pyfuse import trace\n\n"
+            "SEP = os.sep\n\n"
+            "@trace\n"
+            "def get_sep():\n"
+            "    return SEP\n"
+        ),
+    )
+    source = reconstruct(serialize(), "get_sep")
+    assert "import os" in source
+    assert "SEP = os.sep" in source
+
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    import os
+    assert ns["get_sep"]() == os.sep  # type: ignore[operator]
+
+
+def test_module_constant_skips_dunders(tmp_path: Path) -> None:
+    """Dunder names (__all__, __version__) are not captured."""
+    create_module(
+        tmp_path,
+        "adconst_dunder",
+        (
+            "from pyfuse import trace\n\n"
+            "__version__ = '1.0'\n"
+            "VALUE = 42\n\n"
+            "@trace\n"
+            "def get():\n"
+            "    return VALUE\n"
+        ),
+    )
+    source = reconstruct(serialize(), "get")
+    assert "__version__" not in source
+    assert "VALUE = 42" in source
+
+
+def test_module_constant_type_alias(tmp_path: Path) -> None:
+    """Type alias (annotated assignment) is captured."""
+    create_module(
+        tmp_path,
+        "adconst_alias",
+        (
+            "from pyfuse import trace\n\n"
+            "Multiplier: int = 10\n\n"
+            "@trace\n"
+            "def scale(x):\n"
+            "    return x * Multiplier\n"
+        ),
+    )
+    source = reconstruct(serialize(), "scale")
+    assert "Multiplier" in source
+
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    assert ns["scale"](3) == 30  # type: ignore[operator]
+
+
+# ---------------------------------------------------------------------------
+# super() and inheritance
+# ---------------------------------------------------------------------------
+
+
+def test_super_init_call(tmp_path: Path) -> None:
+    """Class using super().__init__() reconstructs with base class."""
+    create_module(
+        tmp_path,
+        "adsuper",
+        (
+            "from pyfuse import trace\n\n"
+            "class Base:\n"
+            "    def __init__(self, x):\n"
+            "        self.x = x\n\n"
+            "class Child(Base):\n"
+            "    def __init__(self, x, y):\n"
+            "        super().__init__(x)\n"
+            "        self.y = y\n\n"
+            "@trace\n"
+            "def create(x, y):\n"
+            "    return Child(x, y)\n"
+        ),
+    )
+    source = reconstruct(serialize(), "create")
+    assert "class Base:" in source
+    assert "class Child(Base):" in source
+    assert "super().__init__(x)" in source
+    assert "def create(" in source
+
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    obj = ns["create"](1, 2)  # type: ignore[operator]
+    assert obj.x == 1
+    assert obj.y == 2
+
+
+def test_super_method_call(tmp_path: Path) -> None:
+    """Method using super().method() works in reconstructed code."""
+    create_module(
+        tmp_path,
+        "adsupermethod",
+        (
+            "from pyfuse import trace\n\n"
+            "class Base:\n"
+            "    def greet(self):\n"
+            "        return 'hello'\n\n"
+            "class Child(Base):\n"
+            "    @trace\n"
+            "    def greet(self):\n"
+            "        return super().greet() + ' world'\n"
+        ),
+    )
+    source = reconstruct(serialize(), "greet")
+    assert "class Base:" in source
+    assert "class Child(Base):" in source
+
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    assert ns["Child"]().greet() == "hello world"  # type: ignore[union-attr]
+
+
+def test_class_inheriting_stdlib(tmp_path: Path) -> None:
+    """Class inheriting from a stdlib class preserves the base."""
+    create_module(
+        tmp_path,
+        "adstdbase",
+        (
+            "from pyfuse import trace\n\n"
+            "class MyList(list):\n"
+            "    @trace\n"
+            "    def first(self):\n"
+            "        return self[0] if self else None\n"
+        ),
+    )
+    source = reconstruct(serialize(), "first")
+    assert "class MyList(list):" in source
+
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    obj = ns["MyList"]([1, 2, 3])  # type: ignore[operator]
+    assert obj.first() == 1

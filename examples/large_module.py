@@ -50,7 +50,7 @@ def full_sensor_report(sensor_count: int, readings_per_sensor: int, seed: int = 
 
 if __name__ == "__main__":
     # Connect to the worker
-    pyfuse.connect("redis://localhost:6379")
+    pyfuse.connect("shm://localhost:9847")
 
     # Local call
     local_result = full_sensor_report(3, 50, seed=42)
@@ -58,4 +58,7 @@ if __name__ == "__main__":
     # Remote call (same function, same args, on a worker)
     remote_result = full_sensor_report.run(3, 50, seed=42).result()
 
-    assert local_result == remote_result
+    if local_result == remote_result:
+        print(f"Success! Local and remote results match:\n  {repr(local_result)[:80] + '...'}")
+    else:
+        print("Mismatch between local and remote results!")

@@ -11,7 +11,8 @@ pyfuse is a Python library for distributed function execution via automatic sour
 ```
 pyfuse/
 ├── __init__.py              # Public API surface (trace, connect, serve, serialize, etc.)
-├── __main__.py              # CLI: worker, info, serialize, reconstruct
+├── __main__.py              # CLI: worker, run, info, serialize, reconstruct
+├── _venv.py                 # Temporary virtual environment management (run/worker --tmp)
 ├── py.typed                 # PEP 561 typed package marker
 ├── core/
 │   ├── task.py              # Task dataclass: serializable envelope (graph + args + options)
@@ -82,8 +83,9 @@ Worker.run(task)
 - **Strict mypy**: The project uses `mypy --strict`. All public APIs have type annotations.
 - **Frozen dataclasses**: `Task`, `ImportInfo`, `ResultEnvelope` are frozen. `FunctionNode` is mutable (dependencies are added after creation).
 - **Content hashing**: `FunctionNode.content_hash()` produces a 16-char hex SHA-256 digest. Dependencies are excluded from the hash so structural changes don't invalidate content caches.
-- **Auto-discovery**: When a traced function calls an untraced user-defined function, pyfuse automatically finds and registers it. This is recursive.
+- **Auto-discovery**: When a traced function calls an untraced user-defined function, pyfuse automatically finds and registers it. This is recursive. Class constructors (`MyClass()`), `@staticmethod`, `@classmethod`, and entire class hierarchies (via `super()`) are discovered too.
 - **Cross-module inlining**: Imports like `from utils import helper` where `helper` is a user function get converted from import statements to inline dependency edges, making reconstructed code self-contained.
+- **Module-level variables**: Constants and assignments (`MAX_RETRIES = 5`, `CONFIG = {...}`) referenced by traced functions are captured and emitted in reconstructed source.
 - **Closure handling**: Captured variables are serialized via `repr()` and hoisted as keyword-only parameters with defaults. Traced function references become dependency edges.
 - **Decorator stripping**: `@trace` lines are removed from captured source so reconstructed code doesn't depend on pyfuse.
 - **Backend auto-detection**: `connect()` picks Redis or shared memory based on URL scheme. Falls back to `PYFUSE_BACKEND` env var.
@@ -100,7 +102,11 @@ Worker.run(task)
       "module": "module_name",
       "source": "def func_name(...): ...",
       "imports": [{"statement": "import x", "bound_name": "x", "package": null}],
-      "owner_class": null
+      "owner_class": null,
+      "closure_vars": {},
+      "closure_func_refs": {},
+      "module_vars": {},
+      "class_bases": []
     }
   },
   "deps": {"<hash>": ["<dep_hash>", ...]},
@@ -139,7 +145,7 @@ pytest                    # run all tests
 pytest tests/test_api.py  # specific module
 ```
 
-14 test modules covering: API surface, AST analysis, auto-discovery, dependency management, graph operations, integration scenarios, remote execution, runtime tracing, shared memory backend, store operations, stress tests (47 functions across 7 files), task serialization, and worker caching/execution.
+15 test modules covering: API surface, AST analysis, auto-discovery, dependency management, graph operations, integration scenarios, remote execution, runtime tracing, shared memory backend, store operations, stress tests (47 functions across 7 files), task serialization, temp venv management, and worker caching/execution.
 
 ## Development
 

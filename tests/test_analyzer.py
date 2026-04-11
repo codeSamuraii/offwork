@@ -26,6 +26,50 @@ def test_get_function_source_strips_trace(tmp_path: Path) -> None:
     assert "return 1" in source
 
 
+def test_get_function_source_strips_multiline_trace(tmp_path: Path) -> None:
+    mod = create_module(
+        tmp_path,
+        "src_multiline",
+        (
+            "from pyfuse import trace\n\n"
+            "@trace(\n"
+            "    timeout=30,\n"
+            "    retries=3,\n"
+            ")\n"
+            "def foo():\n"
+            "    return 1\n"
+        ),
+    )
+    source = get_function_source(mod.foo)
+    assert "@trace" not in source
+    assert "timeout" not in source
+    assert "retries" not in source
+    assert "def foo():" in source
+    assert "return 1" in source
+
+
+def test_get_function_source_strips_multiline_preserves_other(tmp_path: Path) -> None:
+    mod = create_module(
+        tmp_path,
+        "src_multi_other",
+        (
+            "from pyfuse import trace\n"
+            "def my_dec(f): return f\n\n"
+            "@my_dec\n"
+            "@trace(\n"
+            "    timeout=10,\n"
+            ")\n"
+            "def bar():\n"
+            "    return 2\n"
+        ),
+    )
+    source = get_function_source(mod.bar)
+    assert "@my_dec" in source
+    assert "@trace" not in source
+    assert "timeout" not in source
+    assert "def bar():" in source
+
+
 def test_get_function_source_preserves_other_decorators(tmp_path: Path) -> None:
     mod = create_module(
         tmp_path,

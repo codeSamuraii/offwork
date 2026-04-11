@@ -117,7 +117,7 @@ def markdown_word_freq(md_text: str) -> str:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    pyfuse.connect("redis://localhost:6379")
+    pyfuse.connect("shm://localhost:9847")
 
     # Simple package (import name == pip name)
     print("--- requests (auto-detected) ---")
