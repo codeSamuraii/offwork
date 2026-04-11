@@ -36,6 +36,18 @@ def _make_run_method(
     return run
 
 
+def _make_arun_method(
+    run_method: Callable[..., object],
+) -> Callable[..., object]:
+    """Create the ``.arun()`` async method attached to a traced wrapper."""
+
+    async def arun(*args: object, backend: str | Backend | None = None, **kwargs: object) -> object:
+        result = run_method(*args, backend=backend, **kwargs)
+        return await result  # type: ignore[misc]
+
+    return arun
+
+
 def _make_map_method(
     run_method: Callable[..., object],
 ) -> Callable[..., object]:
@@ -47,14 +59,32 @@ def _make_map_method(
     return map
 
 
+def _make_amap_method(
+    run_method: Callable[..., object],
+) -> Callable[..., object]:
+    """Create the ``.amap()`` async method for concurrent batch awaiting."""
+
+    async def amap(args_list: list[tuple[object, ...]], **kwargs: object) -> list[object]:
+        import asyncio
+        from collections.abc import Awaitable
+
+        results = [run_method(*args, **kwargs) for args in args_list]
+        coros: list[Awaitable[object]] = [r for r in results]  # type: ignore[misc]
+        return list(await asyncio.gather(*coros))
+
+    return amap
+
+
 def _attach_traced_attrs(
     wrapper: Callable[..., object], func: Callable[..., object]
 ) -> None:
-    """Attach pyfuse metadata and .run()/.map() to a traced wrapper."""
+    """Attach pyfuse metadata and .run()/.map()/.arun()/.amap() to a traced wrapper."""
     wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
     run = _make_run_method(wrapper, func)
     wrapper.run = run  # type: ignore[attr-defined]
+    wrapper.arun = _make_arun_method(run)  # type: ignore[attr-defined]
     wrapper.map = _make_map_method(run)  # type: ignore[attr-defined]
+    wrapper.amap = _make_amap_method(run)  # type: ignore[attr-defined]
 
 
 def _get_stdlib_dirs() -> list[str]:

@@ -109,6 +109,8 @@ class _ShmBroker:
     def __init__(self) -> None:
         self._task_queue: queue.Queue[str] = queue.Queue()
         self._result_queues: dict[str, queue.Queue[str]] = {}
+        self._result_notify: queue.Queue[str] = queue.Queue()
+        self._heartbeats: dict[str, float] = {}
         self._lock = threading.Lock()
 
     def put_task(self, shm_name: str) -> None:
@@ -125,6 +127,7 @@ class _ShmBroker:
             if task_id not in self._result_queues:
                 self._result_queues[task_id] = queue.Queue(maxsize=1)
         self._result_queues[task_id].put(shm_name)
+        self._result_notify.put(task_id)
 
     def get_result(self, task_id: str, timeout: float | None = None) -> str | None:
         with self._lock:
@@ -145,6 +148,26 @@ class _ShmBroker:
             return q.get_nowait()
         except queue.Empty:
             return None
+
+    def put_heartbeat(self, task_id: str, timestamp: float) -> None:
+        with self._lock:
+            self._heartbeats[task_id] = timestamp
+
+    def get_heartbeat(self, task_id: str) -> float | None:
+        with self._lock:
+            return self._heartbeats.get(task_id)
+
+    def wait_any_result(self, timeout: float | None = None) -> str | None:
+        """Block until any result is posted; return its task_id."""
+        try:
+            return self._result_notify.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+    def get_heartbeats_batch(self, task_ids: list[str]) -> dict[str, float | None]:
+        """Batch heartbeat fetch under one lock acquisition."""
+        with self._lock:
+            return {tid: self._heartbeats.get(tid) for tid in task_ids}
 
 
 # ---------------------------------------------------------------------------
@@ -294,6 +317,30 @@ class SharedMemoryBackend(Backend):
             return None
         self._tracker.unregister(name)
         return _read_shm_block(name)
+
+    def send_heartbeat(self, task_id: str) -> None:
+        self._broker.put_heartbeat(task_id, time.time())
+
+    def get_heartbeat(self, task_id: str) -> float | None:
+        val: float | None = self._broker.get_heartbeat(task_id)
+        return val
+
+    def get_heartbeats(self, task_ids: list[str]) -> dict[str, float | None]:
+        result: dict[str, float | None] = dict(
+            self._broker.get_heartbeats_batch(task_ids)
+        )
+        return result
+
+    def notify_result(self, task_id: str) -> None:
+        # Notification is handled inside _ShmBroker.put_result via
+        # _result_notify queue, so this is a no-op.
+        pass
+
+    def subscribe_results(self) -> Iterator[str]:
+        while True:
+            task_id: str | None = self._broker.wait_any_result(timeout=1.0)
+            if task_id is not None:
+                yield task_id
 
     def close(self) -> None:
         self._tracker.cleanup()

@@ -4,6 +4,7 @@ import atexit
 import inspect
 import logging
 import os
+import threading
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -88,6 +89,9 @@ def disconnect() -> None:
     """Close and clear the global backend."""
     global _active_backend
     if _active_backend is not None:
+        from pyfuse.worker.result import ResultWaiter
+
+        ResultWaiter.stop_for(_active_backend)
         _active_backend.close()
         _active_backend = None
         logger.info("Disconnected from backend")
@@ -166,6 +170,23 @@ def _build_detail_tags(worker: Worker) -> str:
     return ", ".join(parts)
 
 
+_HEARTBEAT_INTERVAL = 1.0
+
+
+def _heartbeat_loop(
+    backend: Backend,
+    task_id: str,
+    stop: threading.Event,
+) -> None:
+    """Send periodic heartbeats until *stop* is set."""
+    while not stop.is_set():
+        try:
+            backend.send_heartbeat(task_id)
+        except Exception:
+            pass  # best-effort
+        stop.wait(_HEARTBEAT_INTERVAL)
+
+
 def _handle_task(
     worker: Worker,
     backend: Backend,
@@ -175,6 +196,14 @@ def _handle_task(
     task = Task.from_json(task_json)
     logger.debug("Received task %s: %s", task.task_id, task.function_name)
 
+    stop_heartbeat = threading.Event()
+    hb_thread = threading.Thread(
+        target=_heartbeat_loop,
+        args=(backend, task.task_id, stop_heartbeat),
+        daemon=True,
+    )
+    hb_thread.start()
+
     t0 = time.monotonic()
     try:
         result = worker.run_with_policy(task)
@@ -182,9 +211,13 @@ def _handle_task(
     except Exception as exc:
         logger.debug("Task %s failed", task.task_id, exc_info=True)
         envelope = ResultEnvelope.failure(task.task_id, exc)
+    finally:
+        stop_heartbeat.set()
+        hb_thread.join(timeout=2.0)
 
     elapsed_ms = (time.monotonic() - t0) * 1000
     backend.send_result(task.task_id, envelope.to_json())
+    backend.notify_result(task.task_id)
 
     short_id = task.task_id[:8]
     details = _build_detail_tags(worker)

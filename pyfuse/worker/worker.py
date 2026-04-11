@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import inspect
 import logging
 import threading
 import time
@@ -103,6 +105,14 @@ class Worker:
             self._local.last_build_info = BuildInfo(cache_hit=True)
         return self._cache[key]
 
+    @staticmethod
+    def _call(func: Any, *args: Any, **kwargs: Any) -> Any:
+        """Call *func*, transparently handling async functions."""
+        result = func(*args, **kwargs)
+        if inspect.iscoroutine(result):
+            return asyncio.run(result)
+        return result
+
     def execute(
         self,
         json_str: str,
@@ -112,12 +122,13 @@ class Worker:
     ) -> Any:
         """Deserialize, reconstruct, and execute *function_name*.
 
+        Async functions are detected and executed automatically.
         Cached by subgraph content hash — repeated calls with identical
         graphs skip reconstruction entirely.
         """
         cached = self._get_cached(json_str, function_name)
         logger.debug("Executing %s (cache key: %s)", function_name, cached.subgraph_key)
-        return cached.func(*args, **kwargs)
+        return self._call(cached.func, *args, **kwargs)
 
     async def execute_async(
         self,
@@ -132,13 +143,16 @@ class Worker:
         return await cached.func(*args, **kwargs)
 
     def run(self, task: Task) -> Any:
-        """Execute a :class:`Task`, resolving serialized object arguments."""
+        """Execute a :class:`Task`, resolving serialized object arguments.
+
+        Async functions are detected and executed automatically.
+        """
         from pyfuse.core.task import resolve_args
 
         cached = self._get_cached(task.graph_json, task.function_name)
         args, kwargs = resolve_args(task.args, task.kwargs, cached.namespace)
         logger.debug("Executing %s (cache key: %s)", task.function_name, cached.subgraph_key)
-        return cached.func(*args, **kwargs)
+        return self._call(cached.func, *args, **kwargs)
 
     async def run_async(self, task: Task) -> Any:
         """Execute a :class:`Task` asynchronously, resolving serialized object arguments."""

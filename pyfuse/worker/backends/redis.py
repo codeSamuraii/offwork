@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -21,7 +22,10 @@ class RedisBackend(Backend):
 
     DEFAULT_QUEUE_KEY = "pyfuse:tasks"
     RESULT_PREFIX = "pyfuse:result:"
+    HEARTBEAT_PREFIX = "pyfuse:heartbeat:"
+    NOTIFY_CHANNEL = "pyfuse:notify"
     DEFAULT_RESULT_TTL = 300
+    HEARTBEAT_TTL = 30
 
     def __init__(
         self,
@@ -74,6 +78,43 @@ class RedisBackend(Backend):
         if raw is None:
             return None
         return raw.decode() if isinstance(raw, bytes) else raw
+
+    def send_heartbeat(self, task_id: str) -> None:
+        key = f"{self.HEARTBEAT_PREFIX}{task_id}"
+        self._redis.set(key, str(time.time()), ex=self.HEARTBEAT_TTL)
+
+    def get_heartbeat(self, task_id: str) -> float | None:
+        key = f"{self.HEARTBEAT_PREFIX}{task_id}"
+        raw = self._redis.get(key)
+        if raw is None:
+            return None
+        return float(raw)
+
+    def get_heartbeats(self, task_ids: list[str]) -> dict[str, float | None]:
+        if not task_ids:
+            return {}
+        keys = [f"{self.HEARTBEAT_PREFIX}{tid}" for tid in task_ids]
+        values = self._redis.mget(keys)
+        return {
+            tid: float(v) if v is not None else None
+            for tid, v in zip(task_ids, values)
+        }
+
+    def notify_result(self, task_id: str) -> None:
+        self._redis.publish(self.NOTIFY_CHANNEL, task_id)
+
+    def subscribe_results(self) -> Iterator[str]:
+        pubsub = self._redis.pubsub()
+        pubsub.subscribe(self.NOTIFY_CHANNEL)
+        try:
+            while True:
+                msg = pubsub.get_message(timeout=1.0)
+                if msg is not None and msg["type"] == "message":
+                    data = msg["data"]
+                    yield data.decode() if isinstance(data, bytes) else data
+        finally:
+            pubsub.unsubscribe(self.NOTIFY_CHANNEL)
+            pubsub.close()
 
     def close(self) -> None:
         self._redis.close()

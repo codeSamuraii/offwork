@@ -12,3 +12,7 @@ class DependencyError(Error):
 
 class RemoteError(WorkerError):
     """Raised on the client side when a remote execution fails."""
+
+
+class TaskStalled(Error):
+    """Raised when a worker stops sending heartbeats for a task."""
