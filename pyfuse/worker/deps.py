@@ -107,7 +107,7 @@ def install_packages(
             continue
 
         package = mapping.get(module, module)
-        logger.info("Installing %s (package: %s)", module, package)
+        logger.info("Installing %s (package: %s)...", module, package)
         proc = subprocess.run(
             [sys.executable, "-m", "pip", "install", package, "--break-system-packages", *extra_args],
             capture_output=True,
@@ -115,12 +115,20 @@ def install_packages(
         )
         if proc.returncode == 0:
             result.installed.append(package)
+            logger.info("Installed %s", package)
         else:
             result.failed[module] = proc.stderr.strip()
+            logger.error("Failed to install %s: %s", package, proc.stderr.strip()[:200])
 
     if result.failed:
-        names = ", ".join(result.failed)
-        raise DependencyError(f"Failed to install: {names}")
+        parts = []
+        for module, stderr in result.failed.items():
+            if stderr:
+                parts.append(f"  {module}: {stderr[:200]}")
+            else:
+                parts.append(f"  {module}")
+        detail = "\n".join(parts)
+        raise DependencyError(f"Failed to install:\n{detail}")
 
     return result
 

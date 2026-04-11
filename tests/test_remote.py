@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import collections
 import json
+import logging
 import threading
 from collections.abc import Iterator
 from typing import Any
@@ -297,7 +298,9 @@ class TestRunMethod:
 
 class TestHandleTaskOutput:
     def test_output_build_on_first_call(
-        self, backend: InMemoryBackend, capsys: pytest.CaptureFixture[str]
+        self,
+        backend: InMemoryBackend,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         from pyfuse import pack
         from pyfuse.worker.worker import Worker
@@ -310,16 +313,19 @@ class TestHandleTaskOutput:
         backend.submit(task.to_json())
 
         worker = Worker(auto_install=False)
-        for task_json in backend.listen():
-            _remote._handle_task(worker, backend, task_json)
+        with caplog.at_level(logging.DEBUG, logger="pyfuse"):
+            for task_json in backend.listen():
+                _remote._handle_task(worker, backend, task_json)
 
-        out = capsys.readouterr().out
+        out = caplog.text
         assert "(build)" in out
         assert "ms" in out
         assert "[ok ]" in out or "[ok" in out
 
     def test_output_cached_on_second_call(
-        self, backend: InMemoryBackend, capsys: pytest.CaptureFixture[str]
+        self,
+        backend: InMemoryBackend,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         from pyfuse import pack
         from pyfuse.worker.worker import Worker
@@ -334,16 +340,19 @@ class TestHandleTaskOutput:
         backend.submit(task2.to_json())
 
         worker = Worker(auto_install=False)
-        for task_json in backend.listen():
-            _remote._handle_task(worker, backend, task_json)
+        with caplog.at_level(logging.DEBUG, logger="pyfuse"):
+            for task_json in backend.listen():
+                _remote._handle_task(worker, backend, task_json)
 
-        lines = capsys.readouterr().out.strip().split("\n")
-        assert len(lines) == 2
-        assert "(build)" in lines[0]
-        assert "(cached)" in lines[1]
+        records = [r.message for r in caplog.records if "[ok" in r.message]
+        assert len(records) == 2
+        assert "(build)" in records[0]
+        assert "(cached)" in records[1]
 
     def test_output_error(
-        self, backend: InMemoryBackend, capsys: pytest.CaptureFixture[str]
+        self,
+        backend: InMemoryBackend,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         from pyfuse import pack
         from pyfuse.worker.worker import Worker
@@ -356,10 +365,11 @@ class TestHandleTaskOutput:
         backend.submit(task.to_json())
 
         worker = Worker(auto_install=False)
-        for task_json in backend.listen():
-            _remote._handle_task(worker, backend, task_json)
+        with caplog.at_level(logging.DEBUG, logger="pyfuse"):
+            for task_json in backend.listen():
+                _remote._handle_task(worker, backend, task_json)
 
-        out = capsys.readouterr().out
+        out = caplog.text
         assert "[err]" in out
         assert "RuntimeError" in out
         assert "intentional" in out

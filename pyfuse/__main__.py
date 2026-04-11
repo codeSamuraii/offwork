@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import logging
 import os
 import sys
 from collections.abc import Callable
@@ -21,6 +22,25 @@ def _cmd_worker(args: argparse.Namespace) -> None:
     if not backend:
         print("Error: --backend is required (or set PYFUSE_BACKEND).", file=sys.stderr)
         sys.exit(1)
+
+    if args.log_level:
+        level = getattr(logging, args.log_level.upper(), None)
+        if level is None:
+            print(f"Error: invalid log level {args.log_level!r}", file=sys.stderr)
+            sys.exit(1)
+    elif args.verbose:
+        level = logging.DEBUG
+    else:
+        level = logging.INFO
+
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)-7s %(message)s",
+        datefmt="%H:%M:%S",
+    ))
+    pyfuse_logger = logging.getLogger("pyfuse")
+    pyfuse_logger.setLevel(level)
+    pyfuse_logger.addHandler(handler)
 
     from pyfuse.worker.remote import serve
 
@@ -107,6 +127,17 @@ def main() -> None:
         "--no-auto-install",
         action="store_true",
         help="Disable automatic pip dependency installation",
+    )
+    worker_p.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable debug logging",
+    )
+    worker_p.add_argument(
+        "--log-level",
+        default=None,
+        metavar="LEVEL",
+        help="Set log level (DEBUG, INFO, WARNING, ERROR)",
     )
 
     # info

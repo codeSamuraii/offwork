@@ -8,6 +8,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from pyfuse.core.version import _VERSION
 from pyfuse.worker.backends.base import Backend
 from pyfuse.worker.backends.redis import RedisBackend
 from pyfuse.worker.result import Result, ResultEnvelope
@@ -167,7 +168,7 @@ def _handle_task(
         result = worker.run_with_policy(task)
         envelope = ResultEnvelope.success(task.task_id, result)
     except Exception as exc:
-        logger.exception("Task %s failed", task.task_id)
+        logger.debug("Task %s failed", task.task_id, exc_info=True)
         envelope = ResultEnvelope.failure(task.task_id, exc)
         error_msg = f"  {type(exc).__name__}: {exc}"
     elapsed_ms = (time.monotonic() - t0) * 1000
@@ -184,11 +185,14 @@ def _handle_task(
         detail = "build"
 
     status = "ok" if envelope.status == "ok" else "err"
-    print(
-        f"  [{status:<3}] {task.function_name:<40} "
-        f"{elapsed_ms:>6.0f}ms  ({detail}){error_msg}",
-        flush=True,
+    msg = (
+        f"[{status:<3}] {task.function_name:<40} "
+        f"{elapsed_ms:>6.0f}ms  {task.task_id}  ({detail}){error_msg}"
     )
+    if envelope.status == "ok":
+        logger.info(msg)
+    else:
+        logger.warning(msg)
 
 
 def serve(
@@ -212,18 +216,30 @@ def serve(
     import_to_package
         Extra import-name to pip-package-name mappings.
     """
+    import sys
     from concurrent.futures import ThreadPoolExecutor
 
     from pyfuse.worker.worker import Worker
 
-    backend = connect(url)
+    resolved = _resolve_url(url)
+
+    logger.info("pyfuse v%s", _VERSION)
+    logger.info("  backend:      %s", resolved)
+    logger.info("  concurrency:  %d", concurrency)
+    logger.info("  auto_install: %s", "on" if auto_install else "off")
+
+    try:
+        backend = connect(resolved)
+    except Exception as exc:
+        logger.error("Could not connect to %s: %s", resolved, exc)
+        sys.exit(1)
+
     worker = Worker(
         auto_install=auto_install,
         import_to_package=import_to_package,
     )
 
-    print(f"Worker listening (concurrency={concurrency})", flush=True)
-    print("Press Ctrl+C to stop.\n", flush=True)
+    logger.info("Listening for tasks. Press Ctrl+C to stop.")
 
     try:
         if concurrency > 1:
@@ -234,6 +250,6 @@ def serve(
             for task_json in backend.listen():
                 _handle_task(worker, backend, task_json)
     except KeyboardInterrupt:
-        print("\nWorker stopped.")
+        logger.info("Worker stopped.")
     finally:
         disconnect()
