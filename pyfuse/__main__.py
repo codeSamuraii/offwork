@@ -3,6 +3,8 @@
 Usage::
 
     python -m pyfuse worker --backend redis://localhost:6379
+    python -m pyfuse worker --backend redis://localhost:6379 --tmp
+    python -m pyfuse run examples/script.py
     python -m pyfuse info
     python -m pyfuse serialize mymodule:csv_to_json
     python -m pyfuse reconstruct graph.json csv_to_json
@@ -10,11 +12,51 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import ast
 import importlib
 import logging
 import os
+import signal
+import subprocess
 import sys
 from collections.abc import Callable
+
+
+def _build_worker_cmd(python: str, args: argparse.Namespace) -> list[str]:
+    """Rebuild the worker CLI command for re-exec, without --tmp."""
+    cmd = [python, "-m", "pyfuse", "worker", "--backend", args.backend]
+    cmd.extend(["-c", str(args.concurrency)])
+    if args.no_auto_install:
+        cmd.append("--no-auto-install")
+    if args.verbose:
+        cmd.append("--verbose")
+    if args.log_level:
+        cmd.extend(["--log-level", args.log_level])
+    return cmd
+
+
+def _run_in_tmp_venv(args: argparse.Namespace) -> None:
+    """Create a temporary venv and re-exec the worker inside it."""
+    from pyfuse._venv import temp_venv
+
+    extras: list[str] = []
+    if args.backend and args.backend.startswith(("redis://", "rediss://")):
+        extras.append("redis")
+
+    with temp_venv(install_pyfuse=True, extras=extras) as venv:
+        cmd = _build_worker_cmd(str(venv.python), args)
+        print(f"Starting worker in temporary venv...", file=sys.stderr)
+        proc = subprocess.Popen(cmd)
+
+        prev_term = signal.signal(signal.SIGTERM, lambda s, f: proc.send_signal(s))
+        prev_int = signal.signal(signal.SIGINT, lambda s, f: proc.send_signal(s))
+        try:
+            returncode = proc.wait()
+        finally:
+            signal.signal(signal.SIGTERM, prev_term)
+            signal.signal(signal.SIGINT, prev_int)
+
+        sys.exit(returncode)
 
 
 def _cmd_worker(args: argparse.Namespace) -> None:
@@ -22,6 +64,10 @@ def _cmd_worker(args: argparse.Namespace) -> None:
     if not backend:
         print("Error: --backend is required (or set PYFUSE_BACKEND).", file=sys.stderr)
         sys.exit(1)
+
+    if args.tmp:
+        _run_in_tmp_venv(args)
+        return
 
     if args.log_level:
         level = getattr(logging, args.log_level.upper(), None)
@@ -103,6 +149,116 @@ def _cmd_reconstruct(args: argparse.Namespace) -> None:
     print(reconstruct(graph_json, args.function))
 
 
+def _parse_script(script: str) -> tuple[str, ast.Module | None]:
+    """Read and parse a script, returning (source, ast_tree_or_None)."""
+    from pathlib import Path
+
+    source = Path(script).read_text()
+    try:
+        return source, ast.parse(source)
+    except SyntaxError:
+        return source, None
+
+
+def _detect_script_packages(script: str) -> list[str]:
+    """Parse a script file and return pip package names for third-party imports."""
+    from pyfuse.worker.deps import DEFAULT_IMPORT_TO_PACKAGE
+
+    _source, tree = _parse_script(script)
+    if tree is None:
+        return []
+
+    modules: set[str] = set()
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                modules.add(alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            modules.add(node.module.split(".")[0])
+
+    third_party = sorted(
+        m for m in modules if m not in sys.stdlib_module_names and m != "pyfuse"
+    )
+    return [DEFAULT_IMPORT_TO_PACKAGE.get(m, m) for m in third_party]
+
+
+def _detect_pyfuse_extras(script: str) -> list[str]:
+    """Detect pyfuse extras needed by a script (e.g. redis from connect/serve calls)."""
+    _source, tree = _parse_script(script)
+    if tree is None:
+        return []
+
+    extras: list[str] = []
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        # Match pyfuse.connect(...), pyfuse.serve(...), connect(...), serve(...)
+        func = node.func
+        name: str | None = None
+        if isinstance(func, ast.Attribute) and func.attr in ("connect", "serve"):
+            name = func.attr
+        elif isinstance(func, ast.Name) and func.id in ("connect", "serve"):
+            name = func.id
+        if name is None:
+            continue
+        # Check if the first argument is a string literal with a redis URL
+        first_arg = node.args[0]
+        if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str):
+            if first_arg.value.startswith(("redis://", "rediss://")):
+                if "redis" not in extras:
+                    extras.append("redis")
+
+    return extras
+
+
+def _cmd_run(args: argparse.Namespace) -> None:
+    from pathlib import Path
+
+    from pyfuse._venv import temp_venv
+
+    script = Path(args.script).resolve()
+    if not script.exists():
+        print(f"Error: script not found: {script}", file=sys.stderr)
+        sys.exit(1)
+
+    extras: list[str] = list(args.extra or [])
+    backend = os.environ.get("PYFUSE_BACKEND", "")
+    if backend.startswith(("redis://", "rediss://")):
+        if "redis" not in extras:
+            extras.append("redis")
+
+    # Auto-detect pyfuse extras from connect/serve calls in the script
+    for extra in _detect_pyfuse_extras(str(script)):
+        if extra not in extras:
+            extras.append(extra)
+
+    # Auto-detect third-party packages from the script
+    detected = _detect_script_packages(str(script))
+
+    with temp_venv(install_pyfuse=True, extras=extras) as venv:
+        if detected:
+            print(f"Installing detected dependencies: {', '.join(detected)}", file=sys.stderr)
+            venv.pip_install(*detected, extra_args=["--quiet"])
+
+        script_args = list(args.script_args or [])
+        if script_args and script_args[0] == "--":
+            script_args = script_args[1:]
+
+        cmd = [str(venv.python), str(script), *script_args]
+        proc = subprocess.Popen(cmd)
+
+        prev_term = signal.signal(signal.SIGTERM, lambda s, f: proc.send_signal(s))
+        prev_int = signal.signal(signal.SIGINT, lambda s, f: proc.send_signal(s))
+        try:
+            returncode = proc.wait()
+        finally:
+            signal.signal(signal.SIGTERM, prev_term)
+            signal.signal(signal.SIGINT, prev_int)
+
+        sys.exit(returncode)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="pyfuse",
@@ -129,6 +285,11 @@ def main() -> None:
         help="Disable automatic pip dependency installation",
     )
     worker_p.add_argument(
+        "--tmp",
+        action="store_true",
+        help="Run the worker in a temporary virtual environment (deleted on exit)",
+    )
+    worker_p.add_argument(
         "-v", "--verbose",
         action="store_true",
         help="Enable debug logging",
@@ -138,6 +299,23 @@ def main() -> None:
         default=None,
         metavar="LEVEL",
         help="Set log level (DEBUG, INFO, WARNING, ERROR)",
+    )
+
+    # run
+    run_p = sub.add_parser(
+        "run", help="Run a Python script in a temporary venv with pyfuse installed"
+    )
+    run_p.add_argument("script", help="Path to the Python script to run")
+    run_p.add_argument(
+        "-e", "--extra",
+        action="append",
+        default=[],
+        help="Extra pip package to install (repeatable)",
+    )
+    run_p.add_argument(
+        "script_args",
+        nargs=argparse.REMAINDER,
+        help="Arguments to pass to the script",
     )
 
     # info
@@ -160,6 +338,7 @@ def main() -> None:
 
     handlers = {
         "worker": _cmd_worker,
+        "run": _cmd_run,
         "info": _cmd_info,
         "serialize": _cmd_serialize,
         "reconstruct": _cmd_reconstruct,

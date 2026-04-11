@@ -11,3 +11,4 @@ poetry.lock
 dist/
 build/
 .DS_Store
+.claudeignore
