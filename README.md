@@ -75,6 +75,9 @@ Common mappings (`cv2` -> `opencv-python`, `PIL` -> `Pillow`, etc.) are built in
 
 - **Automatic dependency detection** -- AST-based, recursive. Untraced helpers, class methods, module-level constants are all captured.
 - **Third-party package auto-install** -- Workers install missing packages via pip before execution.
+- **Async support** -- `async def` functions execute transparently. `await result`, `.arun()`, `.amap()`, and `asyncio.gather` all work out of the box.
+- **Notification-based result delivery** -- Push notifications fan out to many waiters via a single backend listener. No polling.
+- **Heartbeat & stall detection** -- Workers send periodic heartbeats. Clients raise `TaskStalled` when a worker stops responding.
 - **Class methods** -- `self.method()` and `cls.method()` dependencies are detected. Entire class hierarchies (including `super()`) are reconstructed.
 - **Retry and timeout** -- `@trace(timeout=30, retries=3)` with exponential backoff.
 - **Batch submission** -- `func.map([(a1, b1), (a2, b2)])` submits multiple tasks at once.
@@ -90,6 +93,7 @@ pyfuse run examples/remote_execution.py
 ```
 
 - **[`examples/remote_execution.py`](examples/remote_execution.py)** -- Remote execution with auto-discovered dependencies
+- **[`examples/async_execution.py`](examples/async_execution.py)** -- Async: `await`, `.arun()`, `.amap()`, `asyncio.gather`
 - **[`examples/package_installation.py`](examples/package_installation.py)** -- Auto-installing third-party packages on workers
 - **[`examples/large_module.py`](examples/large_module.py)** -- Stress test: 47 functions across 7 files, one `@trace`
 

@@ -4,6 +4,7 @@ import atexit
 import inspect
 import logging
 import os
+import signal
 import threading
 import time
 from collections.abc import Callable
@@ -290,6 +291,7 @@ def serve(
             for task_json in backend.listen():
                 _handle_task(worker, backend, task_json)
     except KeyboardInterrupt:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         logger.info("Worker stopped.")
     finally:
         disconnect()

@@ -28,7 +28,7 @@ pyfuse/
         models.py            FunctionNode, ImportInfo dataclasses (incl. content hashing)
         task.py              Task: serializable envelope bundling graph + arguments
         version.py           Version constant
-        errors.py            Error, WorkerError, RemoteError, DependencyError
+        errors.py            Error, WorkerError, RemoteError, DependencyError, TaskStalled
     graph/
         decorator.py         @trace: marks functions for remote execution
         analyzer.py          AST-based source and dependency analysis
@@ -38,7 +38,7 @@ pyfuse/
     worker/
         worker.py            Worker: reconstruct, install deps, execute with caching
         remote.py            connect/disconnect/serve/submit_remote: orchestration
-        result.py            Result (future) + ResultEnvelope: result handling
+        result.py            Result (future), ResultEnvelope, ResultWaiter: result handling
         deps.py              Third-party dependency extraction and pip installation
         backends/
             base.py          Backend ABC: pluggable transport interface
@@ -65,10 +65,13 @@ pyfuse/
 6. **Execute** -- Call the function with the provided arguments. Apply retry/timeout policies.
 7. **Send result** -- Wrap the return value (or exception traceback) in a `ResultEnvelope` and send it back.
 
-### Client side: `future.result()`
+### Client side: `future.result()` / `await future`
 
-1. **Block** -- `backend.get_result(task_id)` waits for the worker's response.
-2. **Unwrap** -- If status is `"ok"`, return the value. If `"error"`, raise `RemoteError` with the remote traceback.
+**Sync without stall detection** -- `backend.get_result(task_id)` blocks until the worker's response (e.g. Redis `BLPOP`).
+
+**Sync with stall detection or async** -- The `ResultWaiter` singleton registers interest, then waits via `threading.Event` (sync) or `asyncio.Future` (async). A background listener thread receives push notifications and fans them out. A second thread batch-fetches heartbeats once per second for stall detection.
+
+**Unwrap** -- If status is `"ok"`, return the value. If `"error"`, raise `RemoteError` with the remote traceback.
 
 ## Transport backends
 
@@ -81,13 +84,24 @@ The `Backend` ABC defines the transport interface:
 | `send_result(task_id, result_json)` | Store a result envelope |
 | `get_result(task_id, timeout)` | Block until result is available |
 | `try_get_result(task_id)` | Non-blocking result fetch |
+| `send_heartbeat(task_id)` | Signal active processing (no-op default) |
+| `get_heartbeat(task_id)` | Get last heartbeat timestamp |
+| `get_heartbeats(task_ids)` | Batch heartbeat fetch (default loops over `get_heartbeat`) |
+| `notify_result(task_id)` | Push notification that result is ready (no-op default) |
+| `subscribe_results()` | Blocking iterator yielding task_ids on result arrival |
 | `close()` | Release resources |
+
+Methods below the line are non-abstract with safe defaults. Custom backends don't need to implement them -- the `ResultWaiter` falls back to consolidated polling when `subscribe_results` is not supported.
 
 ### RedisBackend
 
 Uses `RPUSH`/`BLPOP` patterns. Keys:
 - `pyfuse:tasks` -- task queue
 - `pyfuse:result:{task_id}` -- per-task result (TTL: 300s)
+- `pyfuse:heartbeat:{task_id}` -- worker heartbeat timestamp (TTL: 30s)
+- `pyfuse:notify` -- Pub/Sub channel for result notifications
+
+Result notifications use Redis Pub/Sub (`PUBLISH`/`SUBSCRIBE`). Batch heartbeat fetching uses `MGET` for efficiency.
 
 The `redis` package is imported lazily and is an optional dependency.
 
@@ -161,7 +175,9 @@ For generators and async generators, a proxy pattern intercepts each iteration s
 
 The returned wrapper gains:
 - `.run(*args)` -- submit to remote worker, returns `Result` future
-- `.map(args_list)` -- batch submission
+- `.map(args_list)` -- batch submission, returns `list[Result]`
+- `.arun(*args)` -- async submit and await (coroutine)
+- `.amap(args_list)` -- async batch submit and await all (coroutine)
 - `__pyfuse_traced__ = True` -- marker attribute
 
 ## Task envelope
@@ -245,7 +261,9 @@ Error (includes remote traceback):
 
 | Method / Property | Description |
 |------------------|-------------|
-| `.result(timeout=None)` | Block until result; raises `RemoteError` on failure |
+| `.result(timeout, stall_timeout)` | Block until result; raises `RemoteError` on failure, `TaskStalled` on stall |
+| `await result` | Async shorthand for `.aresult()` |
+| `.aresult(timeout, stall_timeout=10.0)` | Async wait; uses push notifications via `ResultWaiter` |
 | `.done()` | Non-blocking check |
 | `.status` | `"pending"`, `"success"`, or `"error"` |
 | `.task_id` | The task identifier |
@@ -360,6 +378,51 @@ with install_package_as("opencv-python"):
 ```
 
 The worker sees the `package` field on the import and knows to `pip install opencv-python` instead of `pip install cv2`.
+
+## Notification-based result delivery
+
+The `ResultWaiter` is a per-backend singleton that eliminates per-task polling. One listener thread per backend fans out push notifications to many waiting `Result` objects.
+
+```
+Result_1.aresult()  ─── register ──┐
+Result_2.aresult()  ─── register ──┤
+Result_N.aresult()  ─── register ──┤
+                                   ▼
+                            ResultWaiter  (1 per backend)
+                           ┌───────┴────────┐
+                    listener thread    heartbeat thread
+                           │                │
+              subscribe_results()    get_heartbeats([...])
+              (blocking iterator)    (1 batch call / second)
+                           │
+                    yields task_id
+                           │
+              try_get_result(task_id)
+                           │
+              slot.future.set_result(raw)  ←  fan-out
+```
+
+**Key properties:**
+- **1 subscription** per backend, not N polls. 50 concurrent tasks = 1 listener thread, not 500 calls/second.
+- **1 batch heartbeat call** per second via `get_heartbeats()` (e.g. Redis `MGET`), not N individual calls.
+- Backends without push support automatically fall back to consolidated polling.
+- Race conditions are closed via a double-check pattern: `try_get_result()` before and after registration.
+- Async waiters use `asyncio.Future` resolved via `loop.call_soon_threadsafe()`. Sync waiters use `threading.Event`.
+
+## Heartbeat and stall detection
+
+Workers send periodic heartbeats (every 1 second) while executing a task. Clients use heartbeat data for stall detection.
+
+**Worker side:** A daemon thread calls `backend.send_heartbeat(task_id)` every second. The thread is stopped when the task completes (success or failure).
+
+**Client side:** The `ResultWaiter`'s heartbeat monitor thread batch-fetches heartbeats for all pending tasks once per second. It tracks when each task's heartbeat value last *changed* using the client's monotonic clock -- no cross-machine timestamp comparison. If the heartbeat hasn't changed for longer than `stall_timeout`, `TaskStalled` is raised.
+
+Stall detection only triggers after at least one heartbeat has been observed, avoiding false positives for tasks that haven't started yet.
+
+| Path | Stall detection |
+|------|----------------|
+| `result()` | Off by default. Opt-in via `stall_timeout=N` |
+| `aresult()` | On by default (`stall_timeout=10.0`). Disable with `stall_timeout=None` |
 
 ## Thread and task safety
 

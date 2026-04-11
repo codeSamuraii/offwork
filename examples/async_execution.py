@@ -13,20 +13,12 @@ from pyfuse import trace
 
 pyfuse.connect("shm://localhost:9847")
 
-
-def add(a: int, b: int) -> int:
-    return a + b
-
-
-@trace
-def hypotenuse(a: float, b: float) -> float:
-    return math.sqrt(add(a**2, b**2))
-
-
-@trace
 async def async_add(a: int, b: int) -> int:
     return a + b
 
+@trace
+async def hypotenuse(a: float, b: float) -> float:
+    return math.sqrt(await async_add(a**2, b**2))
 
 async def main() -> None:
     # 1. Await a single task
@@ -37,16 +29,25 @@ async def main() -> None:
     result = await hypotenuse.run(5.0, 12.0)
     print(f"hypotenuse(5, 12) = {result}")  # 13.0
 
-    # 3. Batch with .amap() -- submits all, awaits all concurrently
+    # 3. Launch and get results later
+    future = hypotenuse.run(8.0, 15.0)
+    print("hypotenuse(8, 15) = ...", end='\r')
+    await asyncio.sleep(3)  # do other work while waiting
+
+    result = await future
+    print(f"hypotenuse(8, 15) = {result}")  # 17.0
+
+    # 4. Batch with .amap() -- submits all, awaits all concurrently
     results = await hypotenuse.amap([(3.0, 4.0), (5.0, 12.0), (8.0, 15.0)])
     print(f"amap results = {results}")  # [5.0, 13.0, 17.0]
 
-    # 4. asyncio.gather -- submit multiple different tasks concurrently
-    r1, r2 = await asyncio.gather(
-        hypotenuse.run(6.0, 8.0),
-        async_add.run(10, 20),
+    # 5. asyncio.gather -- submit multiple different tasks concurrently
+    results = await asyncio.gather(
+        hypotenuse.run(3.0, 4.0),
+        hypotenuse.run(5.0, 12.0),
+        hypotenuse.run(8.0, 15.0),
     )
-    print(f"gather: hypotenuse={r1}, async_add={r2}")  # 10.0, 30
+    print(f"gather: {results}")  # [5.0, 13.0, 17.0]
 
 
 asyncio.run(main())

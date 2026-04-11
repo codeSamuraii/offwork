@@ -116,6 +116,69 @@ future = to_yaml.run({"key": "value"})
 
 Common mappings like `cv2` -> `opencv-python` and `PIL` -> `Pillow` are built in.
 
+## Async support
+
+pyfuse supports `async def` functions and provides async-native APIs for result handling.
+
+### Await a result
+
+Every `Result` is awaitable. Use `await` directly or call `.aresult()`:
+
+```python
+import asyncio
+
+async def main():
+    # Await a result directly
+    result = await hypotenuse.run(3.0, 4.0)
+    print(result)  # 5.0
+
+    # Or use .aresult() with options
+    future = hypotenuse.run(3.0, 4.0)
+    result = await future.aresult(timeout=10.0)
+```
+
+### .arun() and .amap()
+
+`.arun()` submits and awaits in one call. `.amap()` submits a batch and awaits all results concurrently:
+
+```python
+async def main():
+    # Submit and await a single task
+    result = await hypotenuse.arun(3.0, 4.0)
+
+    # Submit batch, await all concurrently
+    results = await hypotenuse.amap([(3.0, 4.0), (5.0, 12.0), (8.0, 15.0)])
+    print(results)  # [5.0, 13.0, 17.0]
+```
+
+### asyncio.gather
+
+Results work with `asyncio.gather` for concurrent execution of different tasks:
+
+```python
+async def main():
+    r1, r2, r3 = await asyncio.gather(
+        hypotenuse.run(3.0, 4.0),
+        hypotenuse.run(5.0, 12.0),
+        hypotenuse.run(8.0, 15.0),
+    )
+```
+
+### Async functions
+
+`async def` functions are executed transparently on workers:
+
+```python
+@trace
+async def fetch_and_process(url: str) -> str:
+    import aiohttp
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            return await resp.text()
+
+result = await fetch_and_process.arun("https://example.com")
+```
+
 ## Batch submission
 
 Submit multiple tasks at once with `.map()`:
@@ -188,6 +251,10 @@ future.status    # "pending", "success", or "error"
 # Block until result
 result = future.result(timeout=10)  # raises TimeoutError if too slow
 
+# Async await
+result = await future                        # shorthand
+result = await future.aresult(timeout=10)    # with options
+
 # Remote errors are re-raised on the client
 from pyfuse import RemoteError
 try:
@@ -195,6 +262,31 @@ try:
 except RemoteError as e:
     print(e)  # includes the remote traceback
 ```
+
+## Heartbeat and stall detection
+
+Workers send periodic heartbeats while executing tasks. Clients detect stalled tasks when heartbeats stop arriving.
+
+```python
+from pyfuse import TaskStalled
+
+# Async -- stall detection enabled by default (10s threshold)
+try:
+    result = await future.aresult(stall_timeout=10.0)
+except TaskStalled as e:
+    print(e)  # "Task abc123 stalled: no heartbeat for 12.3s"
+
+# Sync -- opt-in via stall_timeout parameter
+try:
+    result = future.result(stall_timeout=10.0)
+except TaskStalled as e:
+    print(e)
+
+# Disable stall detection
+result = await future.aresult(stall_timeout=None)
+```
+
+Stall detection only triggers after at least one heartbeat has been observed — a task that hasn't started yet won't be flagged as stalled.
 
 ## Advanced: serialization and reconstruction
 
