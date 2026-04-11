@@ -189,7 +189,7 @@ class TestDetectScriptPackages:
 
         script = tmp_path / "test_ipa.py"  # type: ignore[operator]
         script.write_text(
-            "from pyfuse.worker.deps import install_package_as\n"
+            "from pyfuse import install_package_as\n"
             "import requests\n"
             'with install_package_as("PyYAML"):\n'
             "    import yaml\n"

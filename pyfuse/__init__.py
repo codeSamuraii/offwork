@@ -70,6 +70,7 @@ __all__ = [
     "connect",
     "disconnect",
     "serve",
+    "install_package_as",
     # Serialization
     "serialize",
     "reconstruct",

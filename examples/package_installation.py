@@ -21,7 +21,7 @@ import markdown
 
 import pyfuse
 from pyfuse import trace
-from pyfuse.worker.deps import install_package_as
+from pyfuse import install_package_as
 
 # Some packages have different import and pip names:
 #   import yaml       -> pip install PyYAML

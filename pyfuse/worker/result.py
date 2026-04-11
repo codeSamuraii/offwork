@@ -97,10 +97,6 @@ class Result:
             raise RemoteError(msg)
         return self._envelope.result
 
-    def wait(self, timeout: float | None = None) -> Any:
-        """Alias for :meth:`result`."""
-        return self.result(timeout=timeout)
-
     @property
     def status(self) -> str:
         """Return ``"pending"``, ``"success"``, or ``"error"``."""

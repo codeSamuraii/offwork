@@ -26,7 +26,7 @@ _BUILTIN_NAMES = set(dir(builtins))
 def _make_run_method(
     wrapper: Callable[..., object], func: Callable[..., object]
 ) -> Callable[..., object]:
-    """Create the ``.run()`` / ``.delay()`` method attached to a traced wrapper."""
+    """Create the ``.run()`` method attached to a traced wrapper."""
 
     def run(*args: object, backend: str | Backend | None = None, **kwargs: object) -> object:
         from pyfuse.worker.remote import submit_remote
@@ -150,7 +150,6 @@ class TracingMixin:
 
             async_gen_wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
             async_gen_wrapper.run = _make_run_method(async_gen_wrapper, func)  # type: ignore[attr-defined]
-            async_gen_wrapper.delay = async_gen_wrapper.run  # type: ignore[attr-defined]
             async_gen_wrapper.map = _make_map_method(async_gen_wrapper.run)  # type: ignore[attr-defined]
             return async_gen_wrapper  # type: ignore[return-value]
 
@@ -169,7 +168,6 @@ class TracingMixin:
 
             async_wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
             async_wrapper.run = _make_run_method(async_wrapper, func)  # type: ignore[attr-defined]
-            async_wrapper.delay = async_wrapper.run  # type: ignore[attr-defined]
             async_wrapper.map = _make_map_method(async_wrapper.run)  # type: ignore[attr-defined]
             return async_wrapper  # type: ignore[return-value]
 
@@ -184,7 +182,6 @@ class TracingMixin:
 
             gen_wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
             gen_wrapper.run = _make_run_method(gen_wrapper, func)  # type: ignore[attr-defined]
-            gen_wrapper.delay = gen_wrapper.run  # type: ignore[attr-defined]
             gen_wrapper.map = _make_map_method(gen_wrapper.run)  # type: ignore[attr-defined]
             return gen_wrapper  # type: ignore[return-value]
 
@@ -202,7 +199,6 @@ class TracingMixin:
 
         wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
         wrapper.run = _make_run_method(wrapper, func)  # type: ignore[attr-defined]
-        wrapper.delay = wrapper.run  # type: ignore[attr-defined]
         wrapper.map = _make_map_method(wrapper.run)  # type: ignore[attr-defined]
         return wrapper  # type: ignore[return-value]
 

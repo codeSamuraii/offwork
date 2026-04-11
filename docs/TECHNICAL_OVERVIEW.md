@@ -161,7 +161,6 @@ For generators and async generators, a proxy pattern intercepts each iteration s
 
 The returned wrapper gains:
 - `.run(*args)` -- submit to remote worker, returns `Result` future
-- `.delay(*args)` -- alias for `.run()`
 - `.map(args_list)` -- batch submission
 - `__pyfuse_traced__ = True` -- marker attribute
 
@@ -247,7 +246,6 @@ Error (includes remote traceback):
 | Method / Property | Description |
 |------------------|-------------|
 | `.result(timeout=None)` | Block until result; raises `RemoteError` on failure |
-| `.wait(timeout=None)` | Alias for `.result()` |
 | `.done()` | Non-blocking check |
 | `.status` | `"pending"`, `"success"`, or `"error"` |
 | `.task_id` | The task identifier |

@@ -20,7 +20,7 @@ pyfuse/
 │   ├── version.py           # _VERSION = "0.3.0"
 │   └── errors.py            # Error, WorkerError, RemoteError, DependencyError
 ├── graph/
-│   ├── decorator.py         # @trace: marks functions, adds .run()/.map()/.delay()
+│   ├── decorator.py         # @trace: marks functions, adds .run()/.map()
 │   ├── graph.py             # Graph class: registration, auto-discovery, serialization
 │   ├── store.py             # Content-addressable store: serialize/reconstruct/merge
 │   ├── analyzer.py          # AST-based source capture, import extraction, dependency detection
