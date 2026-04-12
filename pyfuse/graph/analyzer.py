@@ -212,27 +212,65 @@ def has_super_call(func_source: str) -> bool:
     return False
 
 
-def get_class_bases_from_source(cls: type) -> list[str]:
-    """Extract base class names from the class definition source AST.
+def get_class_bases_from_source(
+    cls: type,
+) -> tuple[list[str], dict[str, str]]:
+    """Extract base class names and keyword arguments from the class definition.
 
-    Returns simple base class names (not fully qualified). Skips ``object``
-    since it's implicit.
+    Returns ``(bases, keywords)`` where *bases* is a list of base class names
+    (excluding ``object``) and *keywords* maps keyword names to their unparsed
+    AST values (e.g. ``{"metaclass": "ABCMeta"}``).
     """
     try:
         source = textwrap.dedent(inspect.getsource(cls))
     except (OSError, TypeError):
-        return []
+        return [], {}
     try:
         tree = ast.parse(source)
     except SyntaxError:
-        return []
+        return [], {}
     for node in tree.body:
         if isinstance(node, ast.ClassDef) and node.name == cls.__name__:
-            bases: list[str] = []
-            for base in node.bases:
-                bases.append(ast.unparse(base))
-            return [b for b in bases if b != "object"]
-    return []
+            bases = [ast.unparse(b) for b in node.bases if ast.unparse(b) != "object"]
+            keywords: dict[str, str] = {}
+            for kw in node.keywords:
+                if kw.arg is not None:
+                    keywords[kw.arg] = ast.unparse(kw.value)
+            return bases, keywords
+    return [], {}
+
+
+def get_class_attrs(cls: type) -> tuple[list[str], list[str]]:
+    """Extract class-level attributes and decorators from the class source AST.
+
+    Returns ``(attrs, decorators)`` where *attrs* is a list of source code
+    strings for class body statements (assignments, annotated assignments,
+    docstrings) and *decorators* is a list of decorator source strings
+    (without the ``@`` prefix).
+    """
+    try:
+        source = textwrap.dedent(inspect.getsource(cls))
+    except (OSError, TypeError):
+        return [], []
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return [], []
+    for node in tree.body:
+        if not (isinstance(node, ast.ClassDef) and node.name == cls.__name__):
+            continue
+        attrs: list[str] = []
+        for child in node.body:
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            segment = ast.get_source_segment(source, child)
+            if segment is not None:
+                attrs.append(textwrap.dedent(segment))
+            else:
+                attrs.append(ast.unparse(child))
+        decorators = [ast.unparse(d) for d in node.decorator_list]
+        return attrs, decorators
+    return [], []
 
 
 def find_bare_calls(func_source: str) -> set[str]:

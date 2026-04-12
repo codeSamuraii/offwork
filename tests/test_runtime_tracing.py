@@ -665,8 +665,8 @@ def test_closure_traced_func_detected_as_dep(tmp_path: Path) -> None:
     assert "cvfunc.helper" in node.dependencies
 
 
-def test_closure_invalid_repr_non_traced_warns(tmp_path: Path) -> None:
-    """Non-traced object with invalid repr emits descriptive warning."""
+def test_closure_invalid_repr_picklable_captured(tmp_path: Path) -> None:
+    """Picklable object with invalid repr is captured via pickle fallback."""
     import warnings as w
 
     mod = create_module(
@@ -685,10 +685,15 @@ def test_closure_invalid_repr_non_traced_warns(tmp_path: Path) -> None:
     )
     with w.catch_warnings(record=True) as caught:
         w.simplefilter("always")
-        mod.outer()
+        func = mod.outer()
 
     msgs = [str(c.message) for c in caught]
-    assert any("not valid Python" in m for m in msgs)
+    assert not any("cannot be serialized" in m for m in msgs)
+
+    from pyfuse import get_graph
+    node = get_graph().nodes["cvinvalid.outer.<locals>.inner"]
+    assert "f" in node.closure_vars
+    assert "__import__('pickle')" in node.closure_vars["f"]
 
 
 def test_closure_func_refs_survive_refresh(tmp_path: Path) -> None:
@@ -1311,3 +1316,237 @@ def test_async_gen_reconstruction(tmp_path: Path) -> None:
     source = reconstruct(serialize(), "gen_doubles")
     assert "def double(x):" in source
     assert "async def gen_doubles(items):" in source
+
+
+# ---------------------------------------------------------------------------
+# Feature 1: Non-traced callables in closures
+# ---------------------------------------------------------------------------
+
+
+def test_closure_untraced_user_function_auto_registered(tmp_path: Path) -> None:
+    """Non-traced user function captured in closure is auto-registered."""
+    mod = create_module(
+        tmp_path,
+        "cvuntraced",
+        (
+            "from pyfuse import trace\n\n"
+            "def helper(x):\n"
+            "    return x + 1\n\n"
+            "def outer():\n"
+            "    fn = helper\n"
+            "    @trace\n"
+            "    def inner(x):\n"
+            "        return fn(x)\n"
+            "    return inner\n"
+        ),
+    )
+    func = mod.outer()
+    source = reconstruct(serialize(), "inner")
+    assert "def helper(x):" in source
+    assert "def inner(" in source
+
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    assert ns["inner"](5) == 6  # type: ignore[operator]
+
+
+def test_closure_lambda_captured(tmp_path: Path) -> None:
+    """Lambda captured in closure has its source extracted."""
+    mod = create_module(
+        tmp_path,
+        "cvlambda",
+        (
+            "from pyfuse import trace\n\n"
+            "def outer():\n"
+            "    fn = lambda x: x * 2\n"
+            "    @trace\n"
+            "    def inner(x):\n"
+            "        return fn(x)\n"
+            "    return inner\n"
+        ),
+    )
+    func = mod.outer()
+
+    from pyfuse import get_graph
+    node = get_graph().nodes["cvlambda.outer.<locals>.inner"]
+    assert "fn" in node.closure_vars
+    assert "lambda" in node.closure_vars["fn"]
+
+
+def test_closure_untraced_func_with_deps(tmp_path: Path) -> None:
+    """Non-traced function in closure has its own dependencies discovered."""
+    mod = create_module(
+        tmp_path,
+        "cvuntraceddeps",
+        (
+            "from pyfuse import trace\n\n"
+            "def add(a, b):\n"
+            "    return a + b\n\n"
+            "def double_add(a, b):\n"
+            "    return add(a, b) * 2\n\n"
+            "def outer():\n"
+            "    fn = double_add\n"
+            "    @trace\n"
+            "    def inner(a, b):\n"
+            "        return fn(a, b)\n"
+            "    return inner\n"
+        ),
+    )
+    func = mod.outer()
+    source = reconstruct(serialize(), "inner")
+    assert "def add(a, b):" in source
+    assert "def double_add(a, b):" in source
+    assert "def inner(" in source
+
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    assert ns["inner"](3, 4) == 14  # type: ignore[operator]
+
+
+def test_closure_builtin_still_warns(tmp_path: Path) -> None:
+    """Builtin callables captured in closure still produce warning."""
+    import warnings as w
+
+    mod = create_module(
+        tmp_path,
+        "cvbuiltin",
+        (
+            "from pyfuse import trace\n\n"
+            "class Unpicklable:\n"
+            "    def __reduce__(self):\n"
+            "        raise TypeError('nope')\n"
+            "    def __repr__(self):\n"
+            "        return '<Unpicklable>'\n\n"
+            "def outer():\n"
+            "    obj = Unpicklable()\n"
+            "    @trace\n"
+            "    def inner():\n"
+            "        return str(obj)\n"
+            "    return inner\n"
+        ),
+    )
+    with w.catch_warnings(record=True) as caught:
+        w.simplefilter("always")
+        mod.outer()
+
+    msgs = [str(c.message) for c in caught]
+    assert any("cannot be serialized" in m for m in msgs)
+
+
+# ---------------------------------------------------------------------------
+# Feature 2: Invalid repr fallback
+# ---------------------------------------------------------------------------
+
+
+def test_closure_defaultdict_constructor_expr(tmp_path: Path) -> None:
+    """defaultdict captured via constructor expression."""
+    mod = create_module(
+        tmp_path,
+        "cvdefdict",
+        (
+            "from collections import defaultdict\n"
+            "from pyfuse import trace\n\n"
+            "def outer():\n"
+            "    d = defaultdict(int, {'a': 1})\n"
+            "    @trace\n"
+            "    def inner():\n"
+            "        return d['a']\n"
+            "    return inner\n"
+        ),
+    )
+    func = mod.outer()
+
+    from pyfuse import get_graph
+    node = get_graph().nodes["cvdefdict.outer.<locals>.inner"]
+    assert "d" in node.closure_vars
+    assert "defaultdict" in node.closure_vars["d"]
+
+    source = reconstruct(serialize(), "inner")
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    assert ns["inner"]() == 1  # type: ignore[operator]
+
+
+def test_closure_counter_constructor_expr(tmp_path: Path) -> None:
+    """Counter captured via constructor expression."""
+    mod = create_module(
+        tmp_path,
+        "cvcounter",
+        (
+            "from collections import Counter\n"
+            "from pyfuse import trace\n\n"
+            "def outer():\n"
+            "    c = Counter({'x': 3, 'y': 1})\n"
+            "    @trace\n"
+            "    def inner():\n"
+            "        return c['x']\n"
+            "    return inner\n"
+        ),
+    )
+    func = mod.outer()
+
+    from pyfuse import get_graph
+    node = get_graph().nodes["cvcounter.outer.<locals>.inner"]
+    assert "c" in node.closure_vars
+    assert "Counter" in node.closure_vars["c"]
+
+    source = reconstruct(serialize(), "inner")
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    assert ns["inner"]() == 3  # type: ignore[operator]
+
+
+def test_closure_deque_constructor_expr(tmp_path: Path) -> None:
+    """deque captured via constructor expression."""
+    mod = create_module(
+        tmp_path,
+        "cvdeque",
+        (
+            "from collections import deque\n"
+            "from pyfuse import trace\n\n"
+            "def outer():\n"
+            "    q = deque([1, 2, 3], maxlen=5)\n"
+            "    @trace\n"
+            "    def inner():\n"
+            "        return list(q)\n"
+            "    return inner\n"
+        ),
+    )
+    func = mod.outer()
+
+    from pyfuse import get_graph
+    node = get_graph().nodes["cvdeque.outer.<locals>.inner"]
+    assert "q" in node.closure_vars
+    assert "deque" in node.closure_vars["q"]
+    assert "maxlen=5" in node.closure_vars["q"]
+
+    source = reconstruct(serialize(), "inner")
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    assert ns["inner"]() == [1, 2, 3]  # type: ignore[operator]
+
+
+def test_closure_pickle_fallback_custom_class(tmp_path: Path) -> None:
+    """Custom picklable class captured via pickle fallback."""
+    mod = create_module(
+        tmp_path,
+        "cvpickle",
+        (
+            "from pyfuse import trace\n\n"
+            "class Config:\n"
+            "    def __init__(self, val):\n"
+            "        self.val = val\n\n"
+            "def outer():\n"
+            "    cfg = Config(42)\n"
+            "    @trace\n"
+            "    def inner():\n"
+            "        return cfg.val\n"
+            "    return inner\n"
+        ),
+    )
+    func = mod.outer()
+
+    from pyfuse import get_graph
+    node = get_graph().nodes["cvpickle.outer.<locals>.inner"]
+    assert "cfg" in node.closure_vars
+    assert "__import__('pickle')" in node.closure_vars["cfg"]

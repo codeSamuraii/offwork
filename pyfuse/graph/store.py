@@ -94,17 +94,35 @@ def _build_class_block(
     ]
 
     bases: list[str] = []
+    keywords: dict[str, str] = {}
+    class_attrs: list[str] = []
+    class_decorators: list[str] = []
     for qname in member_qnames:
-        if nodes[qname].class_bases:
-            bases = nodes[qname].class_bases
-            break
+        n = nodes[qname]
+        if n.class_bases and not bases:
+            bases = n.class_bases
+        if n.class_keywords and not keywords:
+            keywords = n.class_keywords
+        if n.class_attrs and not class_attrs:
+            class_attrs = n.class_attrs
+        if n.class_decorators and not class_decorators:
+            class_decorators = n.class_decorators
 
-    if bases:
-        header = f"class {class_name}({', '.join(bases)}):\n"
+    header_parts = list(bases)
+    for k, v in keywords.items():
+        header_parts.append(f"{k}={v}")
+
+    if header_parts:
+        header = f"class {class_name}({', '.join(header_parts)}):\n"
     else:
         header = f"class {class_name}:\n"
 
-    return header + "\n\n".join(method_sources)
+    decorator_lines = "".join(f"@{d}\n" for d in class_decorators)
+    attr_block = "".join(
+        _indent_method(attr) + "\n\n" for attr in class_attrs
+    )
+
+    return decorator_lines + header + attr_block + "\n\n".join(method_sources)
 
 
 @dataclass
@@ -315,6 +333,9 @@ class Store:
             closure_func_refs=closure_func_refs,
             module_vars=blob.get("module_vars", {}),
             class_bases=blob.get("class_bases", []),
+            class_keywords=blob.get("class_keywords", {}),
+            class_attrs=blob.get("class_attrs", []),
+            class_decorators=blob.get("class_decorators", []),
         )
 
     def reconstruct(self, function_name: str) -> str:

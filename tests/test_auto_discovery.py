@@ -760,3 +760,184 @@ def test_class_inheriting_stdlib(tmp_path: Path) -> None:
     exec(source, ns)  # noqa: S102
     obj = ns["MyList"]([1, 2, 3])  # type: ignore[operator]
     assert obj.first() == 1
+
+
+# ---------------------------------------------------------------------------
+# Feature 3: Metaclass keywords
+# ---------------------------------------------------------------------------
+
+
+def test_metaclass_reconstructed(tmp_path: Path) -> None:
+    """Class with metaclass= keyword is reconstructed correctly."""
+    create_module(
+        tmp_path,
+        "admeta",
+        (
+            "from abc import ABCMeta, abstractmethod\n"
+            "from pyfuse import trace\n\n"
+            "class Animal(metaclass=ABCMeta):\n"
+            "    @abstractmethod\n"
+            "    def speak(self):\n"
+            "        ...\n\n"
+            "class Dog(Animal):\n"
+            "    @trace\n"
+            "    def speak(self):\n"
+            "        return super().speak() or 'woof'\n"
+        ),
+    )
+    source = reconstruct(serialize(), "speak")
+    assert "metaclass=ABCMeta" in source
+    assert "class Animal(metaclass=ABCMeta):" in source
+    assert "class Dog(Animal):" in source
+
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    assert ns["Dog"]().speak() == "woof"  # type: ignore[union-attr]
+
+
+def test_metaclass_with_bases(tmp_path: Path) -> None:
+    """Class with both bases and metaclass= keyword."""
+    create_module(
+        tmp_path,
+        "admetabases",
+        (
+            "from abc import ABCMeta\n"
+            "from pyfuse import trace\n\n"
+            "class Base(metaclass=ABCMeta):\n"
+            "    def value(self):\n"
+            "        return 42\n\n"
+            "class MyABC(Base):\n"
+            "    @trace\n"
+            "    def get(self):\n"
+            "        return super().value()\n"
+        ),
+    )
+    source = reconstruct(serialize(), "get")
+    assert "class Base(metaclass=ABCMeta):" in source
+    assert "class MyABC(Base):" in source
+
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    assert ns["MyABC"]().get() == 42  # type: ignore[union-attr]
+
+
+def test_init_subclass_replayed(tmp_path: Path) -> None:
+    """__init_subclass__ is called when parent class is in the dependency tree."""
+    create_module(
+        tmp_path,
+        "adinitsubclass",
+        (
+            "from pyfuse import trace\n\n"
+            "class Registry:\n"
+            "    _registry = []\n"
+            "    def __init_subclass__(cls, **kwargs):\n"
+            "        super().__init_subclass__(**kwargs)\n"
+            "        Registry._registry.append(cls.__name__)\n\n"
+            "class Plugin(Registry):\n"
+            "    @trace\n"
+            "    def run(self):\n"
+            "        return super().__init_subclass__.__qualname__\n"
+        ),
+    )
+    source = reconstruct(serialize(), "run")
+    assert "def __init_subclass__" in source
+    assert "class Plugin(Registry):" in source
+
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    # __init_subclass__ was called during class creation via exec
+    assert "Plugin" in ns["Registry"]._registry  # type: ignore[union-attr]
+
+
+# ---------------------------------------------------------------------------
+# Feature 4: Class-level attributes and decorators
+# ---------------------------------------------------------------------------
+
+
+def test_class_attrs_captured(tmp_path: Path) -> None:
+    """Class-level attribute assignments are captured and reconstructed."""
+    create_module(
+        tmp_path,
+        "adclsattrs",
+        (
+            "from pyfuse import trace\n\n"
+            "class Config:\n"
+            "    MAX = 10\n"
+            "    name = 'default'\n\n"
+            "    @trace\n"
+            "    def get_max(self):\n"
+            "        return self.MAX\n"
+        ),
+    )
+    source = reconstruct(serialize(), "get_max")
+    assert "MAX = 10" in source
+    assert "name = 'default'" in source
+
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    assert ns["Config"]().get_max() == 10  # type: ignore[union-attr]
+
+
+def test_class_annotated_attrs_captured(tmp_path: Path) -> None:
+    """Annotated class attributes are captured."""
+    create_module(
+        tmp_path,
+        "adclsann",
+        (
+            "from pyfuse import trace\n\n"
+            "class Item:\n"
+            "    count: int = 0\n\n"
+            "    @trace\n"
+            "    def increment(self):\n"
+            "        Item.count += 1\n"
+            "        return Item.count\n"
+        ),
+    )
+    source = reconstruct(serialize(), "increment")
+    assert "count: int = 0" in source or "count = 0" in source
+
+
+def test_class_decorator_captured(tmp_path: Path) -> None:
+    """Class decorators like @dataclass are captured and emitted."""
+    create_module(
+        tmp_path,
+        "adclsdeco",
+        (
+            "from dataclasses import dataclass\n"
+            "from pyfuse import trace\n\n"
+            "@dataclass\n"
+            "class Point:\n"
+            "    x: float\n"
+            "    y: float\n\n"
+            "    @trace\n"
+            "    def magnitude(self):\n"
+            "        return (self.x ** 2 + self.y ** 2) ** 0.5\n"
+        ),
+    )
+    source = reconstruct(serialize(), "magnitude")
+    assert "@dataclass" in source
+    assert "x: float" in source
+    assert "y: float" in source
+
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    p = ns["Point"](3.0, 4.0)  # type: ignore[operator]
+    assert p.magnitude() == 5.0  # type: ignore[union-attr]
+
+
+def test_class_docstring_captured(tmp_path: Path) -> None:
+    """Class docstrings are captured as class body attributes."""
+    create_module(
+        tmp_path,
+        "adclsdoc",
+        (
+            "from pyfuse import trace\n\n"
+            "class Documented:\n"
+            '    """A documented class."""\n\n'
+            "    @trace\n"
+            "    def method(self):\n"
+            "        return 1\n"
+        ),
+    )
+    source = reconstruct(serialize(), "method")
+    assert "A documented class" in source

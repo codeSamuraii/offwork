@@ -44,6 +44,9 @@ class FunctionNode:
     closure_func_refs: dict[str, str] = field(default_factory=dict)
     module_vars: dict[str, str] = field(default_factory=dict)
     class_bases: list[str] = field(default_factory=list)
+    class_keywords: dict[str, str] = field(default_factory=dict)
+    class_attrs: list[str] = field(default_factory=list)
+    class_decorators: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -63,6 +66,12 @@ class FunctionNode:
             d["module_vars"] = dict(self.module_vars)
         if self.class_bases:
             d["class_bases"] = list(self.class_bases)
+        if self.class_keywords:
+            d["class_keywords"] = dict(self.class_keywords)
+        if self.class_attrs:
+            d["class_attrs"] = list(self.class_attrs)
+        if self.class_decorators:
+            d["class_decorators"] = list(self.class_decorators)
         return d
 
     def to_content_blob(self) -> dict[str, Any]:
@@ -86,6 +95,12 @@ class FunctionNode:
             blob["module_vars"] = dict(self.module_vars)
         if self.class_bases:
             blob["class_bases"] = list(self.class_bases)
+        if self.class_keywords:
+            blob["class_keywords"] = dict(self.class_keywords)
+        if self.class_attrs:
+            blob["class_attrs"] = list(self.class_attrs)
+        if self.class_decorators:
+            blob["class_decorators"] = list(self.class_decorators)
         return blob
 
     def content_hash(self) -> str:
@@ -107,6 +122,9 @@ class FunctionNode:
             "closure_func_refs": dict(sorted(self.closure_func_refs.items())),
             "module_vars": dict(sorted(self.module_vars.items())),
             "class_bases": list(self.class_bases),
+            "class_keywords": dict(sorted(self.class_keywords.items())),
+            "class_attrs": list(self.class_attrs),
+            "class_decorators": list(self.class_decorators),
         }
         raw = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
@@ -125,4 +143,7 @@ class FunctionNode:
             closure_func_refs=data.get("closure_func_refs", {}),
             module_vars=data.get("module_vars", {}),
             class_bases=data.get("class_bases", []),
+            class_keywords=data.get("class_keywords", {}),
+            class_attrs=data.get("class_attrs", []),
+            class_decorators=data.get("class_decorators", []),
         )

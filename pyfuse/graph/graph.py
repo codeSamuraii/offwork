@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import ast
+import base64
+import collections
 import contextvars
 import inspect
 import logging
+import pickle
 import sys
 import threading
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Self
+from typing import Any, Self
 
 from pyfuse.core.errors import Error
 from pyfuse.core.models import FunctionNode, ImportInfo
@@ -19,6 +22,7 @@ from pyfuse.graph.analyzer import (
     filter_imports,
     find_bare_calls,
     find_self_calls,
+    get_class_attrs,
     get_class_bases_from_source,
     get_function_source,
     get_module_assignments,
@@ -71,24 +75,79 @@ def _analyze_function(func: Callable[..., object]) -> _AnalysisResult:
     return _AnalysisResult(source, imports, owner_class, module_vars)
 
 
+def _try_constructor_expr(value: object) -> str | None:
+    """Try to produce a valid Python expression for common stdlib types."""
+    if isinstance(value, collections.defaultdict):
+        factory = value.default_factory
+        if factory is None:
+            factory_repr = "None"
+        elif factory in (int, float, str, list, dict, set, tuple, bool, bytes):
+            factory_repr = factory.__name__
+        else:
+            return None
+        items_repr = repr(dict(value))
+        return f"__import__('collections').defaultdict({factory_repr}, {items_repr})"
+    if isinstance(value, collections.Counter):
+        return f"__import__('collections').Counter({repr(dict(value))})"
+    if isinstance(value, collections.deque):
+        if value.maxlen is not None:
+            return f"__import__('collections').deque({repr(list(value))}, maxlen={value.maxlen})"
+        return f"__import__('collections').deque({repr(list(value))})"
+    return None
+
+
+def _try_pickle_fallback(value: object) -> str | None:
+    """Try to serialize a value via pickle+base64 into a self-contained expression."""
+    try:
+        pickled = pickle.dumps(value)
+        encoded = base64.b64encode(pickled).decode("ascii")
+        expr = f"__import__('pickle').loads(__import__('base64').b64decode('{encoded}'))"
+        ast.parse(expr, mode="eval")
+        return expr
+    except (pickle.PicklingError, TypeError, AttributeError, SyntaxError):
+        return None
+
+
+def _try_get_lambda_source(func: Callable[..., object]) -> str | None:
+    """Try to extract the lambda expression source from a lambda function."""
+    try:
+        source = inspect.getsource(func).strip()
+    except (OSError, TypeError):
+        return None
+    if "lambda" not in source:
+        return None
+    try:
+        tree = ast.parse(source, mode="exec")
+    except SyntaxError:
+        return None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Lambda):
+            return ast.unparse(node)
+    return None
+
+
 def _capture_closure(
     func: Callable[..., object],
-) -> tuple[dict[str, str], dict[str, str]]:
+) -> tuple[dict[str, str], dict[str, str], dict[str, Callable[..., object]]]:
     """Extract closure variables and traced function references from *func*.
 
-    Returns ``(closure_vars, closure_func_refs)`` where each maps a
-    variable name to its serialized form (repr string or qualified name).
+    Returns ``(closure_vars, closure_func_refs, closure_func_objects)``
+    where *closure_vars* maps variable names to repr strings,
+    *closure_func_refs* maps variable names to qualified names, and
+    *closure_func_objects* maps qualified names to the actual callable
+    objects (for auto-registration of non-traced functions).
     """
     closure_vars: dict[str, str] = {}
     closure_func_refs: dict[str, str] = {}
+    closure_func_objects: dict[str, Callable[..., object]] = {}
 
     if not func.__code__.co_freevars:
-        return closure_vars, closure_func_refs
+        return closure_vars, closure_func_refs, closure_func_objects
 
     try:
         closure_info = inspect.getclosurevars(func)
     except ValueError:
-        return closure_vars, closure_func_refs
+        return closure_vars, closure_func_refs, closure_func_objects
 
     for name, value in closure_info.nonlocals.items():
         try:
@@ -108,6 +167,7 @@ def _capture_closure(
         except SyntaxError:
             pass
 
+        # Callables: prefer source-level capture over serialization
         if getattr(value, "__pyfuse_traced__", False):
             unwrapped = value
             while hasattr(unwrapped, "__wrapped__"):
@@ -115,15 +175,42 @@ def _capture_closure(
             ref_qname = f"{unwrapped.__module__}.{unwrapped.__qualname__}"
             closure_func_refs[name] = ref_qname
             logger.debug("Closure var '%s' is traced function %s", name, ref_qname)
-        else:
-            warnings.warn(
-                f"Closure variable '{name}' in "
-                f"'{func.__qualname__}' has repr that is not "
-                f"valid Python: {repr_value!r}",
-                stacklevel=3,
-            )
+            continue
+        if callable(value) and getattr(value, "__name__", "") == "<lambda>":
+            lambda_src = _try_get_lambda_source(value)
+            if lambda_src is not None:
+                closure_vars[name] = lambda_src
+                logger.debug("Closure var '%s' is lambda: %s", name, lambda_src)
+                continue
+        if callable(value) and _is_user_function(value):
+            ref_qname = f"{value.__module__}.{value.__qualname__}"
+            closure_func_refs[name] = ref_qname
+            closure_func_objects[ref_qname] = value
+            logger.debug("Closure var '%s' is untraced user function %s", name, ref_qname)
+            continue
 
-    return closure_vars, closure_func_refs
+        # Non-callable fallbacks
+        ctor_expr = _try_constructor_expr(value)
+        if ctor_expr is not None:
+            closure_vars[name] = ctor_expr
+            logger.debug("Closure var '%s' captured via constructor expression", name)
+            continue
+
+        pickle_expr = _try_pickle_fallback(value)
+        if pickle_expr is not None:
+            closure_vars[name] = pickle_expr
+            logger.debug("Closure var '%s' captured via pickle fallback", name)
+            continue
+
+        warnings.warn(
+            f"Closure variable '{name}' in "
+            f"'{func.__qualname__}' (type: {type(value).__name__}) "
+            f"cannot be serialized: repr is not valid Python "
+            f"and not picklable",
+            stacklevel=3,
+        )
+
+    return closure_vars, closure_func_refs, closure_func_objects
 
 
 def _mermaid_node_id(qname: str) -> str:
@@ -235,7 +322,24 @@ class Graph(TracingMixin):
                 "unavailable. Functions must be defined in .py source files."
             ) from exc
 
-        closure_vars, closure_func_refs = _capture_closure(original)
+        closure_vars, closure_func_refs, closure_func_objects = _capture_closure(original)
+
+        for ref_qname, func_obj in closure_func_objects.items():
+            if ref_qname not in self._nodes:
+                self._auto_register(func_obj)
+
+        if closure_vars:
+            closure_names: set[str] = set()
+            for cv in closure_vars.values():
+                closure_names |= get_used_names(cv)
+            if closure_names:
+                existing = {imp.bound_name for imp in analysis.imports}
+                all_imports = get_module_imports(original)
+                for imp in all_imports:
+                    if imp.bound_name in closure_names and imp.bound_name not in existing:
+                        analysis.imports.append(imp)
+                        existing.add(imp.bound_name)
+
         dependencies = self._build_dependencies(
             analysis, qualified_name, original.__module__, closure_func_refs,
         )
@@ -333,7 +437,42 @@ class Graph(TracingMixin):
                 continue
             self._auto_register(func)
 
+        self._set_class_metadata(cls)
         self._resolve_class_bases(cls)
+
+    def _set_class_metadata(self, cls: type) -> None:
+        """Capture class-level attributes and decorators onto method nodes."""
+        class_name = cls.__name__
+        module_name = cls.__module__
+
+        attrs, decorators = get_class_attrs(cls)
+        if not attrs and not decorators:
+            return
+
+        extra_names: set[str] = set()
+        for attr_src in attrs:
+            extra_names |= get_used_names(attr_src)
+        for deco_src in decorators:
+            extra_names |= get_used_names(deco_src)
+
+        for node in self._nodes.values():
+            if node.owner_class == class_name and node.module == module_name:
+                node.class_attrs = attrs
+                node.class_decorators = decorators
+                if extra_names:
+                    existing_names = {imp.bound_name for imp in node.imports}
+                    try:
+                        any_func = next(
+                            f for f in self._funcs.values()
+                            if f.__module__ == module_name
+                        )
+                        all_imports = get_module_imports(any_func)
+                        for imp in all_imports:
+                            if imp.bound_name in extra_names and imp.bound_name not in existing_names:
+                                node.imports.append(imp)
+                                existing_names.add(imp.bound_name)
+                    except StopIteration:
+                        pass
 
     def _resolve_class_bases(self, cls: type) -> None:
         """Detect class bases and store them on method nodes.
@@ -344,13 +483,31 @@ class Graph(TracingMixin):
         class_name = cls.__name__
         module_name = cls.__module__
 
-        bases = get_class_bases_from_source(cls)
-        if not bases:
+        bases, keywords = get_class_bases_from_source(cls)
+        if not bases and not keywords:
             return
+
+        keyword_names: set[str] = set()
+        for v in keywords.values():
+            keyword_names |= get_used_names(v)
 
         for node in self._nodes.values():
             if node.owner_class == class_name and node.module == module_name:
                 node.class_bases = bases
+                node.class_keywords = keywords
+                if keyword_names:
+                    existing_names = {imp.bound_name for imp in node.imports}
+                    try:
+                        any_func = next(
+                            f for f in self._funcs.values()
+                            if f.__module__ == module_name
+                        )
+                        all_imports = get_module_imports(any_func)
+                        for imp in all_imports:
+                            if imp.bound_name in keyword_names and imp.bound_name not in existing_names:
+                                node.imports.append(imp)
+                    except StopIteration:
+                        pass
 
         for base_cls in cls.__mro__[1:]:
             if base_cls is object:
@@ -438,6 +595,7 @@ class Graph(TracingMixin):
                     self._auto_register(method_obj)
 
         if inspect.isclass(cls_obj):
+            self._set_class_metadata(cls_obj)
             self._resolve_class_bases(cls_obj)
 
     # -- Refresh & dependency merging ------------------------------------------
@@ -589,6 +747,9 @@ class Graph(TracingMixin):
                 closure_func_refs=closure_func_refs,
                 module_vars=blob.get("module_vars", {}),
                 class_bases=blob.get("class_bases", []),
+                class_keywords=blob.get("class_keywords", {}),
+                class_attrs=blob.get("class_attrs", []),
+                class_decorators=blob.get("class_decorators", []),
             )
             graph._nodes[node.qualified_name] = node
         return graph
