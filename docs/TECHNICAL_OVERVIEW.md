@@ -25,13 +25,13 @@ pyfuse/
     __main__.py              CLI: python -m pyfuse worker/run/info/serialize/reconstruct
     _venv.py                 Temporary virtual environment management
     core/
-        models.py            FunctionNode, ImportInfo dataclasses (incl. content hashing)
+        models.py            FunctionNode, ImportInfo dataclasses (incl. content hashing, class metadata)
         task.py              Task: serializable envelope bundling graph + arguments
         version.py           Version constant
         errors.py            Error, WorkerError, RemoteError, DependencyError, TaskStalled
     graph/
         decorator.py         @trace: marks functions for remote execution
-        analyzer.py          AST-based source and dependency analysis
+        analyzer.py          AST-based source and dependency analysis, class attrs/decorators
         graph.py             Dependency graph: registration, auto-discovery, runtime tracing
         store.py             Content-addressable store: serialization, reconstruction
         tracing.py           Runtime call-stack tracing via contextvars
@@ -153,17 +153,23 @@ Cross-module imports (e.g., `from utils import helper`) are converted from impor
 
 Class constructors (`MyClass()`) are auto-discovered: pyfuse registers all user-defined methods of the class. `@staticmethod` and `@classmethod` descriptors are unwrapped and registered correctly. When a method uses `super()`, base classes and their methods are discovered recursively, and `class Foo(Base):` headers are emitted in reconstructed source.
 
+Class-level attributes (assignments, annotated assignments, docstrings) are extracted from the class source AST and emitted in reconstructed class blocks. Class decorators (e.g., `@dataclass`) are captured and emitted above the class header. Metaclass keywords (e.g., `metaclass=ABCMeta`) and other class keywords are extracted from the class definition and included in the reconstructed header.
+
 Module-level constants and variables referenced by traced functions (e.g., `MAX_RETRIES = 5`) are captured and emitted in reconstructed source.
 
 **Not auto-discovered:** standard library functions, third-party packages (kept as imports).
 
 ### 5. Closure capture
 
-If the function captures variables from an enclosing scope:
-- Values are serialized via `repr()` and validated with `ast.parse()`.
-- Valid reprs become keyword-only parameters with defaults in reconstructed code.
-- Traced function references are recorded as dependency edges.
-- Invalid reprs trigger a warning and are skipped.
+If the function captures variables from an enclosing scope, pyfuse uses a multi-tier capture strategy:
+
+1. **`repr()` validation** -- Values whose `repr()` is valid Python (passes `ast.parse()`) are stored directly. They become keyword-only parameters with defaults in reconstructed code.
+2. **Traced functions** -- References to `@trace`-decorated functions are recorded as dependency edges.
+3. **Lambda functions** -- Source is extracted via `inspect.getsource()` + AST walking, stored as a closure variable expression.
+4. **Non-traced user functions** -- Automatically discovered and registered as dependencies (same as traced functions).
+5. **Constructor expressions** -- Common stdlib types (`defaultdict`, `Counter`, `deque`) whose `repr()` isn't valid Python are captured via self-contained constructor expressions (e.g., `__import__('collections').defaultdict(int, {'a': 1})`).
+6. **Pickle fallback** -- Picklable objects are serialized via `pickle.dumps()` + base64 encoding into a self-contained expression.
+7. **Warning** -- Objects that can't be captured by any method trigger a warning with the variable name and type.
 
 ### 6. Runtime tracing
 
@@ -204,7 +210,7 @@ When arguments contain class instances, a custom JSON encoder serializes them vi
 ```json
 {
   "id": "a1b2c3d4e5f6",
-  "graph": "{\"version\": \"0.3.0\", \"objects\": {...}, ...}",
+  "graph": "{\"version\": \"0.4.0\", \"objects\": {...}, ...}",
   "function": "mymodule.hypotenuse",
   "args": [3.0, 4.0],
   "kwargs": {},
@@ -274,7 +280,7 @@ Functions are stored in a content-addressable JSON format. Each function is iden
 
 ```json
 {
-  "version": "0.3.0",
+  "version": "0.4.0",
   "objects": {
     "a1b2...": {
       "name": "add",
@@ -302,7 +308,7 @@ Functions are stored in a content-addressable JSON format. Each function is iden
 }
 ```
 
-Optional fields (`closure_vars`, `closure_func_refs`, `module_vars`, `class_bases`) are omitted when empty.
+Optional fields (`closure_vars`, `closure_func_refs`, `module_vars`, `class_bases`, `class_keywords`, `class_attrs`, `class_decorators`) are omitted when empty.
 
 ### Content hashing
 
@@ -312,6 +318,7 @@ Optional fields (`closure_vars`, `closure_func_refs`, `module_vars`, `class_base
 | `imports` (sorted), `owner_class` | `deps` (structural, not content) |
 | `closure_vars`, `closure_func_refs` (sorted) | |
 | `module_vars` (sorted), `class_bases` | |
+| `class_keywords` (sorted), `class_attrs`, `class_decorators` | |
 
 Because dependencies are excluded from the hash, adding or removing an edge never changes a node's hash. This enables workers to cache objects by hash and request only missing ones: `missing = incoming.keys() - cached.keys()`.
 
@@ -323,7 +330,7 @@ Given a store and a target function name:
 2. **Walk** -- BFS through `deps` to collect all transitive dependencies.
 3. **Sort** -- Topological sort: dependencies before dependents.
 4. **Deduplicate imports** -- Merge imports across all functions.
-5. **Assemble** -- Emit imports, then module-level variable assignments, then functions in order. Methods are grouped into `class` blocks with proper base classes. Closure variables become keyword-only parameters with defaults.
+5. **Assemble** -- Emit imports, then module-level variable assignments, then functions in order. Methods are grouped into `class` blocks with decorators, base classes, metaclass keywords, class-level attributes, and methods. Closure variables become keyword-only parameters with defaults.
 
 ## Data model
 
@@ -356,6 +363,9 @@ One function in the dependency graph:
 | `closure_func_refs` | `dict[str, str]` -- references to traced functions captured in closures |
 | `module_vars` | `dict[str, str]` -- module-level variable assignments (name -> source) |
 | `class_bases` | `list[str]` -- base class names for methods in classes with inheritance |
+| `class_keywords` | `dict[str, str]` -- class definition keywords (e.g., `{"metaclass": "ABCMeta"}`) |
+| `class_attrs` | `list[str]` -- class-level attribute source lines (assignments, docstrings) |
+| `class_decorators` | `list[str]` -- class decorator source strings (without `@` prefix) |
 
 ## Dependency auto-installation
 
@@ -449,16 +459,15 @@ When a module contains `from X import *`:
 - Circular dependencies raise `CycleError` during reconstruction.
 
 ### Closure capture
-- Values whose `repr()` is not valid Python (file handles, sockets, etc.) are skipped with a warning.
-- Non-traced callables captured in closures are skipped.
+- Objects that are neither repr-serializable, picklable, nor user-defined callables are skipped with a warning (e.g., file handles, sockets).
 
 ### Imports
 - Relative star imports (`from . import *`) are not supported.
 - Aliased cross-module imports (`from utils import helper as h`) are skipped to avoid name mismatches.
 
 ### Classes
-- Metaclasses and `__init_subclass__` hooks are not replayed on the worker.
-- Class-level attributes that aren't assignments (e.g., descriptors created by external decorators) may not be captured.
+- Metaclasses and `__init_subclass__` hooks are replayed when the parent class is in the dependency tree (i.e., referenced via `super()` or constructor call).
+- Class-level attributes defined via complex descriptors or external decorators (beyond simple assignments) may not be captured.
 
 ## CLI reference
 

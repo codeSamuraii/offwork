@@ -4,7 +4,7 @@
 
 pyfuse is a Python library for distributed function execution via automatic source code serialization. A `@trace` decorator captures a function's source, imports, and full dependency tree via AST analysis. Workers reconstruct and execute functions from scratch with zero prior knowledge of the code, installing missing packages automatically.
 
-**Version**: 0.3.0 | **License**: AGPL-3.0 | **Python**: 3.13+ | **Zero runtime dependencies**
+**Version**: 0.4.0 | **License**: AGPL-3.0 | **Python**: 3.13+ | **Zero runtime dependencies**
 
 ## Project structure
 
@@ -16,14 +16,14 @@ pyfuse/
 ├── py.typed                 # PEP 561 typed package marker
 ├── core/
 │   ├── task.py              # Task dataclass: serializable envelope (graph + args + options)
-│   ├── models.py            # FunctionNode and ImportInfo dataclasses, content hashing
-│   ├── version.py           # _VERSION = "0.3.0"
+│   ├── models.py            # FunctionNode and ImportInfo dataclasses, content hashing (incl. class_keywords, class_attrs, class_decorators)
+│   ├── version.py           # _VERSION = "0.4.0"
 │   └── errors.py            # Error, WorkerError, RemoteError, DependencyError, TaskStalled
 ├── graph/
 │   ├── decorator.py         # @trace: marks functions, adds .run()/.map()/.arun()/.amap()
 │   ├── graph.py             # Graph class: registration, auto-discovery, serialization
 │   ├── store.py             # Content-addressable store: serialize/reconstruct/merge
-│   ├── analyzer.py          # AST-based source capture, import extraction, dependency detection
+│   ├── analyzer.py          # AST-based source capture, import extraction, dependency detection, class attrs/decorators
 │   └── tracing.py           # Runtime call-stack tracing via contextvars (TracingMixin)
 └── worker/
     ├── worker.py            # Worker: reconstruct, cache, execute with retry/timeout
@@ -48,7 +48,7 @@ The `Store` is a content-addressable JSON format where each function is identifi
 
 ### 2. Core layer (`core/`)
 
-Data models and error types. `FunctionNode` represents a function in the graph. `ImportInfo` represents a single import binding. `Task` is a frozen dataclass that bundles a serialized graph with function name, arguments, and execution options (timeout, retries).
+Data models and error types. `FunctionNode` represents a function in the graph, including class metadata (`class_keywords`, `class_attrs`, `class_decorators`). `ImportInfo` represents a single import binding. `Task` is a frozen dataclass that bundles a serialized graph with function name, arguments, and execution options (timeout, retries).
 
 ### 3. Worker layer (`worker/`)
 
@@ -86,7 +86,8 @@ Worker.run(task)
 - **Auto-discovery**: When a traced function calls an untraced user-defined function, pyfuse automatically finds and registers it. This is recursive. Class constructors (`MyClass()`), `@staticmethod`, `@classmethod`, and entire class hierarchies (via `super()`) are discovered too.
 - **Cross-module inlining**: Imports like `from utils import helper` where `helper` is a user function get converted from import statements to inline dependency edges, making reconstructed code self-contained.
 - **Module-level variables**: Constants and assignments (`MAX_RETRIES = 5`, `CONFIG = {...}`) referenced by traced functions are captured and emitted in reconstructed source.
-- **Closure handling**: Captured variables are serialized via `repr()` and hoisted as keyword-only parameters with defaults. Traced function references become dependency edges.
+- **Class-level attributes**: Class body statements (assignments, annotated assignments, docstrings) are extracted from AST and emitted in reconstructed class blocks. Class decorators (`@dataclass`, etc.) and metaclass keywords (`metaclass=ABCMeta`) are captured and emitted.
+- **Closure handling**: Multi-tier capture: `repr()` validation, then lambda source extraction, then auto-discovery for non-traced user functions, then constructor expressions for common stdlib types (`defaultdict`, `Counter`, `deque`), then pickle fallback for picklable objects. Traced function references become dependency edges.
 - **Decorator stripping**: `@trace` lines are removed from captured source so reconstructed code doesn't depend on pyfuse.
 - **Backend auto-detection**: `connect()` picks Redis or shared memory based on URL scheme. Falls back to `PYFUSE_BACKEND` env var.
 - **Worker caching**: Keyed by SHA-256 of all reachable content hashes (sorted + joined). Same code from different clients = cache hit.
@@ -94,11 +95,11 @@ Worker.run(task)
 - **Notification fan-out**: `ResultWaiter` singleton per backend runs one listener thread and one heartbeat thread, serving all pending `Result` objects. No per-task polling.
 - **Heartbeat monitoring**: Workers send heartbeats every 1s. Client-side stall detection tracks when heartbeat *values* last changed using local monotonic clock (no cross-machine timestamp comparison).
 
-## Serialization format (v0.3.0)
+## Serialization format (v0.4.0)
 
 ```json
 {
-  "version": "0.3.0",
+  "version": "0.4.0",
   "objects": {
     "<content_hash>": {
       "name": "func_name",
@@ -109,7 +110,10 @@ Worker.run(task)
       "closure_vars": {},
       "closure_func_refs": {},
       "module_vars": {},
-      "class_bases": []
+      "class_bases": [],
+      "class_keywords": {},
+      "class_attrs": [],
+      "class_decorators": []
     }
   },
   "deps": {"<hash>": ["<dep_hash>", ...]},
@@ -155,7 +159,7 @@ pytest                    # run all tests
 pytest tests/test_api.py  # specific module
 ```
 
-15 test modules covering: API surface, AST analysis, async features (aresult, await, arun, amap, gather, heartbeat, stall detection, notification-based result delivery), auto-discovery, dependency management, graph operations, integration scenarios, remote execution, runtime tracing, shared memory backend, store operations, stress tests (47 functions across 7 files), task serialization, temp venv management, and worker caching/execution.
+15 test modules covering: API surface, AST analysis, async features (aresult, await, arun, amap, gather, heartbeat, stall detection, notification-based result delivery), auto-discovery (including metaclass keywords, class attributes, class decorators, `__init_subclass__`), dependency management, graph operations, integration scenarios, remote execution, runtime tracing (including closure capture of non-traced functions, lambdas, constructor expressions, pickle fallback), shared memory backend, store operations, stress tests (47 functions across 7 files), task serialization, temp venv management, and worker caching/execution.
 
 ## Development
 
@@ -175,3 +179,6 @@ pytest                          # test suite
 - Backend implementations must satisfy the `Backend` ABC in `backends/base.py`. New methods (`notify_result`, `subscribe_results`, `get_heartbeats`) are non-abstract with safe defaults -- custom backends don't break.
 - `ResultWaiter` in `result.py` is a per-backend singleton with two daemon threads (listener + heartbeat). It uses `loop.call_soon_threadsafe()` for async fan-out and `threading.Event` for sync fan-out.
 - `install_package_as()` is a no-op at runtime; the AST analyzer in `decorator.py`/`analyzer.py` detects the `with` block pattern and tags `ImportInfo` objects with the package name.
+- `_capture_closure()` in `graph.py` uses a multi-tier strategy: repr validation → traced functions → lambdas (source extraction) → non-traced user functions (auto-registration) → constructor expressions (defaultdict/Counter/deque) → pickle fallback → warning. Returns function objects for auto-registration.
+- `_set_class_metadata()` in `graph.py` captures class-level attributes and decorators from the class source AST. Called from both `_auto_register_class` and `_discover_self_call_deps` to handle both constructor-discovered and directly-traced method classes.
+- `_resolve_class_bases()` now also extracts class definition keywords (e.g., `metaclass=ABCMeta`) and adds necessary imports for keyword values.

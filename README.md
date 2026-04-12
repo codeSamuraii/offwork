@@ -73,12 +73,12 @@ Common mappings (`cv2` -> `opencv-python`, `PIL` -> `Pillow`, etc.) are built in
 
 ## Features
 
-- **Automatic dependency detection** -- AST-based, recursive. Untraced helpers, class methods, module-level constants are all captured.
+- **Automatic dependency detection** -- AST-based, recursive. Untraced helpers, class methods, module-level constants, class-level attributes, and class decorators are all captured.
 - **Third-party package auto-install** -- Workers install missing packages via pip before execution.
 - **Async support** -- `async def` functions execute transparently. `await result`, `.arun()`, `.amap()`, and `asyncio.gather` all work out of the box.
 - **Notification-based result delivery** -- Push notifications fan out to many waiters via a single backend listener. No polling.
 - **Heartbeat & stall detection** -- Workers send periodic heartbeats. Clients raise `TaskStalled` when a worker stops responding.
-- **Class methods** -- `self.method()` and `cls.method()` dependencies are detected. Entire class hierarchies (including `super()`) are reconstructed.
+- **Class methods** -- `self.method()` and `cls.method()` dependencies are detected. Entire class hierarchies (including `super()`), class-level attributes, decorators (`@dataclass`, etc.), and metaclass keywords are reconstructed.
 - **Retry and timeout** -- `@trace(timeout=30, retries=3)` with exponential backoff.
 - **Batch submission** -- `func.map([(a1, b1), (a2, b2)])` submits multiple tasks at once.
 - **Pluggable backends** -- Redis (`redis://`) for multi-machine, shared memory (`shm://`) for same-machine IPC.

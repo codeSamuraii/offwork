@@ -308,7 +308,7 @@ The output is a JSON string containing each function's source, imports, and depe
 
 ```json
 {
-  "version": "0.3.0",
+  "version": "0.4.0",
   "objects": {
     "a1b2...": {"name": "add", "source": "...", "imports": [], ...},
     "c3d4...": {"name": "hypotenuse", "source": "...", "imports": [...], ...}
@@ -383,7 +383,7 @@ store_a = json.loads(serialize(func_a))
 store_b = json.loads(serialize(func_b))
 
 merged = json.dumps({
-    "version": "0.3.0",
+    "version": "0.4.0",
     "objects": {**store_a["objects"], **store_b["objects"]},
     "deps": {**store_a["deps"], **store_b["deps"]},
     "refs": {**store_a["refs"], **store_b["refs"]},
@@ -402,9 +402,14 @@ merged = json.dumps({
 | `obj.method()` with type annotation | Type annotation resolution |
 | `obj.method()` without annotation | Runtime tracing on first call |
 | Module-level constants (`MAX = 5`) | Captured and emitted in reconstructed source |
+| Class-level attributes (`count = 0`) | Extracted from class source AST |
+| Class decorators (`@dataclass`) | Extracted from class source AST |
+| Metaclass keywords (`metaclass=ABCMeta`) | Extracted from class definition keywords |
 | Standard library imports (`json`, `csv`) | Kept as import statements |
 | Third-party imports (`numpy`, `yaml`) | Kept as imports, auto-installed on worker |
-| Closure variables | Captured via `repr()` |
+| Closure variables | Captured via `repr()`, constructor expressions, or pickle |
+| Non-traced functions in closures | Auto-discovered and registered as dependencies |
+| Lambda functions in closures | Source extracted via AST |
 | `__slots__` objects as arguments | Serialized via MRO slot inspection |
 | Generators and async functions | Supported with proxy wrappers |
 
@@ -413,7 +418,6 @@ merged = json.dumps({
 - Functions without source code (builtins, `exec`'d, REPL-defined)
 - Dynamic imports (`__import__()`, `importlib.import_module()` in function bodies)
 - Relative star imports (`from . import *`)
-- Metaclasses and `__init_subclass__` hooks
 - Circular dependencies (raises `CycleError`)
 
 ## Error handling
