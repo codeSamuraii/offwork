@@ -11,7 +11,7 @@ import sysconfig
 import threading
 from collections.abc import AsyncGenerator, Callable, Generator
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 if TYPE_CHECKING:
     from pyfuse.worker.backends.base import Backend
@@ -99,6 +99,20 @@ def _get_stdlib_dirs() -> list[str]:
 _STDLIB_DIRS = _get_stdlib_dirs()
 
 
+def _is_stdlib_module(module: str) -> bool:
+    """Return True if *module* belongs to the standard library."""
+    top_module = module.split(".")[0]
+    return hasattr(sys, "stdlib_module_names") and top_module in sys.stdlib_module_names
+
+
+def _is_user_source_file(source_file: str) -> bool:
+    """Return True if *source_file* is user code (not stdlib/site-packages)."""
+    resolved = str(Path(source_file).resolve())
+    if any(resolved.startswith(d) for d in _STDLIB_DIRS):
+        return False
+    return f"{os.sep}site-packages{os.sep}" not in resolved
+
+
 def _is_user_defined(obj: object) -> bool:
     """Return True if *obj* (function or class) is user-defined."""
     if inspect.isfunction(obj):
@@ -107,34 +121,23 @@ def _is_user_defined(obj: object) -> bool:
         module = obj.__module__
     else:
         return False
-    top_module = module.split(".")[0]
-    if hasattr(sys, "stdlib_module_names") and top_module in sys.stdlib_module_names:
+    if _is_stdlib_module(module):
         return False
     try:
         source_file = inspect.getfile(obj)
     except (TypeError, OSError):
         return False
-    resolved = str(Path(source_file).resolve())
-    for stdlib_dir in _STDLIB_DIRS:
-        if resolved.startswith(stdlib_dir):
-            return False
-    if f"{os.sep}site-packages{os.sep}" in resolved:
-        return False
-    return True
+    return _is_user_source_file(source_file)
 
 
 def _is_user_function(func: Callable[..., object]) -> bool:
     """Return True if func is user-defined (not stdlib or third-party)."""
-    if not inspect.isfunction(func):
-        return False
-    return _is_user_defined(func)
+    return inspect.isfunction(func) and _is_user_defined(func)
 
 
 def _is_user_class(cls: type) -> bool:
     """Return True if cls is user-defined (not stdlib or third-party)."""
-    if not inspect.isclass(cls):
-        return False
-    return _is_user_defined(cls)
+    return inspect.isclass(cls) and _is_user_defined(cls)
 
 
 class TracingMixin:
@@ -176,50 +179,65 @@ class TracingMixin:
                 self._runtime_deps.setdefault(stack[-1], set()).add(qualified_name)
 
     def create_wrapper(self, func: _F) -> _F:
-        """Wrap func to record runtime caller-callee edges."""
+        """Wrap func to record runtime caller-callee edges.
+
+        The wrapper preserves the original function signature via
+        ``functools.wraps`` and adds ``.run()`` / ``.arun()`` /
+        ``.map()`` / ``.amap()`` methods for remote submission.
+        """
         qualified_name = f"{func.__module__}.{func.__qualname__}"
-
+        # Each _wrap_* method returns Any because functools.wraps erases
+        # the precise callable type.  The outer signature guarantees _F.
         if inspect.isasyncgenfunction(func):
-            logger.debug("Creating async generator wrapper for %s", qualified_name)
+            wrapper = self._wrap_async_generator(func, qualified_name)
+        elif inspect.iscoroutinefunction(func):
+            wrapper = self._wrap_coroutine(func, qualified_name)
+        elif inspect.isgeneratorfunction(func):
+            wrapper = self._wrap_generator(func, qualified_name)
+        else:
+            wrapper = self._wrap_sync(func, qualified_name)
+        return wrapper  # type: ignore[no-any-return]
 
-            @functools.wraps(func)
-            def async_gen_wrapper(*args: object, **kwargs: object) -> object:
-                self._record_edge(self._get_call_stack(), qualified_name)
-                async_gen = func(*args, **kwargs)
-                return self._proxy_async_generator(async_gen, qualified_name)
+    def _wrap_async_generator(self, func: Any, qualified_name: str) -> Any:
+        logger.debug("Creating async generator wrapper for %s", qualified_name)
 
-            _attach_traced_attrs(async_gen_wrapper, func)
-            return async_gen_wrapper  # type: ignore[return-value]
+        @functools.wraps(func)
+        def wrapper(*args: object, **kwargs: object) -> object:
+            self._record_edge(self._get_call_stack(), qualified_name)
+            return self._proxy_async_generator(func(*args, **kwargs), qualified_name)
 
-        if inspect.iscoroutinefunction(func):
-            logger.debug("Creating async wrapper for %s", qualified_name)
+        _attach_traced_attrs(wrapper, func)
+        return wrapper
 
-            @functools.wraps(func)
-            async def async_wrapper(*args: object, **kwargs: object) -> object:
-                stack = self._ensure_isolated_stack()
-                self._record_edge(stack, qualified_name)
-                stack.append(qualified_name)
-                try:
-                    return await func(*args, **kwargs)
-                finally:
-                    stack.pop()
+    def _wrap_coroutine(self, func: Any, qualified_name: str) -> Any:
+        logger.debug("Creating async wrapper for %s", qualified_name)
 
-            _attach_traced_attrs(async_wrapper, func)
-            return async_wrapper  # type: ignore[return-value]
+        @functools.wraps(func)
+        async def wrapper(*args: object, **kwargs: object) -> object:
+            stack = self._ensure_isolated_stack()
+            self._record_edge(stack, qualified_name)
+            stack.append(qualified_name)
+            try:
+                return await func(*args, **kwargs)
+            finally:
+                stack.pop()
 
-        if inspect.isgeneratorfunction(func):
-            logger.debug("Creating generator wrapper for %s", qualified_name)
+        _attach_traced_attrs(wrapper, func)
+        return wrapper
 
-            @functools.wraps(func)
-            def gen_wrapper(*args: object, **kwargs: object) -> object:
-                self._record_edge(self._get_call_stack(), qualified_name)
-                gen = func(*args, **kwargs)
-                return self._proxy_generator(gen, qualified_name)
+    def _wrap_generator(self, func: Any, qualified_name: str) -> Any:
+        logger.debug("Creating generator wrapper for %s", qualified_name)
 
-            _attach_traced_attrs(gen_wrapper, func)
-            return gen_wrapper  # type: ignore[return-value]
+        @functools.wraps(func)
+        def wrapper(*args: object, **kwargs: object) -> object:
+            self._record_edge(self._get_call_stack(), qualified_name)
+            return self._proxy_generator(func(*args, **kwargs), qualified_name)
 
-        logger.debug("Creating wrapper for %s", qualified_name)
+        _attach_traced_attrs(wrapper, func)
+        return wrapper
+
+    def _wrap_sync(self, func: Any, qualified_name: str) -> Any:
+        logger.debug("Creating sync wrapper for %s", qualified_name)
 
         @functools.wraps(func)
         def wrapper(*args: object, **kwargs: object) -> object:
@@ -232,7 +250,7 @@ class TracingMixin:
                 stack.pop()
 
         _attach_traced_attrs(wrapper, func)
-        return wrapper  # type: ignore[return-value]
+        return wrapper
 
     def _proxy_generator(
         self,

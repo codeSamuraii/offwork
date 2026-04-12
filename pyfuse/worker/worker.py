@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pyfuse.core.errors import WorkerError
+from pyfuse.core.models import FunctionNode
 from pyfuse.core.task import Task
 from pyfuse.graph.store import Store
 from pyfuse.worker.deps import ensure_dependencies
@@ -50,27 +51,30 @@ def _extract_target_callable(
     """Extract the target callable from an exec'd namespace."""
     target_qname, nodes = store.collect(function_name)
     target_node = nodes[target_qname]
-    simple_name = target_node.name
 
     if target_node.owner_class:
-        class_name = target_node.owner_class.rsplit(".", 1)[-1]
-        cls = namespace.get(class_name)
-        if cls is None:
-            raise WorkerError(
-                f"Class '{class_name}' not found in reconstructed namespace"
-            )
-        func = getattr(cls, simple_name, None)
-        if func is None:
-            raise WorkerError(
-                f"Method '{simple_name}' not found on class '{class_name}'"
-            )
-        return func
+        return _extract_method(namespace, target_node)
+    return _extract_function(namespace, target_node)
 
-    func = namespace.get(simple_name)
+
+def _extract_method(namespace: dict[str, Any], node: FunctionNode) -> Any:
+    """Look up a method on a class in the reconstructed namespace."""
+    assert node.owner_class is not None
+    class_name = node.owner_class.rsplit(".", 1)[-1]
+    cls = namespace.get(class_name)
+    if cls is None:
+        raise WorkerError(f"Class '{class_name}' not found in reconstructed namespace")
+    func = getattr(cls, node.name, None)
     if func is None:
-        raise WorkerError(
-            f"Function '{simple_name}' not found in reconstructed namespace"
-        )
+        raise WorkerError(f"Method '{node.name}' not found on class '{class_name}'")
+    return func
+
+
+def _extract_function(namespace: dict[str, Any], node: FunctionNode) -> Any:
+    """Look up a standalone function in the reconstructed namespace."""
+    func = namespace.get(node.name)
+    if func is None:
+        raise WorkerError(f"Function '{node.name}' not found in reconstructed namespace")
     return func
 
 

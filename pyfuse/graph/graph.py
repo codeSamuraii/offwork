@@ -126,6 +126,43 @@ def _capture_closure(
     return closure_vars, closure_func_refs
 
 
+def _mermaid_node_id(qname: str) -> str:
+    return qname.replace(".", "_")
+
+
+def _render_mermaid(subgraph: dict[str, FunctionNode], direction: str) -> str:
+    """Render a node subgraph as a Mermaid flowchart string."""
+    lines: list[str] = [f"graph {direction}"]
+
+    class_members: dict[str, list[FunctionNode]] = {}
+    standalone: list[FunctionNode] = []
+    for node in subgraph.values():
+        if node.owner_class is not None:
+            class_members.setdefault(node.owner_class, []).append(node)
+        else:
+            standalone.append(node)
+
+    for owner_class, members in class_members.items():
+        class_name = owner_class.rsplit(".", 1)[-1]
+        lines.append(f"    subgraph {class_name}")
+        for node in members:
+            nid = _mermaid_node_id(node.qualified_name)
+            lines.append(f'        {nid}["{node.name}"]')
+        lines.append("    end")
+
+    for node in standalone:
+        nid = _mermaid_node_id(node.qualified_name)
+        lines.append(f'    {nid}["{node.name}"]')
+
+    for node in subgraph.values():
+        src = _mermaid_node_id(node.qualified_name)
+        for dep in node.dependencies:
+            if dep in subgraph:
+                lines.append(f"    {src} --> {_mermaid_node_id(dep)}")
+
+    return "\n".join(lines) + "\n"
+
+
 class Graph(TracingMixin):
     """Dependency graph of traced functions."""
 
@@ -156,12 +193,36 @@ class Graph(TracingMixin):
 
     # -- Registration ----------------------------------------------------------
 
-    def register(self, func: Callable[..., object]) -> None:
-        """Register a function for tracing and remote execution."""
+    @staticmethod
+    def _unwrap_func(func: Callable[..., object]) -> Callable[..., object]:
         original = func
         while hasattr(original, "__wrapped__"):
             original = original.__wrapped__
+        return original
 
+    def _build_dependencies(
+        self,
+        analysis: _AnalysisResult,
+        qualified_name: str,
+        module: str,
+        closure_func_refs: dict[str, str],
+    ) -> list[str]:
+        """Detect static and closure-based dependencies for a function."""
+        deps = [
+            dep for dep in detect_traced_dependencies(
+                analysis.source, module, self._nodes,
+                owner_class=analysis.owner_class,
+            )
+            if dep != qualified_name
+        ]
+        for ref_qname in closure_func_refs.values():
+            if ref_qname != qualified_name and ref_qname not in deps:
+                deps.append(ref_qname)
+        return deps
+
+    def register(self, func: Callable[..., object]) -> None:
+        """Register a function for tracing and remote execution."""
+        original = self._unwrap_func(func)
         qualified_name = f"{original.__module__}.{original.__qualname__}"
         logger.info("Registering %s", qualified_name)
 
@@ -175,17 +236,9 @@ class Graph(TracingMixin):
             ) from exc
 
         closure_vars, closure_func_refs = _capture_closure(original)
-
-        dependencies = [
-            dep for dep in detect_traced_dependencies(
-                analysis.source, original.__module__, self._nodes,
-                owner_class=analysis.owner_class,
-            )
-            if dep != qualified_name
-        ]
-        for ref_qname in closure_func_refs.values():
-            if ref_qname != qualified_name and ref_qname not in dependencies:
-                dependencies.append(ref_qname)
+        dependencies = self._build_dependencies(
+            analysis, qualified_name, original.__module__, closure_func_refs,
+        )
 
         node = FunctionNode(
             qualified_name=qualified_name,
@@ -205,11 +258,8 @@ class Graph(TracingMixin):
         logger.debug(
             "Registered %s: %d imports, %d deps, %d closure vars, "
             "%d closure func refs",
-            qualified_name,
-            len(analysis.imports),
-            len(dependencies),
-            len(closure_vars),
-            len(closure_func_refs),
+            qualified_name, len(analysis.imports), len(dependencies),
+            len(closure_vars), len(closure_func_refs),
         )
 
         self.refresh()
@@ -564,35 +614,4 @@ class Graph(TracingMixin):
         else:
             subgraph = dict(self._nodes)
 
-        def _node_id(qname: str) -> str:
-            return qname.replace(".", "_")
-
-        lines: list[str] = [f"graph {direction}"]
-
-        class_members: dict[str, list[FunctionNode]] = {}
-        standalone: list[FunctionNode] = []
-        for node in subgraph.values():
-            if node.owner_class is not None:
-                class_members.setdefault(node.owner_class, []).append(node)
-            else:
-                standalone.append(node)
-
-        for owner_class, members in class_members.items():
-            class_name = owner_class.rsplit(".", 1)[-1]
-            lines.append(f"    subgraph {class_name}")
-            for node in members:
-                nid = _node_id(node.qualified_name)
-                lines.append(f'        {nid}["{node.name}"]')
-            lines.append("    end")
-
-        for node in standalone:
-            nid = _node_id(node.qualified_name)
-            lines.append(f'    {nid}["{node.name}"]')
-
-        for node in subgraph.values():
-            src = _node_id(node.qualified_name)
-            for dep in node.dependencies:
-                if dep in subgraph:
-                    lines.append(f"    {src} --> {_node_id(dep)}")
-
-        return "\n".join(lines) + "\n"
+        return _render_mermaid(subgraph, direction)

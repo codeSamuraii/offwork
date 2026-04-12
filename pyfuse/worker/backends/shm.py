@@ -260,20 +260,7 @@ class SharedMemoryBackend(Backend):
         self._tracker = _ShmBlockTracker()
         atexit.register(self._tracker.cleanup)
 
-        if server is True:
-            self._start_server(host, port, auth)
-        elif server is False:
-            self._connect_client(host, port, auth)
-        else:
-            try:
-                self._connect_client(host, port, auth)
-            except (ConnectionRefusedError, OSError):
-                try:
-                    self._start_server(host, port, auth)
-                except OSError:
-                    # Another process won the race — retry as client
-                    time.sleep(0.1)
-                    self._connect_client(host, port, auth)
+        self._init_connection(host, port, auth, server)
 
         assert self._client is not None
         self._broker = self._client.broker()
@@ -281,6 +268,32 @@ class SharedMemoryBackend(Backend):
             "SharedMemoryBackend ready (server=%s, %s:%d)",
             self._is_server, host, port,
         )
+
+    def _init_connection(
+        self, host: str, port: int, auth: bytes, server: bool | None,
+    ) -> None:
+        """Establish the Manager connection based on the *server* mode."""
+        if server is True:
+            self._start_server(host, port, auth)
+            return
+        if server is False:
+            self._connect_client(host, port, auth)
+            return
+        # Auto-detect: try client first, then server, then client again
+        try:
+            self._connect_client(host, port, auth)
+        except (ConnectionRefusedError, OSError):
+            self._auto_start_or_connect(host, port, auth)
+
+    def _auto_start_or_connect(
+        self, host: str, port: int, auth: bytes,
+    ) -> None:
+        """Try to start a server; if another process won the race, connect as client."""
+        try:
+            self._start_server(host, port, auth)
+        except OSError:
+            time.sleep(0.1)
+            self._connect_client(host, port, auth)
 
     # -- Backend interface ------------------------------------------------------
 

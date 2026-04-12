@@ -5,6 +5,7 @@ import inspect
 import logging
 import os
 import signal
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -161,11 +162,10 @@ def submit_remote(
 def _build_detail_tags(worker: Worker) -> str:
     """Build a comma-separated detail string from the last build info."""
     build_info = worker.last_build_info()
-    parts: list[str] = []
     if build_info is not None and build_info.cache_hit:
-        parts.append("cached")
+        parts = ["cached"]
     else:
-        parts.append("build")
+        parts = ["build"]
     if build_info is not None and build_info.installed_packages:
         parts.append("pip " + " ".join(build_info.installed_packages))
     return ", ".join(parts)
@@ -188,6 +188,38 @@ def _heartbeat_loop(
         stop.wait(_HEARTBEAT_INTERVAL)
 
 
+def _start_heartbeat(backend: Backend, task_id: str) -> tuple[threading.Event, threading.Thread]:
+    """Start a heartbeat daemon thread. Returns (stop_event, thread)."""
+    stop = threading.Event()
+    thread = threading.Thread(
+        target=_heartbeat_loop, args=(backend, task_id, stop), daemon=True,
+    )
+    thread.start()
+    return stop, thread
+
+
+def _log_task_result(
+    task: Task,
+    envelope: ResultEnvelope,
+    elapsed_ms: float,
+    worker: Worker,
+) -> None:
+    """Log the outcome of a completed task."""
+    short_id = task.task_id[:8]
+    details = _build_detail_tags(worker)
+    if envelope.status == "ok":
+        logger.info(
+            "\u2713  %-40s %6.0fms  %s  %s",
+            task.function_name, elapsed_ms, short_id, details,
+        )
+    else:
+        error_msg = f"  {envelope.error_type}: {envelope.error_message}"
+        logger.warning(
+            "\u2717  %-40s %6.0fms  %s  %s%s",
+            task.function_name, elapsed_ms, short_id, details, error_msg,
+        )
+
+
 def _handle_task(
     worker: Worker,
     backend: Backend,
@@ -197,13 +229,7 @@ def _handle_task(
     task = Task.from_json(task_json)
     logger.debug("Received task %s: %s", task.task_id, task.function_name)
 
-    stop_heartbeat = threading.Event()
-    hb_thread = threading.Thread(
-        target=_heartbeat_loop,
-        args=(backend, task.task_id, stop_heartbeat),
-        daemon=True,
-    )
-    hb_thread.start()
+    stop_heartbeat, hb_thread = _start_heartbeat(backend, task.task_id)
 
     t0 = time.monotonic()
     try:
@@ -219,20 +245,24 @@ def _handle_task(
     elapsed_ms = (time.monotonic() - t0) * 1000
     backend.send_result(task.task_id, envelope.to_json())
     backend.notify_result(task.task_id)
+    _log_task_result(task, envelope, elapsed_ms, worker)
 
-    short_id = task.task_id[:8]
-    details = _build_detail_tags(worker)
-    if envelope.status == "ok":
-        logger.info(
-            "\u2713  %-40s %6.0fms  %s  %s",
-            task.function_name, elapsed_ms, short_id, details,
-        )
+
+def _worker_loop(
+    worker: Worker,
+    backend: Backend,
+    concurrency: int,
+) -> None:
+    """Consume tasks from *backend* and dispatch to *worker*."""
+    if concurrency > 1:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=concurrency) as pool:
+            for task_json in backend.listen():
+                pool.submit(_handle_task, worker, backend, task_json)
     else:
-        error_msg = f"  {envelope.error_type}: {envelope.error_message}"
-        logger.warning(
-            "\u2717  %-40s %6.0fms  %s  %s%s",
-            task.function_name, elapsed_ms, short_id, details, error_msg,
-        )
+        for task_json in backend.listen():
+            _handle_task(worker, backend, task_json)
 
 
 def serve(
@@ -256,13 +286,9 @@ def serve(
     import_to_package
         Extra import-name to pip-package-name mappings.
     """
-    import sys
-    from concurrent.futures import ThreadPoolExecutor
-
     from pyfuse.worker.worker import Worker
 
     resolved = _resolve_url(url)
-
     auto_tag = "on" if auto_install else "off"
     logger.info(
         "pyfuse worker v%s  \u2502  %s  \u2502  concurrency=%d  \u2502  auto_install=%s",
@@ -275,21 +301,11 @@ def serve(
         logger.error("Could not connect to %s: %s", resolved, exc)
         sys.exit(1)
 
-    worker = Worker(
-        auto_install=auto_install,
-        import_to_package=import_to_package,
-    )
-
+    worker = Worker(auto_install=auto_install, import_to_package=import_to_package)
     logger.info("Listening for tasks \u2014 Ctrl+C to stop.")
 
     try:
-        if concurrency > 1:
-            with ThreadPoolExecutor(max_workers=concurrency) as pool:
-                for task_json in backend.listen():
-                    pool.submit(_handle_task, worker, backend, task_json)
-        else:
-            for task_json in backend.listen():
-                _handle_task(worker, backend, task_json)
+        _worker_loop(worker, backend, concurrency)
     except KeyboardInterrupt:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         logger.info("Worker stopped.")

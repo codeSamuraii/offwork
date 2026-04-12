@@ -88,6 +88,25 @@ def is_installed(module: str) -> bool:
     return importlib.util.find_spec(module) is not None
 
 
+def _pip_install(package: str, extra_args: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run ``pip install <package>`` and return the process result."""
+    return subprocess.run(
+        [sys.executable, "-m", "pip", "install", package, *extra_args],
+        capture_output=True, text=True,
+    )
+
+
+def _raise_on_failures(failed: dict[str, str]) -> None:
+    """Raise :class:`DependencyError` if any installations failed."""
+    if not failed:
+        return
+    parts = [
+        f"  {module}: {stderr[:200]}" if stderr else f"  {module}"
+        for module, stderr in failed.items()
+    ]
+    raise DependencyError(f"Failed to install:\n" + "\n".join(parts))
+
+
 def install_packages(
     modules: set[str],
     import_to_package: dict[str, str] | None = None,
@@ -108,11 +127,7 @@ def install_packages(
 
         package = mapping.get(module, module)
         logger.debug("pip install %s ...", package)
-        proc = subprocess.run(
-            [sys.executable, "-m", "pip", "install", package, *extra_args],
-            capture_output=True,
-            text=True,
-        )
+        proc = _pip_install(package, extra_args)
         if proc.returncode == 0:
             result.installed.append(package)
             logger.debug("Installed %s", package)
@@ -120,16 +135,7 @@ def install_packages(
             result.failed[module] = proc.stderr.strip()
             logger.error("Failed to install %s: %s", package, proc.stderr.strip()[:200])
 
-    if result.failed:
-        parts = []
-        for module, stderr in result.failed.items():
-            if stderr:
-                parts.append(f"  {module}: {stderr[:200]}")
-            else:
-                parts.append(f"  {module}")
-        detail = "\n".join(parts)
-        raise DependencyError(f"Failed to install:\n{detail}")
-
+    _raise_on_failures(result.failed)
     return result
 
 

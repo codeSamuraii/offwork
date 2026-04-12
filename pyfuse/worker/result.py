@@ -312,6 +312,45 @@ class Result:
 
     # -- sync ------------------------------------------------------------------
 
+    def _register_and_double_check(
+        self,
+        loop: asyncio.AbstractEventLoop | None = None,
+    ) -> tuple[ResultWaiter, _WaiterSlot]:
+        """Register with the waiter and do a double-check fetch."""
+        waiter = ResultWaiter.for_backend(self._backend)
+        slot = waiter.register(self._task_id, loop=loop)
+        if not slot.event.is_set():
+            early = self._backend.try_get_result(self._task_id)
+            if early is not None:
+                slot.raw = early
+                slot.event.set()
+                if slot.future is not None and not slot.future.done():
+                    slot.future.set_result(early)
+        return waiter, slot
+
+    def _sync_wait_loop(
+        self,
+        slot: _WaiterSlot,
+        timeout: float | None,
+        stall_timeout: float,
+    ) -> None:
+        """Poll the slot in 1s chunks, checking for timeout and stall."""
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while not slot.event.is_set():
+            remaining = None
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"Timed out waiting for result of task {self._task_id}"
+                    )
+            wait_time = min(1.0, remaining) if remaining is not None else 1.0
+            slot.event.wait(timeout=wait_time)
+            if not slot.event.is_set():
+                self._check_slot_stall(
+                    slot, stall_timeout, time.monotonic(), self._task_id,
+                )
+
     def result(
         self,
         timeout: float | None = None,
@@ -333,48 +372,53 @@ class Result:
         if self._envelope is not None:
             return self._unwrap()
 
-        # Fast path: no stall monitoring — use backend's native blocking wait.
         if stall_timeout is None:
             raw = self._backend.get_result(self._task_id, timeout=timeout)
             self._envelope = ResultEnvelope.from_json(raw)
             return self._unwrap()
 
-        # Race-condition guard: result may already be stored.
         if self._try_fetch():
             return self._unwrap()
 
-        waiter = ResultWaiter.for_backend(self._backend)
-        slot = waiter.register(self._task_id)
-
-        # Double-check after registration.
-        if not slot.event.is_set():
-            early = self._backend.try_get_result(self._task_id)
-            if early is not None:
-                slot.raw = early
-                slot.event.set()
-
+        waiter, slot = self._register_and_double_check()
         try:
-            deadline = None if timeout is None else time.monotonic() + timeout
-            while not slot.event.is_set():
-                remaining = None
-                if deadline is not None:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise TimeoutError(
-                            f"Timed out waiting for result of task {self._task_id}"
-                        )
-                wait_time = min(1.0, remaining) if remaining is not None else 1.0
-                slot.event.wait(timeout=wait_time)
-                if not slot.event.is_set():
-                    self._check_slot_stall(
-                        slot, stall_timeout, time.monotonic(), self._task_id,
-                    )
+            self._sync_wait_loop(slot, timeout, stall_timeout)
             self._resolve_slot(slot)
             return self._unwrap()
         finally:
             waiter.unregister(self._task_id)
 
     # -- async -----------------------------------------------------------------
+
+    async def _async_wait_loop(
+        self,
+        slot: _WaiterSlot,
+        timeout: float | None,
+        stall_timeout: float,
+    ) -> None:
+        """Await the slot future in 1s chunks, checking for stall."""
+        assert slot.future is not None
+        loop = asyncio.get_running_loop()
+        deadline = None if timeout is None else loop.time() + timeout
+        while True:
+            remaining = None
+            if deadline is not None:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"Timed out waiting for result of task {self._task_id}"
+                    )
+            wait_time = min(1.0, remaining) if remaining is not None else 1.0
+            try:
+                raw = await asyncio.wait_for(
+                    asyncio.shield(slot.future), timeout=wait_time,
+                )
+                self._envelope = ResultEnvelope.from_json(raw)
+                return
+            except asyncio.TimeoutError:
+                self._check_slot_stall(
+                    slot, stall_timeout, time.monotonic(), self._task_id,
+                )
 
     async def aresult(
         self,
@@ -399,22 +443,11 @@ class Result:
         if self._envelope is not None:
             return self._unwrap()
 
-        # Race-condition guard.
         if self._try_fetch():
             return self._unwrap()
 
         loop = asyncio.get_running_loop()
-        waiter = ResultWaiter.for_backend(self._backend)
-        slot = waiter.register(self._task_id, loop=loop)
-
-        # Double-check after registration.
-        if not slot.event.is_set():
-            raw = self._backend.try_get_result(self._task_id)
-            if raw is not None:
-                slot.raw = raw
-                slot.event.set()
-                if slot.future is not None and not slot.future.done():
-                    slot.future.set_result(raw)
+        waiter, slot = self._register_and_double_check(loop=loop)
 
         try:
             assert slot.future is not None
@@ -432,27 +465,8 @@ class Result:
                 self._envelope = ResultEnvelope.from_json(raw)
                 return self._unwrap()
 
-            # Wait in 1-second chunks so we can check stall status.
-            deadline = None if timeout is None else loop.time() + timeout
-            while True:
-                remaining = None
-                if deadline is not None:
-                    remaining = deadline - loop.time()
-                    if remaining <= 0:
-                        raise TimeoutError(
-                            f"Timed out waiting for result of task {self._task_id}"
-                        )
-                wait_time = min(1.0, remaining) if remaining is not None else 1.0
-                try:
-                    raw = await asyncio.wait_for(
-                        asyncio.shield(slot.future), timeout=wait_time,
-                    )
-                    self._envelope = ResultEnvelope.from_json(raw)
-                    return self._unwrap()
-                except asyncio.TimeoutError:
-                    self._check_slot_stall(
-                        slot, stall_timeout, time.monotonic(), self._task_id,
-                    )
+            await self._async_wait_loop(slot, timeout, stall_timeout)
+            return self._unwrap()
         finally:
             waiter.unregister(self._task_id)
 

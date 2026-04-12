@@ -30,7 +30,6 @@ def get_graph() -> Graph:
     return Graph.default()
 
 
-
 def serialize(*funcs: Callable[..., object] | str) -> str:
     """Serialize the default graph (or a subgraph) to JSON."""
     return Graph.default().serialize(*funcs)

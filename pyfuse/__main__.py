@@ -20,6 +20,7 @@ import signal
 import subprocess
 import sys
 from collections.abc import Callable
+from pathlib import Path
 
 
 def _build_worker_cmd(python: str, args: argparse.Namespace) -> list[str]:
@@ -45,23 +46,36 @@ def _run_in_tmp_venv(args: argparse.Namespace) -> None:
 
     with temp_venv(install_pyfuse=True, extras=extras) as venv:
         cmd = _build_worker_cmd(str(venv.python), args)
-        print(f"Starting worker in temporary venv...", file=sys.stderr)
-        proc = subprocess.Popen(cmd)
+        print("Starting worker in temporary venv...", file=sys.stderr)
+        _run_subprocess(cmd)
 
-        prev_term = signal.signal(signal.SIGTERM, lambda s, f: proc.send_signal(s))
-        prev_int = signal.signal(signal.SIGINT, lambda s, f: proc.send_signal(s))
-        try:
-            returncode = proc.wait()
-        finally:
-            signal.signal(signal.SIGTERM, prev_term)
-            signal.signal(signal.SIGINT, prev_int)
 
-        sys.exit(returncode)
+def _resolve_log_level(args: argparse.Namespace) -> int:
+    """Determine the log level from CLI arguments."""
+    if args.log_level:
+        level = getattr(logging, args.log_level.upper(), None)
+        if level is None:
+            print(f"Error: invalid log level {args.log_level!r}", file=sys.stderr)
+            sys.exit(1)
+        return level  # type: ignore[no-any-return]
+    if args.verbose:
+        return logging.DEBUG
+    return logging.INFO
+
+
+def _configure_logging(level: int) -> None:
+    """Set up pyfuse logger with a stderr handler."""
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)-7s %(message)s", datefmt="%H:%M:%S",
+    ))
+    pyfuse_logger = logging.getLogger("pyfuse")
+    pyfuse_logger.setLevel(level)
+    pyfuse_logger.addHandler(handler)
 
 
 def _cmd_worker(args: argparse.Namespace) -> None:
-    backend = args.backend
-    if not backend:
+    if not args.backend:
         print("Error: --backend is required (or set PYFUSE_BACKEND).", file=sys.stderr)
         sys.exit(1)
 
@@ -69,28 +83,11 @@ def _cmd_worker(args: argparse.Namespace) -> None:
         _run_in_tmp_venv(args)
         return
 
-    if args.log_level:
-        level = getattr(logging, args.log_level.upper(), None)
-        if level is None:
-            print(f"Error: invalid log level {args.log_level!r}", file=sys.stderr)
-            sys.exit(1)
-    elif args.verbose:
-        level = logging.DEBUG
-    else:
-        level = logging.INFO
-
-    handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(logging.Formatter(
-        "%(asctime)s %(levelname)-7s %(message)s",
-        datefmt="%H:%M:%S",
-    ))
-    pyfuse_logger = logging.getLogger("pyfuse")
-    pyfuse_logger.setLevel(level)
-    pyfuse_logger.addHandler(handler)
+    _configure_logging(_resolve_log_level(args))
 
     from pyfuse.worker.remote import serve
 
-    serve(backend, concurrency=args.concurrency, auto_install=not args.no_auto_install)
+    serve(args.backend, concurrency=args.concurrency, auto_install=not args.no_auto_install)
 
 
 def _cmd_info(_args: argparse.Namespace) -> None:
@@ -141,8 +138,6 @@ def _cmd_serialize(args: argparse.Namespace) -> None:
 
 
 def _cmd_reconstruct(args: argparse.Namespace) -> None:
-    from pathlib import Path
-
     from pyfuse import reconstruct
 
     graph_json = Path(args.graph_file).read_text()
@@ -151,8 +146,6 @@ def _cmd_reconstruct(args: argparse.Namespace) -> None:
 
 def _parse_script(script: str) -> tuple[str, ast.Module | None]:
     """Read and parse a script, returning (source, ast_tree_or_None)."""
-    from pathlib import Path
-
     source = Path(script).read_text()
     try:
         return source, ast.parse(source)
@@ -162,8 +155,6 @@ def _parse_script(script: str) -> tuple[str, ast.Module | None]:
 
 def _is_local_package(module_name: str, script_dir: str) -> bool:
     """Return True if *module_name* resolves to a local directory or .py file."""
-    from pathlib import Path
-
     for base in (Path(script_dir), Path.cwd()):
         if (base / module_name).is_dir():
             return True
@@ -200,8 +191,6 @@ def _extract_top_modules(node: ast.AST) -> list[str]:
 
 def _detect_script_packages(script: str) -> list[str]:
     """Parse a script file and return pip package names for third-party imports."""
-    from pathlib import Path
-
     from pyfuse.worker.deps import DEFAULT_IMPORT_TO_PACKAGE
 
     _source, tree = _parse_script(script)
@@ -234,6 +223,28 @@ def _detect_script_packages(script: str) -> list[str]:
     return list(packages)
 
 
+def _is_connect_or_serve_call(node: ast.Call) -> bool:
+    """Return True if *node* calls ``connect`` or ``serve``."""
+    func = node.func
+    if isinstance(func, ast.Attribute):
+        return func.attr in ("connect", "serve")
+    if isinstance(func, ast.Name):
+        return func.id in ("connect", "serve")
+    return False
+
+
+def _first_arg_is_redis_url(node: ast.Call) -> bool:
+    """Return True if the first positional arg is a redis:// string literal."""
+    if not node.args:
+        return False
+    first_arg = node.args[0]
+    return (
+        isinstance(first_arg, ast.Constant)
+        and isinstance(first_arg.value, str)
+        and first_arg.value.startswith(("redis://", "rediss://"))
+    )
+
+
 def _detect_pyfuse_extras(script: str) -> list[str]:
     """Detect pyfuse extras needed by a script (e.g. redis from connect/serve calls)."""
     _source, tree = _parse_script(script)
@@ -241,32 +252,51 @@ def _detect_pyfuse_extras(script: str) -> list[str]:
         return []
 
     extras: list[str] = []
-
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not node.args:
+        if not isinstance(node, ast.Call):
             continue
-        # Match pyfuse.connect(...), pyfuse.serve(...), connect(...), serve(...)
-        func = node.func
-        name: str | None = None
-        if isinstance(func, ast.Attribute) and func.attr in ("connect", "serve"):
-            name = func.attr
-        elif isinstance(func, ast.Name) and func.id in ("connect", "serve"):
-            name = func.id
-        if name is None:
-            continue
-        # Check if the first argument is a string literal with a redis URL
-        first_arg = node.args[0]
-        if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str):
-            if first_arg.value.startswith(("redis://", "rediss://")):
-                if "redis" not in extras:
-                    extras.append("redis")
+        if _is_connect_or_serve_call(node) and _first_arg_is_redis_url(node):
+            if "redis" not in extras:
+                extras.append("redis")
 
     return extras
 
 
-def _cmd_run(args: argparse.Namespace) -> None:
-    from pathlib import Path
+def _collect_extras(args: argparse.Namespace, script: Path) -> list[str]:
+    """Gather pyfuse extras and third-party packages for a script."""
+    extras: list[str] = list(args.extra or [])
+    backend = os.environ.get("PYFUSE_BACKEND", "")
+    if backend.startswith(("redis://", "rediss://")) and "redis" not in extras:
+        extras.append("redis")
+    for extra in _detect_pyfuse_extras(str(script)):
+        if extra not in extras:
+            extras.append(extra)
+    return extras
 
+
+def _build_script_env() -> dict[str, str]:
+    """Build env dict with cwd prepended to PYTHONPATH."""
+    env = os.environ.copy()
+    cwd = os.getcwd()
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = cwd if not existing else f"{cwd}{os.pathsep}{existing}"
+    return env
+
+
+def _run_subprocess(cmd: list[str], env: dict[str, str] | None = None) -> None:
+    """Run a subprocess, forwarding signals and exiting with its return code."""
+    proc = subprocess.Popen(cmd, env=env)
+    prev_term = signal.signal(signal.SIGTERM, lambda s, f: proc.send_signal(s))
+    prev_int = signal.signal(signal.SIGINT, lambda s, f: proc.send_signal(s))
+    try:
+        returncode = proc.wait()
+    finally:
+        signal.signal(signal.SIGTERM, prev_term)
+        signal.signal(signal.SIGINT, prev_int)
+    sys.exit(returncode)
+
+
+def _cmd_run(args: argparse.Namespace) -> None:
     from pyfuse._venv import temp_venv
 
     script = Path(args.script).resolve()
@@ -274,18 +304,7 @@ def _cmd_run(args: argparse.Namespace) -> None:
         print(f"Error: script not found: {script}", file=sys.stderr)
         sys.exit(1)
 
-    extras: list[str] = list(args.extra or [])
-    backend = os.environ.get("PYFUSE_BACKEND", "")
-    if backend.startswith(("redis://", "rediss://")):
-        if "redis" not in extras:
-            extras.append("redis")
-
-    # Auto-detect pyfuse extras from connect/serve calls in the script
-    for extra in _detect_pyfuse_extras(str(script)):
-        if extra not in extras:
-            extras.append(extra)
-
-    # Auto-detect third-party packages from the script
+    extras = _collect_extras(args, script)
     detected = _detect_script_packages(str(script))
 
     with temp_venv(install_pyfuse=True, extras=extras) as venv:
@@ -297,111 +316,82 @@ def _cmd_run(args: argparse.Namespace) -> None:
         if script_args and script_args[0] == "--":
             script_args = script_args[1:]
 
-        # Add cwd to PYTHONPATH so local packages (tests/, etc.) are importable
-        env = os.environ.copy()
-        cwd = os.getcwd()
-        existing = env.get("PYTHONPATH", "")
-        env["PYTHONPATH"] = cwd if not existing else f"{cwd}{os.pathsep}{existing}"
-
         cmd = [str(venv.python), str(script), *script_args]
-        proc = subprocess.Popen(cmd, env=env)
-
-        prev_term = signal.signal(signal.SIGTERM, lambda s, f: proc.send_signal(s))
-        prev_int = signal.signal(signal.SIGINT, lambda s, f: proc.send_signal(s))
-        try:
-            returncode = proc.wait()
-        finally:
-            signal.signal(signal.SIGTERM, prev_term)
-            signal.signal(signal.SIGINT, prev_int)
-
-        sys.exit(returncode)
+        _run_subprocess(cmd, env=_build_script_env())
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        prog="pyfuse",
-        description="pyfuse - distributed task execution",
-    )
-    sub = parser.add_subparsers(dest="command")
-
-    # worker
-    worker_p = sub.add_parser("worker", help="Start a pyfuse worker")
-    worker_p.add_argument(
+def _add_worker_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    p = sub.add_parser("worker", help="Start a pyfuse worker")
+    p.add_argument(
         "--backend",
         default=os.environ.get("PYFUSE_BACKEND"),
         help="Backend URL, e.g. redis://localhost:6379 (default: $PYFUSE_BACKEND)",
     )
-    worker_p.add_argument(
-        "-c", "--concurrency",
-        type=int,
-        default=1,
+    p.add_argument(
+        "-c", "--concurrency", type=int, default=1,
         help="Number of concurrent worker threads (default: 1)",
     )
-    worker_p.add_argument(
-        "--no-auto-install",
-        action="store_true",
-        help="Disable automatic pip dependency installation",
-    )
-    worker_p.add_argument(
-        "--tmp",
-        action="store_true",
-        help="Run the worker in a temporary virtual environment (deleted on exit)",
-    )
-    worker_p.add_argument(
-        "-v", "--verbose",
-        action="store_true",
-        help="Enable debug logging",
-    )
-    worker_p.add_argument(
-        "--log-level",
-        default=None,
-        metavar="LEVEL",
-        help="Set log level (DEBUG, INFO, WARNING, ERROR)",
-    )
+    p.add_argument("--no-auto-install", action="store_true",
+                    help="Disable automatic pip dependency installation")
+    p.add_argument("--tmp", action="store_true",
+                    help="Run the worker in a temporary virtual environment (deleted on exit)")
+    p.add_argument("-v", "--verbose", action="store_true",
+                    help="Enable debug logging")
+    p.add_argument("--log-level", default=None, metavar="LEVEL",
+                    help="Set log level (DEBUG, INFO, WARNING, ERROR)")
 
-    # run
-    run_p = sub.add_parser(
-        "run", help="Run a Python script in a temporary venv with pyfuse installed"
-    )
-    run_p.add_argument("script", help="Path to the Python script to run")
-    run_p.add_argument(
-        "-e", "--extra",
-        action="append",
-        default=[],
-        help="Extra pip package to install (repeatable)",
-    )
-    run_p.add_argument(
-        "script_args",
-        nargs=argparse.REMAINDER,
-        help="Arguments to pass to the script",
-    )
 
-    # info
+def _add_run_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    p = sub.add_parser(
+        "run", help="Run a Python script in a temporary venv with pyfuse installed",
+    )
+    p.add_argument("script", help="Path to the Python script to run")
+    p.add_argument("-e", "--extra", action="append", default=[],
+                    help="Extra pip package to install (repeatable)")
+    p.add_argument("script_args", nargs=argparse.REMAINDER,
+                    help="Arguments to pass to the script")
+
+
+def _add_serialize_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    p = sub.add_parser("serialize", help="Serialize a function to JSON")
+    p.add_argument("target", help="module:function to serialize")
+
+
+def _add_reconstruct_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    p = sub.add_parser("reconstruct", help="Reconstruct source from graph JSON")
+    p.add_argument("graph_file", help="Path to graph JSON file")
+    p.add_argument("function", help="Function name to reconstruct")
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="pyfuse", description="pyfuse - distributed task execution",
+    )
+    sub = parser.add_subparsers(dest="command")
+    _add_worker_parser(sub)
+    _add_run_parser(sub)
     sub.add_parser("info", help="Show pyfuse configuration")
+    _add_serialize_parser(sub)
+    _add_reconstruct_parser(sub)
+    return parser
 
-    # serialize
-    ser_p = sub.add_parser("serialize", help="Serialize a function to JSON")
-    ser_p.add_argument("target", help="module:function to serialize")
 
-    # reconstruct
-    rec_p = sub.add_parser("reconstruct", help="Reconstruct source from graph JSON")
-    rec_p.add_argument("graph_file", help="Path to graph JSON file")
-    rec_p.add_argument("function", help="Function name to reconstruct")
+_COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
+    "worker": _cmd_worker,
+    "run": _cmd_run,
+    "info": _cmd_info,
+    "serialize": _cmd_serialize,
+    "reconstruct": _cmd_reconstruct,
+}
 
+
+def main() -> None:
+    parser = _build_parser()
     args = parser.parse_args()
-
     if args.command is None:
         parser.print_help()
         sys.exit(1)
-
-    handlers = {
-        "worker": _cmd_worker,
-        "run": _cmd_run,
-        "info": _cmd_info,
-        "serialize": _cmd_serialize,
-        "reconstruct": _cmd_reconstruct,
-    }
-    handlers[args.command](args)
+    _COMMAND_HANDLERS[args.command](args)
 
 
 if __name__ == "__main__":
