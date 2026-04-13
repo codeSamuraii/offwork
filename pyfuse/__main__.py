@@ -13,11 +13,11 @@ from __future__ import annotations
 
 import argparse
 import ast
+import asyncio
 import importlib
 import logging
 import os
 import signal
-import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -36,7 +36,7 @@ def _build_worker_cmd(python: str, args: argparse.Namespace) -> list[str]:
     return cmd
 
 
-def _run_in_tmp_venv(args: argparse.Namespace) -> None:
+async def _run_in_tmp_venv(args: argparse.Namespace) -> None:
     """Create a temporary venv and re-exec the worker inside it."""
     from pyfuse._venv import temp_venv
 
@@ -44,10 +44,10 @@ def _run_in_tmp_venv(args: argparse.Namespace) -> None:
     if args.backend and args.backend.startswith(("redis://", "rediss://")):
         extras.append("redis")
 
-    with temp_venv(install_pyfuse=True, extras=extras) as venv:
+    async with temp_venv(install_pyfuse=True, extras=extras) as venv:
         cmd = _build_worker_cmd(str(venv.python), args)
         print("Starting worker in temporary venv...", file=sys.stderr)
-        _run_subprocess(cmd)
+        await _run_subprocess_async(cmd)
 
 
 def _resolve_log_level(args: argparse.Namespace) -> int:
@@ -80,14 +80,14 @@ def _cmd_worker(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     if args.tmp:
-        _run_in_tmp_venv(args)
+        asyncio.run(_run_in_tmp_venv(args))
         return
 
     _configure_logging(_resolve_log_level(args))
 
     from pyfuse.worker.remote import serve
 
-    serve(args.backend, concurrency=args.concurrency, auto_install=not args.no_auto_install)
+    asyncio.run(serve(args.backend, concurrency=args.concurrency, auto_install=not args.no_auto_install))
 
 
 def _cmd_info(_args: argparse.Namespace) -> None:
@@ -283,20 +283,24 @@ def _build_script_env() -> dict[str, str]:
     return env
 
 
-def _run_subprocess(cmd: list[str], env: dict[str, str] | None = None) -> None:
+async def _run_subprocess_async(
+    cmd: list[str], env: dict[str, str] | None = None
+) -> None:
     """Run a subprocess, forwarding signals and exiting with its return code."""
-    proc = subprocess.Popen(cmd, env=env)
-    prev_term = signal.signal(signal.SIGTERM, lambda s, f: proc.send_signal(s))
-    prev_int = signal.signal(signal.SIGINT, lambda s, f: proc.send_signal(s))
-    try:
-        returncode = proc.wait()
-    finally:
-        signal.signal(signal.SIGTERM, prev_term)
-        signal.signal(signal.SIGINT, prev_int)
+    proc = await asyncio.create_subprocess_exec(*cmd, env=env)
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, proc.send_signal, sig)
+        except (NotImplementedError, RuntimeError):
+            pass  # Windows or no running loop
+
+    returncode = await proc.wait()
     sys.exit(returncode)
 
 
-def _cmd_run(args: argparse.Namespace) -> None:
+async def _cmd_run_async(args: argparse.Namespace) -> None:
     from pyfuse._venv import temp_venv
 
     script = Path(args.script).resolve()
@@ -307,17 +311,21 @@ def _cmd_run(args: argparse.Namespace) -> None:
     extras = _collect_extras(args, script)
     detected = _detect_script_packages(str(script))
 
-    with temp_venv(install_pyfuse=True, extras=extras) as venv:
+    async with temp_venv(install_pyfuse=True, extras=extras) as venv:
         if detected:
             print(f"Installing detected dependencies: {', '.join(detected)}", file=sys.stderr)
-            venv.pip_install(*detected, extra_args=["--quiet"])
+            await venv.pip_install(*detected, extra_args=["--quiet"])
 
         script_args = list(args.script_args or [])
         if script_args and script_args[0] == "--":
             script_args = script_args[1:]
 
         cmd = [str(venv.python), str(script), *script_args]
-        _run_subprocess(cmd, env=_build_script_env())
+        await _run_subprocess_async(cmd, env=_build_script_env())
+
+
+def _cmd_run(args: argparse.Namespace) -> None:
+    asyncio.run(_cmd_run_async(args))
 
 
 def _add_worker_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -329,7 +337,7 @@ def _add_worker_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser])
     )
     p.add_argument(
         "-c", "--concurrency", type=int, default=1,
-        help="Number of concurrent worker threads (default: 1)",
+        help="Number of concurrent worker tasks (default: 1)",
     )
     p.add_argument("--no-auto-install", action="store_true",
                     help="Disable automatic pip dependency installation")

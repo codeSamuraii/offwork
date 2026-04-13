@@ -5,6 +5,7 @@ and ``multiprocessing.managers.BaseManager`` for cross-process coordination.
 """
 from __future__ import annotations
 
+import asyncio
 import atexit
 import logging
 import queue
@@ -12,7 +13,7 @@ import struct
 import threading
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from multiprocessing.managers import BaseManager
 from multiprocessing.shared_memory import SharedMemory
 from typing import Any
@@ -194,8 +195,14 @@ class _PyfuseManagerClient(BaseManager):
     pass
 
 
-_PyfuseManager.register("broker", callable=_get_broker)
-_PyfuseManagerClient.register("broker")
+_BROKER_EXPOSED = (
+    "put_task", "get_task",
+    "put_result", "get_result", "try_get_result",
+    "put_heartbeat", "get_heartbeat", "get_heartbeats_batch",
+    "wait_any_result",
+)
+_PyfuseManager.register("broker", callable=_get_broker, exposed=_BROKER_EXPOSED)
+_PyfuseManagerClient.register("broker", exposed=_BROKER_EXPOSED)
 
 
 # ---------------------------------------------------------------------------
@@ -297,65 +304,67 @@ class SharedMemoryBackend(Backend):
 
     # -- Backend interface ------------------------------------------------------
 
-    def submit(self, task_json: str) -> None:
-        name = _write_shm_block(task_json)
+    async def submit(self, task_json: str) -> None:
+        name = await asyncio.to_thread(_write_shm_block, task_json)
         self._tracker.register(name)
-        self._broker.put_task(name)
+        await asyncio.to_thread(self._broker.put_task, name)
 
-    def listen(self) -> Iterator[str]:
+    async def listen(self) -> AsyncIterator[str]:
         while True:
-            name = self._broker.get_task(timeout=1.0)
+            name = await asyncio.to_thread(self._broker.get_task, 1.0)
             if name is None:
                 continue
             self._tracker.unregister(name)
-            yield _read_shm_block(name)
+            yield await asyncio.to_thread(_read_shm_block, name)
 
-    def send_result(self, task_id: str, result_json: str) -> None:
-        name = _write_shm_block(result_json)
+    async def send_result(self, task_id: str, result_json: str) -> None:
+        name = await asyncio.to_thread(_write_shm_block, result_json)
         self._tracker.register(name)
-        self._broker.put_result(task_id, name)
+        await asyncio.to_thread(self._broker.put_result, task_id, name)
 
-    def get_result(self, task_id: str, timeout: float | None = None) -> str:
-        name = self._broker.get_result(task_id, timeout=timeout)
+    async def get_result(self, task_id: str, timeout: float | None = None) -> str:
+        name = await asyncio.to_thread(self._broker.get_result, task_id, timeout)
         if name is None:
             raise TimeoutError(
                 f"Timed out waiting for result of task {task_id}"
             )
         self._tracker.unregister(name)
-        return _read_shm_block(name)
+        return await asyncio.to_thread(_read_shm_block, name)
 
-    def try_get_result(self, task_id: str) -> str | None:
-        name = self._broker.try_get_result(task_id)
+    async def try_get_result(self, task_id: str) -> str | None:
+        name = await asyncio.to_thread(self._broker.try_get_result, task_id)
         if name is None:
             return None
         self._tracker.unregister(name)
-        return _read_shm_block(name)
+        return await asyncio.to_thread(_read_shm_block, name)
 
-    def send_heartbeat(self, task_id: str) -> None:
-        self._broker.put_heartbeat(task_id, time.time())
+    async def send_heartbeat(self, task_id: str) -> None:
+        await asyncio.to_thread(self._broker.put_heartbeat, task_id, time.time())
 
-    def get_heartbeat(self, task_id: str) -> float | None:
-        val: float | None = self._broker.get_heartbeat(task_id)
+    async def get_heartbeat(self, task_id: str) -> float | None:
+        val: float | None = await asyncio.to_thread(self._broker.get_heartbeat, task_id)
         return val
 
-    def get_heartbeats(self, task_ids: list[str]) -> dict[str, float | None]:
+    async def get_heartbeats(self, task_ids: list[str]) -> dict[str, float | None]:
         result: dict[str, float | None] = dict(
-            self._broker.get_heartbeats_batch(task_ids)
+            await asyncio.to_thread(self._broker.get_heartbeats_batch, task_ids)
         )
         return result
 
-    def notify_result(self, task_id: str) -> None:
+    async def notify_result(self, task_id: str) -> None:
         # Notification is handled inside _ShmBroker.put_result via
         # _result_notify queue, so this is a no-op.
         pass
 
-    def subscribe_results(self) -> Iterator[str]:
+    async def subscribe_results(self) -> AsyncIterator[str]:
         while True:
-            task_id: str | None = self._broker.wait_any_result(timeout=1.0)
+            task_id: str | None = await asyncio.to_thread(
+                self._broker.wait_any_result, 1.0,
+            )
             if task_id is not None:
                 yield task_id
 
-    def close(self) -> None:
+    async def close(self) -> None:
         self._tracker.cleanup()
         if self._is_server and self._server_manager is not None:
             self._server_manager.shutdown()

@@ -33,10 +33,14 @@ redis = ["redis>=5.0"]
 [dependency-groups]
 dev = [
     "pytest (>=9.0.2,<10.0.0)",
+    "pytest-asyncio (>=1.0.0)",
     "mypy (>=1.19.1,<2.0.0)",
     "ipython (>=9.11.0,<10.0.0)",
     "isort (>=8.0.1,<9.0.0)",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
 
 [tool.mypy]
 strict = true

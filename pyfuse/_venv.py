@@ -1,18 +1,18 @@
 """Temporary virtual environment management for pyfuse."""
 from __future__ import annotations
 
+import asyncio
 import atexit
 import logging
 import os
 import shutil
 import signal
-import subprocess
 import sys
 import tempfile
 import time
 import venv
-from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import FrameType
@@ -74,7 +74,7 @@ class TempVenv:
     venv_dir: Path
     python: Path
 
-    def pip_install(
+    async def pip_install(
         self, *packages: str, extra_args: Sequence[str] = ()
     ) -> None:
         """Install packages via pip in this venv."""
@@ -82,18 +82,25 @@ class TempVenv:
             return
         cmd = [str(self.python), "-m", "pip", "install", *packages, *extra_args]
         logger.info("Installing in temp venv: %s", " ".join(packages))
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
-            raise RuntimeError(f"pip install failed in temp venv:\n{proc.stderr}")
+            raise RuntimeError(
+                f"pip install failed in temp venv:\n{stderr.decode() if stderr else ''}"
+            )
 
 
-@contextmanager
-def temp_venv(
+@asynccontextmanager
+async def temp_venv(
     *,
     install_pyfuse: bool = True,
     extras: Sequence[str] = (),
     prefix: str = _DEFAULT_PREFIX,
-) -> Iterator[TempVenv]:
+) -> AsyncIterator[TempVenv]:
     """Create a temporary venv, optionally install pyfuse, yield, then clean up.
 
     Cleanup is guaranteed on normal exit, exceptions, SIGTERM, SIGINT, and
@@ -139,7 +146,10 @@ def temp_venv(
         venv_dir = Path(tmpdir) / "venv"
         logger.info("Creating temporary venv at %s", venv_dir)
         print("Creating temporary virtual environment...", file=sys.stderr)
-        venv.create(str(venv_dir), with_pip=True)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None, lambda: venv.create(str(venv_dir), with_pip=True)
+        )
 
         python = _venv_python(venv_dir)
         if not python.exists():
@@ -156,7 +166,7 @@ def temp_venv(
             if extras:
                 spec += f"[{','.join(extras)}]"
             print("Installing pyfuse into temporary venv...", file=sys.stderr)
-            tv.pip_install(spec, extra_args=["--quiet"])
+            await tv.pip_install(spec, extra_args=["--quiet"])
 
         yield tv
     finally:

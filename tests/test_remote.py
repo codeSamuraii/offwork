@@ -1,11 +1,11 @@
 """Tests for the remote execution API: Backend, ResultEnvelope, Result, connect/disconnect/serve."""
 from __future__ import annotations
 
+import asyncio
 import collections
 import json
 import logging
-import threading
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
@@ -23,40 +23,40 @@ import pyfuse.worker.remote as _remote
 
 
 class InMemoryBackend(Backend):
-    """In-memory backend for testing."""
+    """In-memory async backend for testing."""
 
     def __init__(self) -> None:
         self._tasks: collections.deque[str] = collections.deque()
         self._results: dict[str, collections.deque[str]] = {}
-        self._stop = threading.Event()
+        self._stop = False
 
-    def submit(self, task_json: str) -> None:
+    async def submit(self, task_json: str) -> None:
         self._tasks.append(task_json)
 
-    def listen(self) -> Iterator[str]:
-        while not self._stop.is_set():
+    async def listen(self) -> AsyncIterator[str]:  # type: ignore[override]
+        while not self._stop:
             if self._tasks:
                 yield self._tasks.popleft()
             else:
                 break
 
-    def send_result(self, task_id: str, result_json: str) -> None:
+    async def send_result(self, task_id: str, result_json: str) -> None:
         self._results.setdefault(task_id, collections.deque()).append(result_json)
 
-    def get_result(self, task_id: str, timeout: float | None = None) -> str:
+    async def get_result(self, task_id: str, timeout: float | None = None) -> str:
         q = self._results.get(task_id)
         if q:
             return q.popleft()
         raise TimeoutError(f"No result for {task_id}")
 
-    def try_get_result(self, task_id: str) -> str | None:
+    async def try_get_result(self, task_id: str) -> str | None:
         q = self._results.get(task_id)
         if q:
             return q.popleft()
         return None
 
-    def close(self) -> None:
-        self._stop.set()
+    async def close(self) -> None:
+        self._stop = True
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +65,7 @@ class InMemoryBackend(Backend):
 
 
 @pytest.fixture(autouse=True)
-def _clean_backend() -> Iterator[None]:
+async def _clean_backend() -> AsyncIterator[None]:
     """Ensure no global backend leaks between tests."""
     yield
     _remote._active_backend = None
@@ -138,47 +138,53 @@ class TestResultEnvelope:
 
 
 class TestResult:
-    def test_result_success(self, backend: InMemoryBackend) -> None:
+    @pytest.mark.asyncio
+    async def test_result_success(self, backend: InMemoryBackend) -> None:
         env = ResultEnvelope.success("t1", 99)
-        backend.send_result("t1", env.to_json())
+        await backend.send_result("t1", env.to_json())
 
         future = Result("t1", backend)
         assert future.task_id == "t1"
-        assert future.result() == 99
+        assert await future.result(stall_timeout=None) == 99
 
-    def test_result_raises_on_error(self, backend: InMemoryBackend) -> None:
+    @pytest.mark.asyncio
+    async def test_result_raises_on_error(self, backend: InMemoryBackend) -> None:
         env = ResultEnvelope.failure("t2", ValueError("bad"))
-        backend.send_result("t2", env.to_json())
+        await backend.send_result("t2", env.to_json())
 
         future = Result("t2", backend)
         with pytest.raises(RemoteError, match="ValueError: bad"):
-            future.result()
+            await future.result(stall_timeout=None)
 
-    def test_result_caches(self, backend: InMemoryBackend) -> None:
+    @pytest.mark.asyncio
+    async def test_result_caches(self, backend: InMemoryBackend) -> None:
         env = ResultEnvelope.success("t3", "cached")
-        backend.send_result("t3", env.to_json())
+        await backend.send_result("t3", env.to_json())
 
         future = Result("t3", backend)
-        assert future.result() == "cached"
+        assert await future.result(stall_timeout=None) == "cached"
         # Second call should use cached envelope (queue is empty now)
-        assert future.result() == "cached"
+        assert await future.result(stall_timeout=None) == "cached"
 
-    def test_done_false_when_no_result(self, backend: InMemoryBackend) -> None:
+    @pytest.mark.asyncio
+    async def test_done_false_when_no_result(self, backend: InMemoryBackend) -> None:
         future = Result("t4", backend)
-        assert future.done() is False
+        assert await future.done() is False
 
-    def test_done_true_when_result_available(self, backend: InMemoryBackend) -> None:
+    @pytest.mark.asyncio
+    async def test_done_true_when_result_available(self, backend: InMemoryBackend) -> None:
         env = ResultEnvelope.success("t5", True)
-        backend.send_result("t5", env.to_json())
+        await backend.send_result("t5", env.to_json())
 
         future = Result("t5", backend)
-        assert future.done() is True
-        assert future.result() is True
+        assert await future.done() is True
+        assert await future.result(stall_timeout=None) is True
 
-    def test_timeout_raises(self, backend: InMemoryBackend) -> None:
+    @pytest.mark.asyncio
+    async def test_timeout_raises(self, backend: InMemoryBackend) -> None:
         future = Result("missing", backend)
         with pytest.raises(TimeoutError):
-            future.result(timeout=0)
+            await future.result(timeout=0, stall_timeout=None)
 
 
 # ---------------------------------------------------------------------------
@@ -191,14 +197,16 @@ class TestConnectDisconnect:
         with pytest.raises(ValueError, match="Unknown backend scheme"):
             _remote.connect("ftp://localhost")
 
-    def test_disconnect_clears_backend(self, backend: InMemoryBackend) -> None:
+    @pytest.mark.asyncio
+    async def test_disconnect_clears_backend(self, backend: InMemoryBackend) -> None:
         _remote._active_backend = backend
-        _remote.disconnect()
+        await _remote.disconnect()
         assert _remote._active_backend is None
 
-    def test_disconnect_when_none_is_noop(self) -> None:
+    @pytest.mark.asyncio
+    async def test_disconnect_when_none_is_noop(self) -> None:
         _remote._active_backend = None
-        _remote.disconnect()  # should not raise
+        await _remote.disconnect()  # should not raise
 
     def test_get_backend_raises_without_connect(self) -> None:
         with pytest.raises(RuntimeError, match="No backend connected"):
@@ -219,7 +227,7 @@ class TestConnectDisconnect:
             _remote, "_create_backend", lambda *a, **kw: backend
         )
         _remote.connect("redis://localhost")
-        assert _remote.disconnect in registered
+        assert _remote._sync_disconnect in registered
 
     def test_atexit_registered_only_once(
         self, backend: InMemoryBackend, monkeypatch: pytest.MonkeyPatch
@@ -246,31 +254,33 @@ class TestConnectDisconnect:
 # ---------------------------------------------------------------------------
 
 
-class TestRunMethod:
-    def test_traced_function_has_run(self) -> None:
+class TestStartMethod:
+    def test_traced_function_has_start(self) -> None:
         @trace
         def my_func(x: int) -> int:
             return x + 1
 
-        assert hasattr(my_func, "run")
-        assert callable(my_func.run)
+        assert hasattr(my_func, "start")
+        assert asyncio.iscoroutinefunction(my_func.start)
 
-    def test_run_without_backend_raises(self) -> None:
+    @pytest.mark.asyncio
+    async def test_start_without_backend_raises(self) -> None:
         @trace
         def my_func(x: int) -> int:
             return x + 1
 
         with pytest.raises(RuntimeError, match="No backend connected"):
-            my_func.run(5)
+            await my_func.start(5)
 
-    def test_run_submits_to_backend(self, backend: InMemoryBackend) -> None:
+    @pytest.mark.asyncio
+    async def test_start_submits_to_backend(self, backend: InMemoryBackend) -> None:
         _remote._active_backend = backend
 
         @trace
         def double(x: int) -> int:
             return x * 2
 
-        future = double.run(7)
+        future = await double.start(7)
         assert isinstance(future, Result)
         assert len(backend._tasks) == 1
 
@@ -279,16 +289,27 @@ class TestRunMethod:
         assert "double" in task_data["function"]
         assert task_data["args"] == [7]
 
-    def test_run_returns_fuse_result(self, backend: InMemoryBackend) -> None:
+    @pytest.mark.asyncio
+    async def test_start_returns_fuse_result(self, backend: InMemoryBackend) -> None:
         _remote._active_backend = backend
 
         @trace
         def add(a: int, b: int) -> int:
             return a + b
 
-        future = add.run(3, 4)
+        future = await add.start(3, 4)
         assert isinstance(future, Result)
         assert future.task_id  # non-empty
+
+
+class TestRunMethod:
+    def test_traced_function_has_run(self) -> None:
+        @trace
+        def my_func(x: int) -> int:
+            return x + 1
+
+        assert hasattr(my_func, "run")
+        assert asyncio.iscoroutinefunction(my_func.run)
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +318,8 @@ class TestRunMethod:
 
 
 class TestHandleTaskOutput:
-    def test_output_build_on_first_call(
+    @pytest.mark.asyncio
+    async def test_output_build_on_first_call(
         self,
         backend: InMemoryBackend,
         caplog: pytest.LogCaptureFixture,
@@ -310,19 +332,20 @@ class TestHandleTaskOutput:
             return x + 1
 
         task = pack(add_one, 5)
-        backend.submit(task.to_json())
+        await backend.submit(task.to_json())
 
         worker = Worker(auto_install=False)
         with caplog.at_level(logging.DEBUG, logger="pyfuse"):
-            for task_json in backend.listen():
-                _remote._handle_task(worker, backend, task_json)
+            async for task_json in backend.listen():
+                await _remote._handle_task(worker, backend, task_json)
 
         out = caplog.text
         assert "build" in out
         assert "ms" in out
         assert "\u2713" in out
 
-    def test_output_cached_on_second_call(
+    @pytest.mark.asyncio
+    async def test_output_cached_on_second_call(
         self,
         backend: InMemoryBackend,
         caplog: pytest.LogCaptureFixture,
@@ -336,20 +359,21 @@ class TestHandleTaskOutput:
 
         task1 = pack(double, 3)
         task2 = pack(double, 7)
-        backend.submit(task1.to_json())
-        backend.submit(task2.to_json())
+        await backend.submit(task1.to_json())
+        await backend.submit(task2.to_json())
 
         worker = Worker(auto_install=False)
         with caplog.at_level(logging.DEBUG, logger="pyfuse"):
-            for task_json in backend.listen():
-                _remote._handle_task(worker, backend, task_json)
+            async for task_json in backend.listen():
+                await _remote._handle_task(worker, backend, task_json)
 
         records = [r.message for r in caplog.records if "\u2713" in r.message]
         assert len(records) == 2
         assert "build" in records[0]
         assert "cached" in records[1]
 
-    def test_output_error(
+    @pytest.mark.asyncio
+    async def test_output_error(
         self,
         backend: InMemoryBackend,
         caplog: pytest.LogCaptureFixture,
@@ -362,12 +386,12 @@ class TestHandleTaskOutput:
             raise RuntimeError("intentional")
 
         task = pack(boom)
-        backend.submit(task.to_json())
+        await backend.submit(task.to_json())
 
         worker = Worker(auto_install=False)
         with caplog.at_level(logging.DEBUG, logger="pyfuse"):
-            for task_json in backend.listen():
-                _remote._handle_task(worker, backend, task_json)
+            async for task_json in backend.listen():
+                await _remote._handle_task(worker, backend, task_json)
 
         out = caplog.text
         assert "\u2717" in out
@@ -381,8 +405,9 @@ class TestHandleTaskOutput:
 
 
 class TestServe:
-    def test_serve_executes_tasks(self, backend: InMemoryBackend) -> None:
-        """End-to-end: submit a task, run serve, check result."""
+    @pytest.mark.asyncio
+    async def test_serve_executes_tasks(self, backend: InMemoryBackend) -> None:
+        """End-to-end: submit a task, run worker, check result."""
         from pyfuse import pack
 
         @trace
@@ -390,34 +415,29 @@ class TestServe:
             return x * 3
 
         task = pack(triple, 5)
-        backend.submit(task.to_json())
+        await backend.submit(task.to_json())
 
-        # Set the global backend so serve() doesn't try to connect
-        _remote._active_backend = backend
-
-        # Run the worker loop (will stop after exhausting the queue)
         from pyfuse.worker.worker import Worker
-
-        worker = Worker(auto_install=False)
-
         from pyfuse.core.task import Task
 
-        for task_json in backend.listen():
+        worker = Worker(auto_install=False)
+        async for task_json in backend.listen():
             t = Task.from_json(task_json)
             try:
-                result = worker.run(t)
+                result = await worker.run(t)
                 env = ResultEnvelope.success(t.task_id, result)
             except Exception as exc:
                 env = ResultEnvelope.failure(t.task_id, exc)
-            backend.send_result(t.task_id, env.to_json())
+            await backend.send_result(t.task_id, env.to_json())
 
         # Check the result
-        raw = backend.get_result(task.task_id)
+        raw = await backend.get_result(task.task_id)
         env = ResultEnvelope.from_json(raw)
         assert env.status == "ok"
         assert env.result == 15
 
-    def test_serve_handles_errors(self, backend: InMemoryBackend) -> None:
+    @pytest.mark.asyncio
+    async def test_serve_handles_errors(self, backend: InMemoryBackend) -> None:
         """Tasks that raise should produce error envelopes, not crash."""
         from pyfuse import pack
 
@@ -426,23 +446,23 @@ class TestServe:
             raise RuntimeError("intentional")
 
         task = pack(failing)
-        backend.submit(task.to_json())
+        await backend.submit(task.to_json())
 
         from pyfuse.worker.worker import Worker
         from pyfuse.core.task import Task
 
         worker = Worker(auto_install=False)
 
-        for task_json in backend.listen():
+        async for task_json in backend.listen():
             t = Task.from_json(task_json)
             try:
-                result = worker.run(t)
+                result = await worker.run(t)
                 env = ResultEnvelope.success(t.task_id, result)
             except Exception as exc:
                 env = ResultEnvelope.failure(t.task_id, exc)
-            backend.send_result(t.task_id, env.to_json())
+            await backend.send_result(t.task_id, env.to_json())
 
-        raw = backend.get_result(task.task_id)
+        raw = await backend.get_result(task.task_id)
         env = ResultEnvelope.from_json(raw)
         assert env.status == "error"
         assert env.error_type == "RuntimeError"
@@ -455,23 +475,28 @@ class TestServe:
 
 
 class TestInMemoryBackend:
-    def test_submit_and_listen(self, backend: InMemoryBackend) -> None:
-        backend.submit('{"test": 1}')
-        backend.submit('{"test": 2}')
-        results = list(backend.listen())
+    @pytest.mark.asyncio
+    async def test_submit_and_listen(self, backend: InMemoryBackend) -> None:
+        await backend.submit('{"test": 1}')
+        await backend.submit('{"test": 2}')
+        results = [t async for t in backend.listen()]
         assert results == ['{"test": 1}', '{"test": 2}']
 
-    def test_send_and_get_result(self, backend: InMemoryBackend) -> None:
-        backend.send_result("t1", '{"ok": true}')
-        assert backend.get_result("t1") == '{"ok": true}'
+    @pytest.mark.asyncio
+    async def test_send_and_get_result(self, backend: InMemoryBackend) -> None:
+        await backend.send_result("t1", '{"ok": true}')
+        assert await backend.get_result("t1") == '{"ok": true}'
 
-    def test_try_get_result_none(self, backend: InMemoryBackend) -> None:
-        assert backend.try_get_result("missing") is None
+    @pytest.mark.asyncio
+    async def test_try_get_result_none(self, backend: InMemoryBackend) -> None:
+        assert await backend.try_get_result("missing") is None
 
-    def test_try_get_result_success(self, backend: InMemoryBackend) -> None:
-        backend.send_result("t1", '{"ok": true}')
-        assert backend.try_get_result("t1") == '{"ok": true}'
+    @pytest.mark.asyncio
+    async def test_try_get_result_success(self, backend: InMemoryBackend) -> None:
+        await backend.send_result("t1", '{"ok": true}')
+        assert await backend.try_get_result("t1") == '{"ok": true}'
 
-    def test_close(self, backend: InMemoryBackend) -> None:
-        backend.close()
-        assert list(backend.listen()) == []
+    @pytest.mark.asyncio
+    async def test_close(self, backend: InMemoryBackend) -> None:
+        await backend.close()
+        assert [t async for t in backend.listen()] == []

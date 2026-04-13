@@ -265,50 +265,57 @@ class TestReconstructedExecution:
 
 class TestWorkerExecution:
 
-    def test_full_pipeline(self, worker):
+    @pytest.mark.asyncio
+    async def test_full_pipeline(self, worker):
         task = pack(_pipeline_mod.run_full_pipeline, 2, 10, seed=42)
-        result = worker.run(task)
+        result = await worker.run(task)
         assert isinstance(result, str)
         assert len(result) > 100
 
-    def test_full_pipeline_matches_local(self, worker):
+    @pytest.mark.asyncio
+    async def test_full_pipeline_matches_local(self, worker):
         local = _pipeline_mod.run_full_pipeline(
             sensor_count=2, readings_per_sensor=10, seed=42,
         )
         task = pack(_pipeline_mod.run_full_pipeline, 2, 10, seed=42)
-        remote = worker.run(task)
+        remote = await worker.run(task)
         assert local == remote
 
-    def test_analysis_only(self, worker, sample_measurements):
+    @pytest.mark.asyncio
+    async def test_analysis_only(self, worker, sample_measurements):
         task = pack(_pipeline_mod.run_analysis_only, sample_measurements)
-        result = json.loads(worker.run(task))
+        result = json.loads(await worker.run(task))
         assert result["title"] == "Analysis Only"
 
-    def test_validation_report(self, worker, sample_measurements):
+    @pytest.mark.asyncio
+    async def test_validation_report(self, worker, sample_measurements):
         task = pack(_pipeline_mod.run_validation_report, sample_measurements)
-        result = worker.run(task)
+        result = await worker.run(task)
         assert "Valid:" in result
 
-    def test_closure_filter(self, worker, sample_measurements):
+    @pytest.mark.asyncio
+    async def test_closure_filter(self, worker, sample_measurements):
         task = pack(_pipeline_mod.high_value_analysis, sample_measurements)
-        result = json.loads(worker.run(task))
+        result = json.loads(await worker.run(task))
         assert result["label"] == "high_value"
         assert result["count"] <= result["total"]
 
-    def test_worker_caching(self, worker):
+    @pytest.mark.asyncio
+    async def test_worker_caching(self, worker):
         task1 = pack(_pipeline_mod.run_full_pipeline, 2, 10, seed=42)
-        worker.run(task1)
+        await worker.run(task1)
         assert worker.cache_info()["size"] == 1
 
         task2 = pack(_pipeline_mod.run_full_pipeline, 3, 5, seed=99)
-        worker.run(task2)
+        await worker.run(task2)
         assert worker.cache_info()["size"] == 1
 
         task3 = pack(_pipeline_mod.run_analysis_only, [])
-        worker.run(task3)
+        await worker.run(task3)
         assert worker.cache_info()["size"] == 2
 
-    def test_multiple_entry_points(self, worker, sample_measurements):
+    @pytest.mark.asyncio
+    async def test_multiple_entry_points(self, worker, sample_measurements):
         results = {}
         for name, task in [
             ("full", pack(_pipeline_mod.run_full_pipeline, 2, 10, seed=42)),
@@ -316,7 +323,7 @@ class TestWorkerExecution:
             ("validation", pack(_pipeline_mod.run_validation_report, sample_measurements)),
             ("closure", pack(_pipeline_mod.high_value_analysis, sample_measurements)),
         ]:
-            results[name] = worker.run(task)
+            results[name] = await worker.run(task)
 
         assert len(results["full"]) > 100
         assert json.loads(results["analysis"])["title"] == "Analysis Only"

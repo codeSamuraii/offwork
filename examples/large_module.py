@@ -13,6 +13,8 @@ Usage:
     # Terminal 2 -- run this script
     python examples/large_module.py
 """
+import asyncio
+
 import pyfuse
 from pyfuse import trace
 
@@ -48,17 +50,21 @@ def full_sensor_report(sensor_count: int, readings_per_sensor: int, seed: int = 
     return format_text_report(report)
 
 
-if __name__ == "__main__":
+async def main() -> None:
     # Connect to the worker
-    pyfuse.connect("shm://localhost:9847")
+    pyfuse.connect("redis://localhost:6379")
 
     # Local call
     local_result = full_sensor_report(3, 50, seed=42)
 
     # Remote call (same function, same args, on a worker)
-    remote_result = full_sensor_report.run(3, 50, seed=42).result()
+    remote_result = await full_sensor_report.run(3, 50, seed=42)
 
     if local_result == remote_result:
         print(f"Success! Local and remote results match:\n  {repr(local_result)[:80] + '...'}")
     else:
         print("Mismatch between local and remote results!")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

@@ -23,68 +23,52 @@ _F = TypeVar("_F", bound=Callable[..., object])
 _BUILTIN_NAMES = set(dir(builtins))
 
 
-def _make_run_method(
+def _make_start_method(
     wrapper: Callable[..., object], func: Callable[..., object]
 ) -> Callable[..., object]:
-    """Create the ``.run()`` method attached to a traced wrapper."""
+    """Create the ``.start()`` async method that submits and returns a Result."""
 
-    def run(*args: object, backend: str | Backend | None = None, **kwargs: object) -> object:
+    async def start(*args: object, backend: str | Backend | None = None, **kwargs: object) -> object:
         from pyfuse.worker.remote import submit_remote
 
-        return submit_remote(func, wrapper, *args, _backend=backend, **kwargs)
+        return await submit_remote(func, wrapper, *args, _backend=backend, **kwargs)
+
+    return start
+
+
+def _make_run_method(
+    start_method: Callable[..., object],
+) -> Callable[..., object]:
+    """Create the ``.run()`` async method that submits and awaits the result."""
+
+    async def run(*args: object, **kwargs: object) -> object:
+        result = await start_method(*args, **kwargs)  # type: ignore[misc]
+        return await result
 
     return run
 
 
-def _make_arun_method(
-    run_method: Callable[..., object],
-) -> Callable[..., object]:
-    """Create the ``.arun()`` async method attached to a traced wrapper."""
-
-    async def arun(*args: object, backend: str | Backend | None = None, **kwargs: object) -> object:
-        result = run_method(*args, backend=backend, **kwargs)
-        return await result  # type: ignore[misc]
-
-    return arun
-
-
 def _make_map_method(
-    run_method: Callable[..., object],
+    start_method: Callable[..., object],
 ) -> Callable[..., object]:
-    """Create the ``.map()`` method for batch submission."""
+    """Create the ``.map()`` async method for batch submission and collection."""
 
-    def map(args_list: list[tuple[object, ...]], **kwargs: object) -> list[object]:
-        return [run_method(*args, **kwargs) for args in args_list]
+    async def map(args_list: list[tuple[object, ...]], **kwargs: object) -> list[object]:
+        results = [await start_method(*args, **kwargs) for args in args_list]  # type: ignore[misc]
+        return [await r for r in results]
 
     return map
-
-
-def _make_amap_method(
-    run_method: Callable[..., object],
-) -> Callable[..., object]:
-    """Create the ``.amap()`` async method for concurrent batch awaiting."""
-
-    async def amap(args_list: list[tuple[object, ...]], **kwargs: object) -> list[object]:
-        import asyncio
-        from collections.abc import Awaitable
-
-        results = [run_method(*args, **kwargs) for args in args_list]
-        coros: list[Awaitable[object]] = [r for r in results]  # type: ignore[misc]
-        return list(await asyncio.gather(*coros))
-
-    return amap
 
 
 def _attach_traced_attrs(
     wrapper: Callable[..., object], func: Callable[..., object]
 ) -> None:
-    """Attach pyfuse metadata and .run()/.map()/.arun()/.amap() to a traced wrapper."""
+    """Attach pyfuse metadata and .start()/.run()/.map() to a traced wrapper."""
     wrapper.__pyfuse_traced__ = True  # type: ignore[attr-defined]
-    run = _make_run_method(wrapper, func)
-    wrapper.run = run  # type: ignore[attr-defined]
-    wrapper.arun = _make_arun_method(run)  # type: ignore[attr-defined]
-    wrapper.map = _make_map_method(run)  # type: ignore[attr-defined]
-    wrapper.amap = _make_amap_method(run)  # type: ignore[attr-defined]
+    start = _make_start_method(wrapper, func)
+    wrapper.start = start  # type: ignore[attr-defined]
+    wrapper.run = _make_run_method(start)  # type: ignore[attr-defined]
+    wrapper.map = _make_map_method(start)  # type: ignore[attr-defined]
 
 
 def _get_stdlib_dirs() -> list[str]:

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import contextlib
 import importlib.util
 import logging
-import subprocess
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -33,7 +33,7 @@ DEFAULT_IMPORT_TO_PACKAGE: dict[str, str] = {
 def install_package_as(package: str) -> Iterator[None]:
     """Declare the pip package name for imports inside this block.
 
-    At runtime this is a no-op — the import executes normally.  The
+    At runtime this is a no-op -- the import executes normally.  The
     ``@trace`` analyzer detects the ``with`` block in the AST and records
     the *package* name on every :class:`ImportInfo` inside it, so the
     worker knows which pip package to install.
@@ -88,11 +88,18 @@ def is_installed(module: str) -> bool:
     return importlib.util.find_spec(module) is not None
 
 
-def _pip_install(package: str, extra_args: list[str]) -> subprocess.CompletedProcess[str]:
-    """Run ``pip install <package>`` and return the process result."""
-    return subprocess.run(
-        [sys.executable, "-m", "pip", "install", package, *extra_args],
-        capture_output=True, text=True,
+async def _pip_install(package: str, extra_args: list[str]) -> tuple[int, str, str]:
+    """Run ``pip install <package>`` and return (returncode, stdout, stderr)."""
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-m", "pip", "install", package, *extra_args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout_bytes, stderr_bytes = await proc.communicate()
+    return (
+        proc.returncode or 0,
+        stdout_bytes.decode() if stdout_bytes else "",
+        stderr_bytes.decode() if stderr_bytes else "",
     )
 
 
@@ -107,7 +114,7 @@ def _raise_on_failures(failed: dict[str, str]) -> None:
     raise DependencyError(f"Failed to install:\n" + "\n".join(parts))
 
 
-def install_packages(
+async def install_packages(
     modules: set[str],
     import_to_package: dict[str, str] | None = None,
     pip_args: list[str] | None = None,
@@ -127,13 +134,13 @@ def install_packages(
 
         package = mapping.get(module, module)
         logger.debug("pip install %s ...", package)
-        proc = _pip_install(package, extra_args)
-        if proc.returncode == 0:
+        returncode, _stdout, stderr = await _pip_install(package, extra_args)
+        if returncode == 0:
             result.installed.append(package)
             logger.debug("Installed %s", package)
         else:
-            result.failed[module] = proc.stderr.strip()
-            logger.error("Failed to install %s: %s", package, proc.stderr.strip()[:200])
+            result.failed[module] = stderr.strip()
+            logger.error("Failed to install %s: %s", package, stderr.strip()[:200])
 
     _raise_on_failures(result.failed)
     return result
@@ -142,7 +149,7 @@ def install_packages(
 def _collect_package_hints(
     store: Store, function_name: str
 ) -> dict[str, str]:
-    """Extract import→package mappings from ``ImportInfo.package`` fields."""
+    """Extract import->package mappings from ``ImportInfo.package`` fields."""
     _target_qname, nodes = store.collect(function_name)
     hints: dict[str, str] = {}
     for node in nodes.values():
@@ -156,7 +163,7 @@ def _collect_package_hints(
     return hints
 
 
-def ensure_dependencies(
+async def ensure_dependencies(
     store: Store,
     function_name: str,
     import_to_package: dict[str, str] | None = None,
@@ -172,4 +179,4 @@ def ensure_dependencies(
         return InstallResult()
     hints = _collect_package_hints(store, function_name)
     merged = {**hints, **(import_to_package or {})}
-    return install_packages(modules, merged)
+    return await install_packages(modules, merged)

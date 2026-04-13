@@ -98,153 +98,167 @@ class TestSubgraphKey:
         assert len(key) == 16
 
 
-# -- Worker.execute ------------------------------------------------------
+# -- Worker.run ------------------------------------------------------
 
-class TestExecute:
-    def test_simple_function(self) -> None:
+class TestRun:
+    @pytest.mark.asyncio
+    async def test_simple_function(self) -> None:
         _, json_str = _simple_store()
+        task = Task(graph_json=json_str, function_name="f", args=(21,))
         worker = Worker(auto_install=False)
-        result = worker.execute(json_str, "f", 21)
-        assert result == 42
+        assert await worker.run(task) == 42
 
-    def test_with_dependencies(self) -> None:
+    @pytest.mark.asyncio
+    async def test_with_dependencies(self) -> None:
         _, json_str = _chain_store()
+        task = Task(graph_json=json_str, function_name="a", args=(5,))
         worker = Worker(auto_install=False)
-        result = worker.execute(json_str, "a", 5)
-        assert result == 16  # b(5) + 1 = 15 + 1 = 16
+        assert await worker.run(task) == 16  # b(5) + 1 = 15 + 1 = 16
 
-    def test_class_method(self) -> None:
+    @pytest.mark.asyncio
+    async def test_class_method(self) -> None:
         _, json_str = _class_store()
-        worker = Worker(auto_install=False)
-        # Extract the class, instantiate, then call method via unbound
         store = Store.from_json(json_str)
         source = store.reconstruct("greet")
         ns: dict = {}
         exec(compile(source, "<test>", "exec"), ns)
         instance = ns["Greeter"]()
-        result = worker.execute(json_str, "greet", instance, "world")
-        assert result == "hello world"
+        task = Task(graph_json=json_str, function_name="greet", args=(instance, "world"))
+        worker = Worker(auto_install=False)
+        assert await worker.run(task) == "hello world"
 
-    def test_function_not_found(self) -> None:
+    @pytest.mark.asyncio
+    async def test_function_not_found(self) -> None:
         _, json_str = _simple_store()
+        task = Task(graph_json=json_str, function_name="nonexistent")
         worker = Worker(auto_install=False)
         with pytest.raises(KeyError):
-            worker.execute(json_str, "nonexistent")
+            await worker.run(task)
 
-    def test_kwargs(self) -> None:
+    @pytest.mark.asyncio
+    async def test_with_kwargs(self) -> None:
         _, json_str = _simple_store()
+        task = Task(graph_json=json_str, function_name="f", kwargs={"x": 10})
         worker = Worker(auto_install=False)
-        result = worker.execute(json_str, "f", x=10)
-        assert result == 20
+        assert await worker.run(task) == 20
+
+    @pytest.mark.asyncio
+    async def test_async_function(self) -> None:
+        _, json_str = _async_store()
+        task = Task(graph_json=json_str, function_name="af", args=(5,))
+        worker = Worker(auto_install=False)
+        assert await worker.run(task) == 15
+
+    @pytest.mark.asyncio
+    async def test_uses_cache(self) -> None:
+        _, json_str = _simple_store()
+        task = Task(graph_json=json_str, function_name="f", args=(1,))
+        worker = Worker(auto_install=False)
+        await worker.run(task)
+        assert worker.cache_info()["size"] == 1
+        await worker.run(task)
+        assert worker.cache_info()["size"] == 1
 
 
 # -- Caching -----------------------------------------------------------------
 
 class TestCaching:
-    def test_cache_hit(self) -> None:
+    @pytest.mark.asyncio
+    async def test_cache_hit(self) -> None:
         _, json_str = _simple_store()
         worker = Worker(auto_install=False)
-        worker.execute(json_str, "f", 1)
-        info = worker.cache_info()
-        assert info["size"] == 1
-        worker.execute(json_str, "f", 2)
+        task = Task(graph_json=json_str, function_name="f", args=(1,))
+        await worker.run(task)
+        assert worker.cache_info()["size"] == 1
+        task2 = Task(graph_json=json_str, function_name="f", args=(2,))
+        await worker.run(task2)
         assert worker.cache_info()["size"] == 1
 
-    def test_cache_miss_different_graph(self) -> None:
+    @pytest.mark.asyncio
+    async def test_cache_miss_different_graph(self) -> None:
         _, json1 = _simple_store()
         _, json2 = _chain_store()
         worker = Worker(auto_install=False)
-        worker.execute(json1, "f", 1)
-        worker.execute(json2, "a", 1)
+        await worker.run(Task(graph_json=json1, function_name="f", args=(1,)))
+        await worker.run(Task(graph_json=json2, function_name="a", args=(1,)))
         assert worker.cache_info()["size"] == 2
 
-    def test_clear_cache(self) -> None:
+    @pytest.mark.asyncio
+    async def test_clear_cache(self) -> None:
         _, json_str = _simple_store()
         worker = Worker(auto_install=False)
-        worker.execute(json_str, "f", 1)
+        await worker.run(Task(graph_json=json_str, function_name="f", args=(1,)))
         assert worker.cache_info()["size"] == 1
         worker.clear_cache()
         assert worker.cache_info()["size"] == 0
 
 
-# -- Async execution --------------------------------------------------------
+# -- run_with_policy --------------------------------------------------------
 
-class TestAsyncExecute:
-    def test_async_function(self) -> None:
-        _, json_str = _async_store()
-        worker = Worker(auto_install=False)
-        result = asyncio.run(worker.execute_async(json_str, "af", 5))
-        assert result == 15
-
-
-# -- Convenience function ---------------------------------------------------
-
-class TestRun:
-    def test_run_simple(self) -> None:
+class TestRunWithPolicy:
+    @pytest.mark.asyncio
+    async def test_simple(self) -> None:
         _, json_str = _simple_store()
         task = Task(graph_json=json_str, function_name="f", args=(21,))
         worker = Worker(auto_install=False)
-        assert worker.run(task) == 42
+        assert await worker.run_with_policy(task) == 42
 
-    def test_run_with_kwargs(self) -> None:
+    @pytest.mark.asyncio
+    async def test_with_timeout(self) -> None:
         _, json_str = _simple_store()
-        task = Task(graph_json=json_str, function_name="f", kwargs={"x": 10})
+        task = Task(graph_json=json_str, function_name="f", args=(21,), timeout=5.0)
         worker = Worker(auto_install=False)
-        assert worker.run(task) == 20
+        assert await worker.run_with_policy(task) == 42
 
-    def test_run_with_dependencies(self) -> None:
-        _, json_str = _chain_store()
-        task = Task(graph_json=json_str, function_name="a", args=(5,))
-        worker = Worker(auto_install=False)
-        assert worker.run(task) == 16
-
-    def test_run_async(self) -> None:
+    @pytest.mark.asyncio
+    async def test_async_function(self) -> None:
         _, json_str = _async_store()
         task = Task(graph_json=json_str, function_name="af", args=(5,))
         worker = Worker(auto_install=False)
-        result = asyncio.run(worker.run_async(task))
-        assert result == 15
+        assert await worker.run_with_policy(task) == 15
 
-    def test_run_uses_cache(self) -> None:
-        _, json_str = _simple_store()
-        task = Task(graph_json=json_str, function_name="f", args=(1,))
+    @pytest.mark.asyncio
+    async def test_async_with_timeout(self) -> None:
+        _, json_str = _async_store()
+        task = Task(graph_json=json_str, function_name="af", args=(5,), timeout=5.0)
         worker = Worker(auto_install=False)
-        worker.run(task)
-        assert worker.cache_info()["size"] == 1
-        worker.run(task)
-        assert worker.cache_info()["size"] == 1
+        assert await worker.run_with_policy(task) == 15
 
 
 # -- BuildInfo tracking -------------------------------------------------------
 
 class TestBuildInfo:
-    def test_initial_none(self) -> None:
+    @pytest.mark.asyncio
+    async def test_initial_none(self) -> None:
         worker = Worker(auto_install=False)
         assert worker.last_build_info() is None
 
-    def test_cache_miss(self) -> None:
+    @pytest.mark.asyncio
+    async def test_cache_miss(self) -> None:
         _, json_str = _simple_store()
         worker = Worker(auto_install=False)
-        worker.execute(json_str, "f", 1)
+        await worker.run(Task(graph_json=json_str, function_name="f", args=(1,)))
         info = worker.last_build_info()
         assert info is not None
         assert info.cache_hit is False
         assert info.installed_packages == []
 
-    def test_cache_hit(self) -> None:
+    @pytest.mark.asyncio
+    async def test_cache_hit(self) -> None:
         _, json_str = _simple_store()
         worker = Worker(auto_install=False)
-        worker.execute(json_str, "f", 1)
-        worker.execute(json_str, "f", 2)
+        await worker.run(Task(graph_json=json_str, function_name="f", args=(1,)))
+        await worker.run(Task(graph_json=json_str, function_name="f", args=(2,)))
         info = worker.last_build_info()
         assert info is not None
         assert info.cache_hit is True
 
-    def test_run_tracks_build_info(self) -> None:
+    @pytest.mark.asyncio
+    async def test_run_tracks_build_info(self) -> None:
         _, json_str = _simple_store()
         task = Task(graph_json=json_str, function_name="f", args=(5,))
         worker = Worker(auto_install=False)
-        worker.run(task)
+        await worker.run(task)
         info = worker.last_build_info()
         assert info is not None
         assert info.cache_hit is False
@@ -253,24 +267,28 @@ class TestBuildInfo:
 # -- Convenience function ---------------------------------------------------
 
 class TestConvenienceExecute:
-    def test_execute_function(self) -> None:
+    @pytest.mark.asyncio
+    async def test_execute_function(self) -> None:
         _, json_str = _simple_store()
-        result = execute(json_str, "f", 7)
+        result = await execute(json_str, "f", 7)
         assert result == 14
 
-    def test_execute_with_task(self) -> None:
-        _, json_str = _simple_store()
-        task = Task(graph_json=json_str, function_name="f", args=(7,))
-        result = execute(task)
-        assert result == 14
-
-    def test_execute_task_ignores_extra_args(self) -> None:
+    @pytest.mark.asyncio
+    async def test_execute_with_task(self) -> None:
         _, json_str = _simple_store()
         task = Task(graph_json=json_str, function_name="f", args=(7,))
-        result = execute(task)
+        result = await execute(task)
         assert result == 14
 
-    def test_execute_str_without_function_name_raises(self) -> None:
+    @pytest.mark.asyncio
+    async def test_execute_task_ignores_extra_args(self) -> None:
+        _, json_str = _simple_store()
+        task = Task(graph_json=json_str, function_name="f", args=(7,))
+        result = await execute(task)
+        assert result == 14
+
+    @pytest.mark.asyncio
+    async def test_execute_str_without_function_name_raises(self) -> None:
         _, json_str = _simple_store()
         with pytest.raises(TypeError, match="function_name is required"):
-            execute(json_str)
+            await execute(json_str)

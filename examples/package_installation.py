@@ -14,6 +14,7 @@ Usage:
     python examples/package_installation.py
 """
 
+import asyncio
 from html.parser import HTMLParser
 
 import requests
@@ -116,25 +117,29 @@ def markdown_word_freq(md_text: str) -> str:
 
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
-    pyfuse.connect("shm://localhost:9847")
+async def main() -> None:
+    pyfuse.connect("redis://localhost:6379")
 
     # Simple package (import name == pip name)
     print("--- requests (auto-detected) ---")
-    title = fetch_title.run("http://example.com").result()
+    title = await fetch_title.run("http://example.com")
     print(f"  Page title: {title}")
 
     # Mismatched package names
     print("\n--- PyYAML (install_package_as) ---")
-    result = to_yaml.run({"framework": "pyfuse", "version": "0.3.0"}).result()
+    result = await to_yaml.run({"framework": "pyfuse", "version": "0.3.0"})
     print(f"  YAML output:\n{result}")
 
     print("--- python-dateutil (install_package_as) ---")
-    iso = parse_date.run("January 5th, 2024 at 3pm").result()
+    iso = await parse_date.run("January 5th, 2024 at 3pm")
     print(f"  Parsed date: {iso}")
 
     # Multiple packages in one function
     print("\n--- Multiple packages (markdown + PyYAML) ---")
     md = "# Hello\n\nThis is a **test** of the word frequency counter."
-    freq = markdown_word_freq.run(md).result()
+    freq = await markdown_word_freq.run(md)
     print(f"  Word frequencies:\n{freq}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

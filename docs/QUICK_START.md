@@ -44,6 +44,7 @@ The worker waits for tasks, reconstructs the function source on the fly, and exe
 ### 3. Submit work
 
 ```python
+import asyncio
 import pyfuse
 from pyfuse import trace
 
@@ -53,15 +54,17 @@ pyfuse.connect("redis://localhost:6379")
 def hypotenuse(a: float, b: float) -> float:
     return math.sqrt(add(a**2, b**2))
 
-# Call locally (unchanged behavior)
-result = hypotenuse(3.0, 4.0)     # 5.0
+async def main():
+    # Call locally (unchanged behavior)
+    result = hypotenuse(3.0, 4.0)     # 5.0
 
-# Run on a remote worker
-future = hypotenuse.run(3.0, 4.0)
-result = future.result()           # 5.0 (blocks until worker returns)
+    # Run on a remote worker
+    result = await hypotenuse.run(3.0, 4.0)  # 5.0
+
+asyncio.run(main())
 ```
 
-`.run()` serializes the function and its dependencies, sends everything to the worker, and returns a `Result` future.
+`.run()` serializes the function and its dependencies, sends everything to the worker, waits for the result, and returns it directly.
 
 ## Retry and timeout
 
@@ -70,8 +73,7 @@ result = future.result()           # 5.0 (blocks until worker returns)
 def flaky_task(url: str) -> str:
     ...
 
-future = flaky_task.run("https://example.com")
-result = future.result()
+result = await flaky_task.run("https://example.com")
 ```
 
 Each attempt is capped at 30 seconds. On failure, retries use exponential backoff (1s, 2s, 4s).
@@ -90,8 +92,8 @@ class Greeter:
         return f"*** {msg} ***"
 
 g = Greeter()
-future = g.greet.run(g, "pyfuse")
-print(future.result())  # "*** Hello, pyfuse! ***"
+result = await g.greet.run(g, "pyfuse")
+print(result)  # "*** Hello, pyfuse! ***"
 ```
 
 The worker reconstructs the entire class with all required methods.
@@ -111,57 +113,71 @@ def to_yaml(data: object) -> str:
     return yaml.dump(data, default_flow_style=False)
 
 # The worker installs PyYAML before executing this
-future = to_yaml.run({"key": "value"})
+result = await to_yaml.run({"key": "value"})
 ```
 
 Common mappings like `cv2` -> `opencv-python` and `PIL` -> `Pillow` are built in.
 
-## Async support
+## Async API
 
-pyfuse supports `async def` functions and provides async-native APIs for result handling.
+pyfuse is async-native. All remote execution methods are coroutines.
 
-### Await a result
+### .run() -- submit and await
 
-Every `Result` is awaitable. Use `await` directly or call `.aresult()`:
+`.run()` submits the task to a worker and awaits the result:
 
 ```python
-import asyncio
-
 async def main():
-    # Await a result directly
     result = await hypotenuse.run(3.0, 4.0)
     print(result)  # 5.0
-
-    # Or use .aresult() with options
-    future = hypotenuse.run(3.0, 4.0)
-    result = await future.aresult(timeout=10.0)
 ```
 
-### .arun() and .amap()
+### .start() -- submit and get a handle
 
-`.arun()` submits and awaits in one call. `.amap()` submits a batch and awaits all results concurrently:
+`.start()` submits the task and returns a `Result` handle for deferred awaiting:
 
 ```python
 async def main():
-    # Submit and await a single task
-    result = await hypotenuse.arun(3.0, 4.0)
+    # Start a task, get a Result handle
+    future = await hypotenuse.start(3.0, 4.0)
 
-    # Submit batch, await all concurrently
-    results = await hypotenuse.amap([(3.0, 4.0), (5.0, 12.0), (8.0, 15.0)])
+    # Do other work while the task runs...
+    await asyncio.sleep(1)
+
+    # Await the result when needed
+    result = await future
+    print(result)  # 5.0
+
+    # Or use .result() with options
+    result = await future.result(timeout=10.0)
+```
+
+### .map() -- batch submit and await
+
+`.map()` submits a batch of tasks and awaits all results:
+
+```python
+async def main():
+    results = await hypotenuse.map([(3.0, 4.0), (5.0, 12.0), (8.0, 15.0)])
     print(results)  # [5.0, 13.0, 17.0]
 ```
 
 ### asyncio.gather
 
-Results work with `asyncio.gather` for concurrent execution of different tasks:
+Use `.run()` or `.start()` with `asyncio.gather` for concurrent execution of different tasks:
 
 ```python
 async def main():
+    # .run() returns a coroutine, so gather works directly
     r1, r2, r3 = await asyncio.gather(
         hypotenuse.run(3.0, 4.0),
         hypotenuse.run(5.0, 12.0),
         hypotenuse.run(8.0, 15.0),
     )
+
+    # Or start tasks and gather the Result handles
+    futures = [await hypotenuse.start(a, b) for a, b in [(3, 4), (5, 12)]]
+    results = await asyncio.gather(*futures)
 ```
 
 ### Async functions
@@ -176,22 +192,13 @@ async def fetch_and_process(url: str) -> str:
         async with session.get(url) as resp:
             return await resp.text()
 
-result = await fetch_and_process.arun("https://example.com")
-```
-
-## Batch submission
-
-Submit multiple tasks at once with `.map()`:
-
-```python
-futures = hypotenuse.map([(3.0, 4.0), (5.0, 12.0), (8.0, 15.0)])
-results = [f.result() for f in futures]  # [5.0, 13.0, 17.0]
+result = await fetch_and_process.run("https://example.com")
 ```
 
 ## Worker options
 
 ```bash
-# 4 concurrent threads
+# 4 concurrent tasks
 python -m pyfuse worker --backend redis://localhost:6379 -c 4
 
 # Disable automatic pip installs
@@ -204,8 +211,10 @@ python -m pyfuse worker --backend redis://localhost:6379 --tmp
 Or start a worker programmatically:
 
 ```python
+import asyncio
 import pyfuse
-pyfuse.serve("redis://localhost:6379", concurrency=4)
+
+asyncio.run(pyfuse.serve("redis://localhost:6379", concurrency=4))
 ```
 
 ## Running scripts in a temporary venv
@@ -242,23 +251,25 @@ export PYFUSE_BACKEND=redis://localhost:6379
 ## Result handling
 
 ```python
-future = hypotenuse.run(3.0, 4.0)
+# .run() returns the result directly
+result = await hypotenuse.run(3.0, 4.0)  # 5.0
+
+# .start() returns a Result handle
+future = await hypotenuse.start(3.0, 4.0)
 
 # Check status without blocking
-future.done()    # True / False
-future.status    # "pending", "success", or "error"
+await future.done()      # True / False
+await future.status()    # "pending", "success", or "error"
 
-# Block until result
-result = future.result(timeout=10)  # raises TimeoutError if too slow
-
-# Async await
-result = await future                        # shorthand
-result = await future.aresult(timeout=10)    # with options
+# Await the result
+result = await future                          # shorthand
+result = await future.result(timeout=10)       # with timeout
+result = await future.result(stall_timeout=5)  # with stall detection
 
 # Remote errors are re-raised on the client
 from pyfuse import RemoteError
 try:
-    future.result()
+    result = await future.result()
 except RemoteError as e:
     print(e)  # includes the remote traceback
 ```
@@ -270,20 +281,14 @@ Workers send periodic heartbeats while executing tasks. Clients detect stalled t
 ```python
 from pyfuse import TaskStalled
 
-# Async -- stall detection enabled by default (10s threshold)
+# Stall detection enabled by default (10s threshold)
 try:
-    result = await future.aresult(stall_timeout=10.0)
+    result = await future.result(stall_timeout=10.0)
 except TaskStalled as e:
     print(e)  # "Task abc123 stalled: no heartbeat for 12.3s"
 
-# Sync -- opt-in via stall_timeout parameter
-try:
-    result = future.result(stall_timeout=10.0)
-except TaskStalled as e:
-    print(e)
-
 # Disable stall detection
-result = await future.aresult(stall_timeout=None)
+result = await future.result(stall_timeout=None)
 ```
 
 Stall detection only triggers after at least one heartbeat has been observed — a task that hasn't started yet won't be flagged as stalled.
@@ -358,7 +363,7 @@ task_json = task.to_json()
 
 # On the receiving side
 task = Task.from_json(task_json)
-result = execute(task)      # 5.0
+result = await execute(task)      # 5.0
 ```
 
 ### Save and load
@@ -433,7 +438,7 @@ except Error as e:
 
 # Remote execution errors
 try:
-    future.result()
+    result = await future.result()
 except RemoteError as e:
     print(e)  # includes remote traceback
 ```

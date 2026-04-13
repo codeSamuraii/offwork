@@ -4,6 +4,8 @@ Usage:
     python tests/fixtures/stress_test_module/run.py
 """
 
+import asyncio
+
 from pyfuse import pack, serialize, reconstruct, Graph
 from pyfuse.worker.worker import Worker
 
@@ -11,7 +13,7 @@ from tests.fixtures.stress_test_module import pipeline
 from tests.fixtures.stress_test_module.generators import generate_measurements
 
 
-def main() -> None:
+async def async_main() -> None:
     # ── 1. Run the full pipeline locally (normal call) ───────────────
     print("--- Local call ---")
     report = pipeline.run_full_pipeline(sensor_count=3, readings_per_sensor=20, seed=42)
@@ -41,7 +43,7 @@ def main() -> None:
     print(f"  Function: {task.function_name}")
 
     worker = Worker(auto_install=False)
-    result = worker.run(task)
+    result = await worker.run(task)
     print(f"  Output:   {len(result)} chars")
     print(f"  Cache:    {worker.cache_info()}")
     print()
@@ -50,7 +52,7 @@ def main() -> None:
     print("--- Worker: run_analysis_only ---")
     measurements = generate_measurements(2, 10, seed=7)
     task = pack(pipeline.run_analysis_only, measurements)
-    result = worker.run(task)
+    result = await worker.run(task)
     print(f"  Output:   {result[:80]}...")
     print(f"  Cache:    {worker.cache_info()}")
     print()
@@ -58,11 +60,15 @@ def main() -> None:
     # ── 6. Closure-captured pipeline ─────────────────────────────────
     print("--- Worker: high_value_analysis (closure) ---")
     task = pack(pipeline.high_value_analysis, measurements)
-    result = worker.run(task)
+    result = await worker.run(task)
     print(f"  Output:   {result}")
     print()
 
     print("Done.")
+
+
+def main() -> None:
+    asyncio.run(async_main())
 
 
 if __name__ == "__main__":

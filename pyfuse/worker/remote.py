@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import atexit
+import contextlib
 import inspect
 import logging
 import os
 import signal
 import sys
-import threading
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -64,8 +65,8 @@ def connect(url: str | None = None, **kwargs: Any) -> Backend:
     url
         Backend URL.  Supported schemes:
 
-        - ``redis://`` / ``rediss://`` — :class:`RedisBackend`
-        - ``shm://`` — :class:`SharedMemoryBackend` (same-machine IPC)
+        - ``redis://`` / ``rediss://`` -- :class:`RedisBackend`
+        - ``shm://`` -- :class:`SharedMemoryBackend` (same-machine IPC)
 
         When *None*, the ``PYFUSE_BACKEND`` environment variable is used.
 
@@ -81,22 +82,30 @@ def connect(url: str | None = None, **kwargs: Any) -> Backend:
     resolved = _resolve_url(url)
     _active_backend = _create_backend(resolved, **kwargs)
     if not _atexit_registered:
-        atexit.register(disconnect)
+        atexit.register(_sync_disconnect)
         _atexit_registered = True
     logger.debug("Connected to backend: %s", resolved)
     return _active_backend
 
 
-def disconnect() -> None:
+async def disconnect() -> None:
     """Close and clear the global backend."""
     global _active_backend
     if _active_backend is not None:
-        from pyfuse.worker.result import ResultWaiter
-
-        ResultWaiter.stop_for(_active_backend)
-        _active_backend.close()
+        await _active_backend.close()
         _active_backend = None
         logger.info("Disconnected from backend")
+
+
+def _sync_disconnect() -> None:
+    """Synchronous atexit handler for disconnect."""
+    global _active_backend
+    if _active_backend is not None:
+        try:
+            asyncio.run(_active_backend.close())
+        except RuntimeError:
+            pass  # event loop already closed
+        _active_backend = None
 
 
 def get_backend() -> Backend:
@@ -119,7 +128,7 @@ def get_backend() -> Backend:
     return _active_backend  # type: ignore[return-value]
 
 
-def submit_remote(
+async def submit_remote(
     func: Callable[..., object],
     wrapper: Callable[..., object],
     *args: Any,
@@ -154,7 +163,7 @@ def submit_remote(
         retry_delay=opts.get("retry_delay", 1.0),
     )
 
-    backend.submit(task.to_json())
+    await backend.submit(task.to_json())
     logger.info("Submitted task %s for %s", task.task_id, function_name)
     return Result(task.task_id, backend)
 
@@ -174,28 +183,21 @@ def _build_detail_tags(worker: Worker) -> str:
 _HEARTBEAT_INTERVAL = 1.0
 
 
-def _heartbeat_loop(
+async def _heartbeat_loop(
     backend: Backend,
     task_id: str,
-    stop: threading.Event,
+    cancel_event: asyncio.Event,
 ) -> None:
-    """Send periodic heartbeats until *stop* is set."""
-    while not stop.is_set():
+    """Send periodic heartbeats until *cancel_event* is set."""
+    while not cancel_event.is_set():
         try:
-            backend.send_heartbeat(task_id)
+            await backend.send_heartbeat(task_id)
         except Exception:
             pass  # best-effort
-        stop.wait(_HEARTBEAT_INTERVAL)
-
-
-def _start_heartbeat(backend: Backend, task_id: str) -> tuple[threading.Event, threading.Thread]:
-    """Start a heartbeat daemon thread. Returns (stop_event, thread)."""
-    stop = threading.Event()
-    thread = threading.Thread(
-        target=_heartbeat_loop, args=(backend, task_id, stop), daemon=True,
-    )
-    thread.start()
-    return stop, thread
+        try:
+            await asyncio.wait_for(cancel_event.wait(), timeout=_HEARTBEAT_INTERVAL)
+        except asyncio.TimeoutError:
+            pass
 
 
 def _log_task_result(
@@ -220,7 +222,7 @@ def _log_task_result(
         )
 
 
-def _handle_task(
+async def _handle_task(
     worker: Worker,
     backend: Backend,
     task_json: str,
@@ -229,43 +231,46 @@ def _handle_task(
     task = Task.from_json(task_json)
     logger.debug("Received task %s: %s", task.task_id, task.function_name)
 
-    stop_heartbeat, hb_thread = _start_heartbeat(backend, task.task_id)
+    cancel_event = asyncio.Event()
+    hb_task = asyncio.create_task(_heartbeat_loop(backend, task.task_id, cancel_event))
 
     t0 = time.monotonic()
     try:
-        result = worker.run_with_policy(task)
+        result = await worker.run_with_policy(task)
         envelope = ResultEnvelope.success(task.task_id, result)
     except Exception as exc:
         logger.debug("Task %s failed", task.task_id, exc_info=True)
         envelope = ResultEnvelope.failure(task.task_id, exc)
     finally:
-        stop_heartbeat.set()
-        hb_thread.join(timeout=2.0)
+        cancel_event.set()
+        hb_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await hb_task
 
     elapsed_ms = (time.monotonic() - t0) * 1000
-    backend.send_result(task.task_id, envelope.to_json())
-    backend.notify_result(task.task_id)
+    await backend.send_result(task.task_id, envelope.to_json())
+    await backend.notify_result(task.task_id)
     _log_task_result(task, envelope, elapsed_ms, worker)
 
 
-def _worker_loop(
+async def _worker_loop(
     worker: Worker,
     backend: Backend,
     concurrency: int,
 ) -> None:
     """Consume tasks from *backend* and dispatch to *worker*."""
-    if concurrency > 1:
-        from concurrent.futures import ThreadPoolExecutor
+    sem = asyncio.Semaphore(concurrency)
 
-        with ThreadPoolExecutor(max_workers=concurrency) as pool:
-            for task_json in backend.listen():
-                pool.submit(_handle_task, worker, backend, task_json)
-    else:
-        for task_json in backend.listen():
-            _handle_task(worker, backend, task_json)
+    async def bounded_handle(task_json: str) -> None:
+        async with sem:
+            await _handle_task(worker, backend, task_json)
+
+    async with asyncio.TaskGroup() as tg:
+        async for task_json in backend.listen():
+            tg.create_task(bounded_handle(task_json))
 
 
-def serve(
+async def serve(
     url: str | None = None,
     *,
     concurrency: int = 1,
@@ -280,7 +285,7 @@ def serve(
         Backend URL (e.g. ``redis://localhost:6379``).
         When *None*, the ``PYFUSE_BACKEND`` environment variable is used.
     concurrency
-        Number of concurrent worker threads (default: 1).
+        Number of concurrent tasks (default: 1).
     auto_install
         Automatically install missing third-party dependencies via pip.
     import_to_package
@@ -305,9 +310,9 @@ def serve(
     logger.info("Listening for tasks \u2014 Ctrl+C to stop.")
 
     try:
-        _worker_loop(worker, backend, concurrency)
+        await _worker_loop(worker, backend, concurrency)
     except KeyboardInterrupt:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         logger.info("Worker stopped.")
     finally:
-        disconnect()
+        await disconnect()

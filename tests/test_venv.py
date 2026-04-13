@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
@@ -35,8 +36,9 @@ class TestFindProjectRoot:
 
 
 class TestTempVenv:
-    def test_creates_and_cleans_up(self) -> None:
-        with temp_venv(install_pyfuse=False) as venv:
+    @pytest.mark.asyncio
+    async def test_creates_and_cleans_up(self) -> None:
+        async with temp_venv(install_pyfuse=False) as venv:
             assert venv.venv_dir.exists()
             assert venv.python.exists()
             venv_dir = venv.venv_dir
@@ -44,8 +46,9 @@ class TestTempVenv:
         assert not venv_dir.exists()
         assert not venv_dir.parent.exists()
 
-    def test_python_is_functional(self) -> None:
-        with temp_venv(install_pyfuse=False) as venv:
+    @pytest.mark.asyncio
+    async def test_python_is_functional(self) -> None:
+        async with temp_venv(install_pyfuse=False) as venv:
             result = subprocess.run(
                 [str(venv.python), "-c", "import sys; print(sys.prefix)"],
                 capture_output=True,
@@ -54,28 +57,31 @@ class TestTempVenv:
             assert result.returncode == 0
             assert str(venv.venv_dir) in result.stdout.strip()
 
-    def test_cleanup_on_error(self) -> None:
+    @pytest.mark.asyncio
+    async def test_cleanup_on_error(self) -> None:
         tmpdir_path: str | None = None
         with pytest.raises(RuntimeError, match="deliberate"):
-            with temp_venv(install_pyfuse=False) as venv:
+            async with temp_venv(install_pyfuse=False) as venv:
                 tmpdir_path = str(venv.venv_dir.parent)
                 assert venv.venv_dir.exists()
                 raise RuntimeError("deliberate")
         assert tmpdir_path is not None
         assert not os.path.exists(tmpdir_path)
 
-    def test_cleanup_on_systemexit(self) -> None:
+    @pytest.mark.asyncio
+    async def test_cleanup_on_systemexit(self) -> None:
         tmpdir_path: str | None = None
         with pytest.raises(SystemExit):
-            with temp_venv(install_pyfuse=False) as venv:
+            async with temp_venv(install_pyfuse=False) as venv:
                 tmpdir_path = str(venv.venv_dir.parent)
                 raise SystemExit(1)
         assert tmpdir_path is not None
         assert not os.path.exists(tmpdir_path)
 
-    def test_pip_install(self) -> None:
-        with temp_venv(install_pyfuse=False) as venv:
-            venv.pip_install("six")
+    @pytest.mark.asyncio
+    async def test_pip_install(self) -> None:
+        async with temp_venv(install_pyfuse=False) as venv:
+            await venv.pip_install("six")
             result = subprocess.run(
                 [str(venv.python), "-c", "import six; print(six.__version__)"],
                 capture_output=True,
@@ -83,8 +89,9 @@ class TestTempVenv:
             )
             assert result.returncode == 0
 
-    def test_installs_pyfuse(self) -> None:
-        with temp_venv(install_pyfuse=True) as venv:
+    @pytest.mark.asyncio
+    async def test_installs_pyfuse(self) -> None:
+        async with temp_venv(install_pyfuse=True) as venv:
             result = subprocess.run(
                 [str(venv.python), "-c", "import pyfuse; print(pyfuse.serialize)"],
                 capture_output=True,

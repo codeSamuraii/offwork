@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import warnings
 
+import pytest
+
 import pyfuse
 from pyfuse import Graph, Task, get_graph, pack, trace
 
@@ -61,10 +63,11 @@ class TestPack:
         assert "double" in task.graph_json
         assert "add_then_double" not in task.graph_json
 
-    def test_task_is_executable(self) -> None:
+    @pytest.mark.asyncio
+    async def test_task_is_executable(self) -> None:
         double, _ = self._make_traced()
         task = pack(double, 21)
-        result = pyfuse.execute(task)
+        result = await pyfuse.execute(task)
         assert result == 42
 
     def test_auto_generated_task_id(self) -> None:
@@ -73,9 +76,10 @@ class TestPack:
         t2 = pack(double, 1)
         assert t1.task_id != t2.task_id
 
-    def test_roundtrip_through_json(self) -> None:
+    @pytest.mark.asyncio
+    async def test_roundtrip_through_json(self) -> None:
         _, add_then_double = self._make_traced()
         task = pack(add_then_double, 3, 4)
         restored = Task.from_json(task.to_json())
-        result = pyfuse.execute(restored)
+        result = await pyfuse.execute(restored)
         assert result == 14  # (3 + 4) * 2

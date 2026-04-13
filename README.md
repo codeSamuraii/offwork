@@ -9,6 +9,7 @@
 `pyfuse` captures a function's source code, dependencies, and imports via a single `@trace` decorator.<br/>Workers reconstruct and execute the function from scratch – no deployment, no shared filesystem. Packages are installed automatically.
 
 ```python
+import asyncio
 import math
 
 import pyfuse
@@ -23,8 +24,11 @@ def add(a: int, b: int) -> int:
 def hypotenuse(a: float, b: float) -> float:
     return math.sqrt(add(a**2, b**2))
 
-future = hypotenuse.run(3.0, 4.0)
-print(future.result())  # 5.0
+async def main():
+    result = await hypotenuse.run(3.0, 4.0)
+    print(result)  # 5.0
+
+asyncio.run(main())
 ```
 
 Only the entry point needs `@trace`. Everything it calls -- `add()`, imports, class methods -- is captured automatically.
@@ -75,12 +79,11 @@ Common mappings (`cv2` -> `opencv-python`, `PIL` -> `Pillow`, etc.) are built in
 
 - **Automatic dependency detection** -- AST-based, recursive. Untraced helpers, class methods, module-level constants, class-level attributes, and class decorators are all captured.
 - **Third-party package auto-install** -- Workers install missing packages via pip before execution.
-- **Async support** -- `async def` functions execute transparently. `await result`, `.arun()`, `.amap()`, and `asyncio.gather` all work out of the box.
-- **Notification-based result delivery** -- Push notifications fan out to many waiters via a single backend listener. No polling.
+- **Async-native** -- The entire I/O layer is built on `asyncio`. `.run()`, `.start()`, `.map()`, `await result`, and `asyncio.gather` all work out of the box.
 - **Heartbeat & stall detection** -- Workers send periodic heartbeats. Clients raise `TaskStalled` when a worker stops responding.
 - **Class methods** -- `self.method()` and `cls.method()` dependencies are detected. Entire class hierarchies (including `super()`), class-level attributes, decorators (`@dataclass`, etc.), and metaclass keywords are reconstructed.
 - **Retry and timeout** -- `@trace(timeout=30, retries=3)` with exponential backoff.
-- **Batch submission** -- `func.map([(a1, b1), (a2, b2)])` submits multiple tasks at once.
+- **Batch submission** -- `await func.map([(a1, b1), (a2, b2)])` submits and awaits multiple tasks.
 - **Pluggable backends** -- Redis (`redis://`) for multi-machine, shared memory (`shm://`) for same-machine IPC.
 - **Content-hash caching** -- Workers cache compiled functions by content hash. Same code from different clients = cache hit.
 
@@ -93,7 +96,7 @@ pyfuse run examples/remote_execution.py
 ```
 
 - **[`examples/remote_execution.py`](examples/remote_execution.py)** -- Remote execution with auto-discovered dependencies
-- **[`examples/async_execution.py`](examples/async_execution.py)** -- Async: `await`, `.arun()`, `.amap()`, `asyncio.gather`
+- **[`examples/async_execution.py`](examples/async_execution.py)** -- Async: `.run()`, `.start()`, `.map()`, `asyncio.gather`
 - **[`examples/package_installation.py`](examples/package_installation.py)** -- Auto-installing third-party packages on workers
 - **[`examples/large_module.py`](examples/large_module.py)** -- Stress test: 47 functions across 7 files, one `@trace`
 

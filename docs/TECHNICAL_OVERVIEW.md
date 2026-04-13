@@ -8,13 +8,13 @@ pyfuse enables remote execution of Python functions without deploying code to wo
   Client                              Worker
   ──────                              ──────
   @trace                              python -m pyfuse worker
-  func.run(args)                      ← listen for tasks
+  await func.run(args)                ← listen for tasks
     │                                   │
     ├─ capture source + deps            ├─ deserialize graph
     ├─ serialize to JSON                ├─ install missing packages
     ├─ submit via backend ──────────→   ├─ reconstruct source
     │                                   ├─ compile + exec
-    ← wait for result ◄────────────── ├─ send result
+    ← await result    ◄────────────── ├─ send result
 ```
 
 ## Architecture
@@ -23,7 +23,7 @@ pyfuse enables remote execution of Python functions without deploying code to wo
 pyfuse/
     __init__.py              Public API: trace, connect, serve, serialize, reconstruct, ...
     __main__.py              CLI: python -m pyfuse worker/run/info/serialize/reconstruct
-    _venv.py                 Temporary virtual environment management
+    _venv.py                 Temporary virtual environment management (async)
     core/
         models.py            FunctionNode, ImportInfo dataclasses (incl. content hashing, class metadata)
         task.py              Task: serializable envelope bundling graph + arguments
@@ -36,66 +36,68 @@ pyfuse/
         store.py             Content-addressable store: serialization, reconstruction
         tracing.py           Runtime call-stack tracing via contextvars
     worker/
-        worker.py            Worker: reconstruct, install deps, execute with caching
-        remote.py            connect/disconnect/serve/submit_remote: orchestration
-        result.py            Result (future), ResultEnvelope, ResultWaiter: result handling
-        deps.py              Third-party dependency extraction and pip installation
+        worker.py            Worker: reconstruct, install deps, execute with caching (async)
+        remote.py            connect/disconnect/serve/submit_remote: orchestration (async)
+        result.py            Result (awaitable future), ResultEnvelope
+        deps.py              Third-party dependency extraction and pip installation (async)
         backends/
-            base.py          Backend ABC: pluggable transport interface
-            redis.py         RedisBackend: RPUSH/BLPOP pattern
+            base.py          Backend ABC: async pluggable transport interface
+            redis.py         RedisBackend: redis.asyncio with RPUSH/BLPOP pattern
             shm.py           SharedMemoryBackend: same-machine IPC via shared memory
 ```
 
 ## Remote execution flow
 
-### Client side: `func.run(*args)`
+### Client side: `await func.run(*args)` / `await func.start(*args)`
 
 1. **Serialize** -- `Graph.serialize(func)` captures the function's subgraph (source, imports, dependencies) as JSON.
 2. **Pack** -- A `Task` envelope bundles the serialized graph, function name, arguments, and execution options (timeout, retries).
-3. **Submit** -- `backend.submit(task_json)` sends the task to the transport layer.
-4. **Return future** -- A `Result` handle is returned immediately to the caller.
+3. **Submit** -- `await backend.submit(task_json)` sends the task to the transport layer.
+4. **Return** -- `.run()` awaits the result and returns the value directly. `.start()` returns a `Result` handle immediately.
 
-### Worker side: `serve()` / `python -m pyfuse worker`
+### Worker side: `await serve()` / `python -m pyfuse worker`
 
-1. **Listen** -- `backend.listen()` blocks until a task arrives.
+1. **Listen** -- `async for task_json in backend.listen()` yields tasks as they arrive.
 2. **Deserialize** -- Parse the JSON graph into a `Store`.
 3. **Cache check** -- Compute a subgraph key (SHA-256 of all reachable content hashes). If cached, skip to step 6.
-4. **Install dependencies** -- Extract third-party imports, install missing packages via pip.
+4. **Install dependencies** -- Extract third-party imports, install missing packages via `asyncio.create_subprocess_exec`.
 5. **Reconstruct** -- Produce a self-contained Python script from the store. `compile()` and `exec()` it into a fresh namespace.
-6. **Execute** -- Call the function with the provided arguments. Apply retry/timeout policies.
+6. **Execute** -- Call the function with the provided arguments. Async functions are awaited directly; sync functions run in an executor. Apply retry/timeout policies via `asyncio.wait_for`.
 7. **Send result** -- Wrap the return value (or exception traceback) in a `ResultEnvelope` and send it back.
 
-### Client side: `future.result()` / `await future`
+### Client side: `await future` / `await future.result()`
 
-**Sync without stall detection** -- `backend.get_result(task_id)` blocks until the worker's response (e.g. Redis `BLPOP`).
+The `Result` object supports two waiting strategies:
 
-**Sync with stall detection or async** -- The `ResultWaiter` singleton registers interest, then waits via `threading.Event` (sync) or `asyncio.Future` (async). A background listener thread receives push notifications and fans them out. A second thread batch-fetches heartbeats once per second for stall detection.
+**Without stall detection** (`stall_timeout=None`) -- `await backend.get_result(task_id, timeout)` blocks until the worker's response arrives (e.g. Redis `BLPOP`).
+
+**With stall detection** (default, `stall_timeout=10.0`) -- An async polling loop calls `try_get_result()` and checks heartbeats every second. If the heartbeat hasn't changed for longer than `stall_timeout`, `TaskStalled` is raised.
 
 **Unwrap** -- If status is `"ok"`, return the value. If `"error"`, raise `RemoteError` with the remote traceback.
 
 ## Transport backends
 
-The `Backend` ABC defines the transport interface:
+The `Backend` ABC defines an async transport interface:
 
 | Method | Description |
 |--------|-------------|
-| `submit(task_json)` | Enqueue a serialized task |
-| `listen()` | Blocking iterator yielding task JSON strings |
-| `send_result(task_id, result_json)` | Store a result envelope |
-| `get_result(task_id, timeout)` | Block until result is available |
-| `try_get_result(task_id)` | Non-blocking result fetch |
-| `send_heartbeat(task_id)` | Signal active processing (no-op default) |
-| `get_heartbeat(task_id)` | Get last heartbeat timestamp |
-| `get_heartbeats(task_ids)` | Batch heartbeat fetch (default loops over `get_heartbeat`) |
-| `notify_result(task_id)` | Push notification that result is ready (no-op default) |
-| `subscribe_results()` | Blocking iterator yielding task_ids on result arrival |
-| `close()` | Release resources |
+| `async submit(task_json)` | Enqueue a serialized task |
+| `async listen()` | Async iterator yielding task JSON strings |
+| `async send_result(task_id, result_json)` | Store a result envelope |
+| `async get_result(task_id, timeout)` | Block until result is available |
+| `async try_get_result(task_id)` | Non-blocking result fetch |
+| `async send_heartbeat(task_id)` | Signal active processing (no-op default) |
+| `async get_heartbeat(task_id)` | Get last heartbeat timestamp |
+| `async get_heartbeats(task_ids)` | Batch heartbeat fetch (default loops over `get_heartbeat`) |
+| `async notify_result(task_id)` | Push notification that result is ready (no-op default) |
+| `async subscribe_results()` | Async iterator yielding task_ids on result arrival |
+| `async close()` | Release resources |
 
-Methods below the line are non-abstract with safe defaults. Custom backends don't need to implement them -- the `ResultWaiter` falls back to consolidated polling when `subscribe_results` is not supported.
+All methods are `async def`. Methods below the line are non-abstract with safe defaults.
 
 ### RedisBackend
 
-Uses `RPUSH`/`BLPOP` patterns. Keys:
+Uses `redis.asyncio.Redis` with `RPUSH`/`BLPOP` patterns. Keys:
 - `pyfuse:tasks` -- task queue
 - `pyfuse:result:{task_id}` -- per-task result (TTL: 300s)
 - `pyfuse:heartbeat:{task_id}` -- worker heartbeat timestamp (TTL: 30s)
@@ -113,13 +115,15 @@ URL format: `shm://host:port?authkey=secret` (defaults: `127.0.0.1:9847`, authke
 
 The backend auto-detects its role: it tries to connect as a client first; if no server is running, it starts one. Shared memory blocks are tracked and cleaned up on exit via `atexit`.
 
+Since `BaseManager` is inherently synchronous, proxy RPC calls are wrapped in `asyncio.to_thread()`. The overhead is negligible for sub-millisecond IPC calls.
+
 ### Custom backends
 
 Subclass `Backend` to implement any transport (RabbitMQ, HTTP, message queues, etc.):
 
 ```python
 pyfuse.connect("redis://...")  # built-in
-func.run(*args, backend=my_custom_backend)  # per-call override
+await func.start(*args, backend=my_custom_backend)  # per-call override
 ```
 
 ## How `@trace` works
@@ -180,10 +184,9 @@ For generators and async generators, a proxy pattern intercepts each iteration s
 ### 7. Wrapper setup
 
 The returned wrapper gains:
-- `.run(*args)` -- submit to remote worker, returns `Result` future
-- `.map(args_list)` -- batch submission, returns `list[Result]`
-- `.arun(*args)` -- async submit and await (coroutine)
-- `.amap(args_list)` -- async batch submit and await all (coroutine)
+- `.run(*args)` -- submit to remote worker and await result (coroutine)
+- `.start(*args)` -- submit to remote worker, returns `Result` handle (coroutine)
+- `.map(args_list)` -- batch submit and await all results (coroutine)
 - `__pyfuse_traced__ = True` -- marker attribute
 
 ## Task envelope
@@ -239,9 +242,23 @@ worker.clear_cache()
 
 `Worker.run_with_policy(task)` enforces retry and timeout options:
 
-- **Timeout**: Each attempt runs in a `ThreadPoolExecutor` with `future.result(timeout=...)`. Raises `TimeoutError` on expiry.
-- **Retries**: On failure, waits `retry_delay * 2^attempt` seconds before retrying. After all attempts exhausted, the last exception is raised.
-- **Concurrency**: `serve(concurrency=N)` dispatches tasks to a thread pool. The CLI equivalent is `-c N`.
+- **Timeout**: Each attempt is wrapped in `asyncio.wait_for(self.run(task), timeout=...)`. Raises `TimeoutError` on expiry.
+- **Retries**: On failure, waits `retry_delay * 2^attempt` seconds (via `asyncio.sleep`) before retrying. After all attempts exhausted, the last exception is raised.
+- **Concurrency**: `serve(concurrency=N)` uses `asyncio.Semaphore(N)` with `asyncio.TaskGroup` to limit concurrent task execution. The CLI equivalent is `-c N`.
+
+## Async architecture
+
+The entire I/O layer is built on `asyncio`:
+
+- **Backend methods** are all `async def`. `listen()` and `subscribe_results()` are async generators.
+- **Worker execution**: Async user functions are `await`ed directly. Sync user functions run in `loop.run_in_executor(None, ...)` to avoid blocking the event loop.
+- **Heartbeats** use `asyncio.create_task()` with `asyncio.Event` for cancellation -- no daemon threads.
+- **Worker loop**: `asyncio.TaskGroup` + `asyncio.Semaphore` for bounded concurrency.
+- **Subprocess management**: `asyncio.create_subprocess_exec()` for pip installs and venv creation.
+- **Timeouts**: `asyncio.wait_for()` instead of thread-based timeout hacks.
+- **Result waiting**: Simple async polling loop for stall detection, or direct `await backend.get_result()`.
+
+The graph/serialization layer (AST analysis, content hashing, source reconstruction) remains synchronous -- it's pure CPU work that doesn't benefit from async.
 
 ## Result handling
 
@@ -267,11 +284,10 @@ Error (includes remote traceback):
 
 | Method / Property | Description |
 |------------------|-------------|
-| `.result(timeout, stall_timeout)` | Block until result; raises `RemoteError` on failure, `TaskStalled` on stall |
-| `await result` | Async shorthand for `.aresult()` |
-| `.aresult(timeout, stall_timeout=10.0)` | Async wait; uses push notifications via `ResultWaiter` |
-| `.done()` | Non-blocking check |
-| `.status` | `"pending"`, `"success"`, or `"error"` |
+| `await result` | Shorthand for `await result.result()` |
+| `await result.result(timeout, stall_timeout=10.0)` | Await with options; raises `RemoteError` on failure, `TaskStalled` on stall |
+| `await result.done()` | Non-blocking check |
+| `await result.status()` | `"pending"`, `"success"`, or `"error"` |
 | `.task_id` | The task identifier |
 
 ## Serialization format
@@ -369,7 +385,7 @@ One function in the dependency graph:
 
 ## Dependency auto-installation
 
-When `auto_install=True` (default), the worker extracts third-party module names from the function's imports and installs missing packages via pip.
+When `auto_install=True` (default), the worker extracts third-party module names from the function's imports and installs missing packages via pip using `asyncio.create_subprocess_exec`.
 
 ### Package name resolution
 
@@ -389,50 +405,19 @@ with install_package_as("opencv-python"):
 
 The worker sees the `package` field on the import and knows to `pip install opencv-python` instead of `pip install cv2`.
 
-## Notification-based result delivery
-
-The `ResultWaiter` is a per-backend singleton that eliminates per-task polling. One listener thread per backend fans out push notifications to many waiting `Result` objects.
-
-```
-Result_1.aresult()  ─── register ──┐
-Result_2.aresult()  ─── register ──┤
-Result_N.aresult()  ─── register ──┤
-                                   ▼
-                            ResultWaiter  (1 per backend)
-                           ┌───────┴────────┐
-                    listener thread    heartbeat thread
-                           │                │
-              subscribe_results()    get_heartbeats([...])
-              (blocking iterator)    (1 batch call / second)
-                           │
-                    yields task_id
-                           │
-              try_get_result(task_id)
-                           │
-              slot.future.set_result(raw)  ←  fan-out
-```
-
-**Key properties:**
-- **1 subscription** per backend, not N polls. 50 concurrent tasks = 1 listener thread, not 500 calls/second.
-- **1 batch heartbeat call** per second via `get_heartbeats()` (e.g. Redis `MGET`), not N individual calls.
-- Backends without push support automatically fall back to consolidated polling.
-- Race conditions are closed via a double-check pattern: `try_get_result()` before and after registration.
-- Async waiters use `asyncio.Future` resolved via `loop.call_soon_threadsafe()`. Sync waiters use `threading.Event`.
-
 ## Heartbeat and stall detection
 
-Workers send periodic heartbeats (every 1 second) while executing a task. Clients use heartbeat data for stall detection.
+Workers send periodic heartbeats (every 1 second) while executing a task via an `asyncio.Task`. Clients use heartbeat data for stall detection.
 
-**Worker side:** A daemon thread calls `backend.send_heartbeat(task_id)` every second. The thread is stopped when the task completes (success or failure).
+**Worker side:** An `asyncio.Task` calls `await backend.send_heartbeat(task_id)` every second. The task is cancelled when execution completes (success or failure).
 
-**Client side:** The `ResultWaiter`'s heartbeat monitor thread batch-fetches heartbeats for all pending tasks once per second. It tracks when each task's heartbeat value last *changed* using the client's monotonic clock -- no cross-machine timestamp comparison. If the heartbeat hasn't changed for longer than `stall_timeout`, `TaskStalled` is raised.
+**Client side:** The `Result.result()` method's async polling loop calls `await backend.get_heartbeat(task_id)` once per second. It tracks when each task's heartbeat value last *changed* using the client's monotonic clock -- no cross-machine timestamp comparison. If the heartbeat hasn't changed for longer than `stall_timeout`, `TaskStalled` is raised.
 
 Stall detection only triggers after at least one heartbeat has been observed, avoiding false positives for tasks that haven't started yet.
 
-| Path | Stall detection |
-|------|----------------|
-| `result()` | Off by default. Opt-in via `stall_timeout=N` |
-| `aresult()` | On by default (`stall_timeout=10.0`). Disable with `stall_timeout=None` |
+| Method | Stall detection |
+|--------|----------------|
+| `await result.result()` | On by default (`stall_timeout=10.0`). Disable with `stall_timeout=None` |
 
 ## Thread and task safety
 
@@ -490,4 +475,3 @@ python -m pyfuse serialize mymodule:csv_to_json
 # Reconstruct source from a graph file
 python -m pyfuse reconstruct graph.json csv_to_json
 ```
-
