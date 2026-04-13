@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import ast
 import base64
 import collections
@@ -253,7 +251,7 @@ def _render_mermaid(subgraph: dict[str, FunctionNode], direction: str) -> str:
 class Graph(TracingMixin):
     """Dependency graph of traced functions."""
 
-    _default: Graph | None = None
+    _default: "Graph | None" = None
 
     def __init__(self) -> None:
         self._nodes: dict[str, FunctionNode] = {}
@@ -265,7 +263,7 @@ class Graph(TracingMixin):
         self._lock: threading.Lock = threading.Lock()
 
     @classmethod
-    def default(cls) -> Graph:
+    def default(cls) -> "Graph":
         if cls._default is None:
             cls._default = Graph()
         return cls._default
@@ -719,7 +717,7 @@ class Graph(TracingMixin):
         return self.to_store(*funcs).to_json()
 
     @classmethod
-    def deserialize_graph(cls, json_str: str) -> Graph:
+    def deserialize_graph(cls, json_str: str) -> Self:
         store = Store.from_json(json_str)
         graph = cls()
         hash_to_qname = {h: qn for qn, h in store.refs.items()}

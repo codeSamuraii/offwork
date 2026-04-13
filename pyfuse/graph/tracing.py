@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import builtins
 import contextvars
 import functools
@@ -11,10 +9,9 @@ import sysconfig
 import threading
 from collections.abc import AsyncGenerator, Callable, Generator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import Any, TypeVar
 
-if TYPE_CHECKING:
-    from pyfuse.worker.backends.base import Backend
+from pyfuse.worker.backends.base import Backend
 
 logger = logging.getLogger(__name__)
 

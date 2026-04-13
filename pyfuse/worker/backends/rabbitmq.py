@@ -10,13 +10,19 @@ behave like key-value slots.  Result notifications use a fanout exchange.
 
 URL scheme: ``amqp://`` or ``amqps://``  (e.g. ``amqp://guest:guest@localhost/``)
 """
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import time
 from collections.abc import AsyncIterator
 from typing import Any
+
+try:
+    import aio_pika
+except ImportError:
+    raise ImportError(
+        "aio-pika package is required for RabbitMQBackend. "
+        "Install it with: pip install aio-pika"
+    ) from None
 
 from pyfuse.worker.backends.base import Backend
 
@@ -53,13 +59,6 @@ class RabbitMQBackend(Backend):
         task_queue: str | None = None,
         result_ttl: int | None = None,
     ) -> None:
-        try:
-            import aio_pika as _  # type: ignore[import-not-found]  # noqa: F401
-        except ImportError:
-            raise ImportError(
-                "aio-pika package is required for RabbitMQBackend. "
-                "Install it with: pip install aio-pika"
-            ) from None
         self._url = url
         self._task_queue_name = task_queue or self.TASK_QUEUE
         self._result_ttl = result_ttl or self.DEFAULT_RESULT_TTL
@@ -73,8 +72,6 @@ class RabbitMQBackend(Backend):
         """Return the shared channel, creating connection if needed."""
         async with self._lock:
             if self._connection is None or self._connection.is_closed:
-                import aio_pika
-
                 self._connection = await aio_pika.connect_robust(self._url)
                 self._channel = None
             if self._channel is None or self._channel.is_closed:
@@ -85,8 +82,6 @@ class RabbitMQBackend(Backend):
         """Create a dedicated channel for long-running operations."""
         async with self._lock:
             if self._connection is None or self._connection.is_closed:
-                import aio_pika
-
                 self._connection = await aio_pika.connect_robust(self._url)
                 self._channel = None
         return await self._connection.channel()
@@ -113,8 +108,6 @@ class RabbitMQBackend(Backend):
         self, prefix: str, task_id: str, value: str, ttl_s: int,
     ) -> None:
         """Write to a per-task KV queue (``x-max-length: 1`` overwrites)."""
-        import aio_pika
-
         channel = await self._get_channel()
         name = f"{prefix}{task_id}"
         await channel.declare_queue(name, arguments=self._kv_args(ttl_s))
@@ -148,8 +141,6 @@ class RabbitMQBackend(Backend):
     # -- Backend interface: tasks -----------------------------------------------
 
     async def submit(self, task_json: str) -> None:
-        import aio_pika
-
         channel = await self._get_channel()
         await channel.declare_queue(self._task_queue_name, durable=True)
         await channel.default_exchange.publish(
@@ -178,8 +169,6 @@ class RabbitMQBackend(Backend):
     # -- Backend interface: results ---------------------------------------------
 
     async def send_result(self, task_id: str, result_json: str) -> None:
-        import aio_pika
-
         channel = await self._get_channel()
         name = f"{self.RESULT_PREFIX}{task_id}"
         await channel.declare_queue(name, arguments=self._result_args())
@@ -274,8 +263,6 @@ class RabbitMQBackend(Backend):
     # -- Result notifications --------------------------------------------------
 
     async def notify_result(self, task_id: str) -> None:
-        import aio_pika
-
         channel = await self._get_channel()
         exchange = await channel.declare_exchange(
             self.NOTIFY_EXCHANGE, aio_pika.ExchangeType.FANOUT,
@@ -286,8 +273,6 @@ class RabbitMQBackend(Backend):
         )
 
     async def subscribe_results(self) -> AsyncIterator[str]:
-        import aio_pika
-
         channel = await self._new_channel()
         try:
             exchange = await channel.declare_exchange(

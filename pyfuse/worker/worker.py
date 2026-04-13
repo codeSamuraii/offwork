@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import contextvars
 import functools
@@ -11,7 +9,7 @@ from typing import Any
 
 from pyfuse.core.errors import WorkerError
 from pyfuse.core.models import FunctionNode
-from pyfuse.core.task import Task
+from pyfuse.core.task import Task, resolve_args
 from pyfuse.graph.store import Store
 from pyfuse.worker.deps import ensure_dependencies
 
@@ -81,16 +79,16 @@ class Worker:
 
     Parameters
     ----------
-    import_to_package
-        Extra import-name -> pip-package-name mappings (merged with defaults).
     auto_install
         Automatically install missing third-party dependencies via pip.
+    import_to_package
+        Extra import-name -> pip-package-name mappings (merged with defaults).
     """
 
     def __init__(
         self,
-        import_to_package: dict[str, str] | None = None,
         auto_install: bool = True,
+        import_to_package: dict[str, str] | None = None,
     ) -> None:
         self._import_to_package = import_to_package
         self._auto_install = auto_install
@@ -113,8 +111,6 @@ class Worker:
         Async functions are awaited directly. Sync functions run in an
         executor to avoid blocking the event loop.
         """
-        from pyfuse.core.task import resolve_args
-
         cached = await self._get_cached(task.graph_json, task.function_name)
         args, kwargs = resolve_args(task.args, task.kwargs, cached.namespace)
         logger.debug("Executing %s (cache key: %s)", task.function_name, cached.subgraph_key)
@@ -213,8 +209,6 @@ async def execute(
         return await worker.run(json_str_or_task)
     if function_name is None:
         raise TypeError("function_name is required when passing a JSON string")
-
-    from pyfuse.core.task import resolve_args
 
     cached = await worker._get_cached(json_str_or_task, function_name)
     resolved_args, resolved_kwargs = resolve_args(args, {}, cached.namespace)

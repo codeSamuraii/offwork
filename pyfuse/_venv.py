@@ -1,5 +1,4 @@
 """Temporary virtual environment management for pyfuse."""
-from __future__ import annotations
 
 import asyncio
 import atexit

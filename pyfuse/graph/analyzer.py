@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import ast
 import importlib
 import inspect
@@ -8,12 +6,8 @@ import textwrap
 import warnings
 from pathlib import Path
 from collections.abc import Callable
-from typing import TYPE_CHECKING
 
-from pyfuse.core.models import ImportInfo
-
-if TYPE_CHECKING:
-    from pyfuse.core.models import FunctionNode
+from pyfuse.core.models import FunctionNode, ImportInfo
 
 logger = logging.getLogger(__name__)
 
