@@ -18,6 +18,29 @@ def _project_root() -> Path:
     return root
 
 
+def _venv_python(venv_dir: Path) -> str:
+    """Return the path to the Python executable inside a venv."""
+    if sys.platform == "win32":
+        return str(venv_dir / "Scripts" / "python.exe")
+    return str(venv_dir / "bin" / "python")
+
+
+def _create_venv_and_install(tmp_path: Path) -> str:
+    """Create a venv at *tmp_path*/venv, install pyfuse, return python path."""
+    venv_dir = tmp_path / "venv"
+    venv.create(str(venv_dir), with_pip=True)
+    python = _venv_python(venv_dir)
+
+    result = subprocess.run(
+        [python, "-m", "pip", "install", str(_project_root()), "--quiet"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, f"pip install failed:\n{result.stderr}"
+    return python
+
+
 class TestVersionConsistency:
     """Ensure the package exposes a consistent version."""
 
@@ -54,35 +77,17 @@ class TestIsolatedInstallation:
 
     def test_install_and_import_no_extras(self, tmp_path: Path) -> None:
         """Package installs and imports without optional dependencies."""
-        venv_dir = tmp_path / "venv"
-        venv.create(str(venv_dir), with_pip=True)
+        python = _create_venv_and_install(tmp_path)
 
-        if sys.platform == "win32":
-            python = str(venv_dir / "Scripts" / "python.exe")
-        else:
-            python = str(venv_dir / "bin" / "python")
-
-        root = _project_root()
-
-        # Install the package (no extras)
-        result = subprocess.run(
-            [python, "-m", "pip", "install", str(root), "--quiet"],
-            capture_output=True,
-            text=True,
-            timeout=120,
+        script = (
+            "import pyfuse\n"
+            "print(pyfuse.__version__)\n"
+            "print(pyfuse.serialize)\n"
+            "print(pyfuse.trace)\n"
+            "print(pyfuse.get_graph())\n"
         )
-        assert result.returncode == 0, f"pip install failed:\n{result.stderr}"
-
-        # Verify import works
         result = subprocess.run(
-            [
-                python, "-c",
-                "import pyfuse; "
-                "print(pyfuse.__version__); "
-                "print(pyfuse.serialize); "
-                "print(pyfuse.trace); "
-                "print(pyfuse.get_graph()); "
-            ],
+            [python, "-c", script],
             capture_output=True,
             text=True,
             timeout=30,
@@ -102,30 +107,12 @@ class TestIsolatedInstallation:
         except ModuleNotFoundError:
             import tomli as tomllib  # type: ignore[no-redef]
 
-        venv_dir = tmp_path / "venv"
-        venv.create(str(venv_dir), with_pip=True)
+        python = _create_venv_and_install(tmp_path)
 
-        if sys.platform == "win32":
-            python = str(venv_dir / "Scripts" / "python.exe")
-        else:
-            python = str(venv_dir / "bin" / "python")
-
-        root = _project_root()
-
-        pyproject = root / "pyproject.toml"
+        pyproject = _project_root() / "pyproject.toml"
         with open(pyproject, "rb") as f:
             expected_version = tomllib.load(f)["project"]["version"]
 
-        # Install
-        result = subprocess.run(
-            [python, "-m", "pip", "install", str(root), "--quiet"],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        assert result.returncode == 0, f"pip install failed:\n{result.stderr}"
-
-        # Check version
         result = subprocess.run(
             [python, "-c", "import pyfuse; print(pyfuse.__version__)"],
             capture_output=True,
@@ -137,23 +124,7 @@ class TestIsolatedInstallation:
 
     def test_cli_entrypoint(self, tmp_path: Path) -> None:
         """The ``pyfuse`` CLI entry point is installed and functional."""
-        venv_dir = tmp_path / "venv"
-        venv.create(str(venv_dir), with_pip=True)
-
-        if sys.platform == "win32":
-            python = str(venv_dir / "Scripts" / "python.exe")
-        else:
-            python = str(venv_dir / "bin" / "python")
-
-        root = _project_root()
-
-        result = subprocess.run(
-            [python, "-m", "pip", "install", str(root), "--quiet"],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        assert result.returncode == 0, f"pip install failed:\n{result.stderr}"
+        python = _create_venv_and_install(tmp_path)
 
         # Run ``pyfuse info`` via the entry point
         result = subprocess.run(
