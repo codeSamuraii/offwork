@@ -7,13 +7,16 @@ authors = [
     {name = "Rémi Héneault", email = "remi@heneault.fr"}
 ]
 license = {text = "AGPL-3.0-only"}
-requires-python = ">=3.13"
+requires-python = ">=3.10"
 dependencies = []
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: GNU Affero General Public License v3",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries",
     "Topic :: System :: Distributed Computing",
