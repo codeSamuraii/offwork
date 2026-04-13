@@ -11,6 +11,7 @@ import pytest
 
 from pyfuse import Graph, pack, reconstruct, serialize
 from pyfuse.worker.worker import Worker
+from tests.fixtures.stress_test_module.transformers import clean_measurements
 
 import tests.fixtures.stress_test_module.validators as _validators_mod
 import tests.fixtures.stress_test_module.analyzers as _analyzers_mod
@@ -61,8 +62,6 @@ class TestStandaloneModule:
         assert result["total"] == 60
 
     def test_clean_and_analyze(self):
-        from tests.fixtures.stress_test_module.transformers import clean_measurements
-
         measurements = generate_measurements(2, 10, seed=7)
         cleaned = clean_measurements(measurements)
         assert len(cleaned) == 20

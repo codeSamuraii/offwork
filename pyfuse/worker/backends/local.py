@@ -6,7 +6,6 @@ task dispatch, result routing, and heartbeats -- no threads, no
 
 URL scheme: ``local://host:port``  (default ``local://127.0.0.1:9748``)
 """
-from __future__ import annotations
 
 import asyncio
 import atexit

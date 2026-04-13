@@ -1,7 +1,7 @@
 """Tests for the remote execution API: Backend, ResultEnvelope, Result, connect/disconnect/serve."""
-from __future__ import annotations
 
 import asyncio
+import atexit
 import collections
 import json
 import logging
@@ -10,10 +10,12 @@ from typing import Any
 
 import pytest
 
-from pyfuse.worker.backends.base import Backend
+from pyfuse import pack, trace
 from pyfuse.core.errors import RemoteError
+from pyfuse.core.task import Task
+from pyfuse.worker.backends.base import Backend
 from pyfuse.worker.result import Result, ResultEnvelope
-from pyfuse import trace
+from pyfuse.worker.worker import Worker
 import pyfuse.worker.remote as _remote
 
 
@@ -219,8 +221,6 @@ class TestConnectDisconnect:
     def test_atexit_registered_on_connect(
         self, backend: InMemoryBackend, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import atexit
-
         registered: list[Any] = []
         monkeypatch.setattr(atexit, "register", lambda fn: registered.append(fn))
         monkeypatch.setattr(
@@ -232,8 +232,6 @@ class TestConnectDisconnect:
     def test_atexit_registered_only_once(
         self, backend: InMemoryBackend, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import atexit
-
         call_count = 0
 
         def mock_register(fn: Any) -> None:
@@ -324,9 +322,6 @@ class TestHandleTaskOutput:
         backend: InMemoryBackend,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        from pyfuse import pack
-        from pyfuse.worker.worker import Worker
-
         @trace
         def add_one(x: int) -> int:
             return x + 1
@@ -350,9 +345,6 @@ class TestHandleTaskOutput:
         backend: InMemoryBackend,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        from pyfuse import pack
-        from pyfuse.worker.worker import Worker
-
         @trace
         def double(x: int) -> int:
             return x * 2
@@ -378,9 +370,6 @@ class TestHandleTaskOutput:
         backend: InMemoryBackend,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        from pyfuse import pack
-        from pyfuse.worker.worker import Worker
-
         @trace
         def boom() -> None:
             raise RuntimeError("intentional")
@@ -408,7 +397,6 @@ class TestServe:
     @pytest.mark.asyncio
     async def test_serve_executes_tasks(self, backend: InMemoryBackend) -> None:
         """End-to-end: submit a task, run worker, check result."""
-        from pyfuse import pack
 
         @trace
         def triple(x: int) -> int:
@@ -416,9 +404,6 @@ class TestServe:
 
         task = pack(triple, 5)
         await backend.submit(task.to_json())
-
-        from pyfuse.worker.worker import Worker
-        from pyfuse.core.task import Task
 
         worker = Worker(auto_install=False)
         async for task_json in backend.listen():
@@ -439,7 +424,6 @@ class TestServe:
     @pytest.mark.asyncio
     async def test_serve_handles_errors(self, backend: InMemoryBackend) -> None:
         """Tasks that raise should produce error envelopes, not crash."""
-        from pyfuse import pack
 
         @trace
         def failing() -> None:
@@ -447,9 +431,6 @@ class TestServe:
 
         task = pack(failing)
         await backend.submit(task.to_json())
-
-        from pyfuse.worker.worker import Worker
-        from pyfuse.core.task import Task
 
         worker = Worker(auto_install=False)
 

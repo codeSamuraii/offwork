@@ -1,10 +1,8 @@
-from __future__ import annotations
-
 import contextvars
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, overload
+from typing import Any, Self, overload
 
 
 @dataclass(frozen=True)
@@ -34,7 +32,7 @@ class ProgressInfo:
         return json.dumps(d)
 
     @classmethod
-    def from_json(cls, raw: str | bytes) -> ProgressInfo:
+    def from_json(cls, raw: str | bytes) -> Self:
         data = json.loads(raw)
         return cls(
             current=data["current"],

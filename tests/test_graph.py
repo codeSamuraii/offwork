@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+import importlib
 import json
 import warnings
 from pathlib import Path
@@ -7,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from pyfuse.core.errors import Error
+from pyfuse.core.models import FunctionNode
 from pyfuse.graph.graph import Graph
 from tests.conftest import create_module
 
@@ -225,7 +225,6 @@ def test_nested_function_closure_captured(tmp_path: Path) -> None:
             "    return inner\n"
         ),
     )
-    import importlib
     mod = importlib.import_module("closure_mod")
     mod.outer()
     graph = Graph.default()
@@ -298,7 +297,6 @@ def test_content_hash_deterministic(tmp_path: Path) -> None:
 
 
 def test_content_hash_changes_on_source_change(tmp_path: Path) -> None:
-    from pyfuse.core.models import FunctionNode
     node_a = FunctionNode(
         qualified_name="m.f", name="f", module="m",
         source="def f(): return 1",
@@ -311,7 +309,6 @@ def test_content_hash_changes_on_source_change(tmp_path: Path) -> None:
 
 
 def test_content_hash_stable_on_dep_change(tmp_path: Path) -> None:
-    from pyfuse.core.models import FunctionNode
     node_a = FunctionNode(
         qualified_name="m.f", name="f", module="m",
         source="def f(): pass", dependencies=[],

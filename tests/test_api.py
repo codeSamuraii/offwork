@@ -1,5 +1,4 @@
 """Tests for the top-level pyfuse API additions: get_graph(), graph, pack()."""
-from __future__ import annotations
 
 import warnings
 

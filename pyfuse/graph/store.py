@@ -1,10 +1,8 @@
-from __future__ import annotations
-
 import json
 import logging
 from dataclasses import dataclass, field
 from graphlib import TopologicalSorter
-from typing import Any
+from typing import Any, Self
 
 from pyfuse.core.models import FunctionNode, ImportInfo
 from pyfuse.core.version import _VERSION
@@ -215,7 +213,7 @@ class Store:
             stack.extend(self._deps.get(h, []))
         return list(visited)
 
-    def subgraph(self, *root_hashes: str) -> Store:
+    def subgraph(self, *root_hashes: str) -> "Store":
         """Extract transitive closure of *root_hashes* into a new store."""
         reachable: set[str] = set()
         for root in root_hashes:
@@ -239,7 +237,7 @@ class Store:
         """Return hashes from *hashes* not present in this store."""
         return hashes - self._objects.keys()
 
-    def merge(self, other: Store) -> MergeResult:
+    def merge(self, other: "Store") -> MergeResult:
         """Merge *other* into this store.
 
         Objects are unioned by hash (same hash = same content).
@@ -402,7 +400,7 @@ class Store:
         return json.dumps(self.to_dict(), indent=2)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Store:
+    def from_dict(cls, data: dict[str, Any]) -> Self:
         """Import from dict."""
         store = cls()
         refs = data.get("refs", {})
@@ -427,7 +425,7 @@ class Store:
         return store
 
     @classmethod
-    def from_json(cls, json_str: str) -> Store:
+    def from_json(cls, json_str: str) -> Self:
         return cls.from_dict(json.loads(json_str))
 
     # -- Private helpers -----------------------------------------------------

@@ -1,11 +1,10 @@
-from __future__ import annotations
-
 import asyncio
 import inspect
 import json
+import warnings
 from pathlib import Path
 
-from pyfuse import reconstruct, serialize
+from pyfuse import get_graph, reconstruct, serialize
 from pyfuse.graph.graph import Graph
 from tests.conftest import create_module
 
@@ -667,8 +666,6 @@ def test_closure_traced_func_detected_as_dep(tmp_path: Path) -> None:
 
 def test_closure_invalid_repr_picklable_captured(tmp_path: Path) -> None:
     """Picklable object with invalid repr is captured via pickle fallback."""
-    import warnings as w
-
     mod = create_module(
         tmp_path,
         "cvinvalid",
@@ -683,14 +680,13 @@ def test_closure_invalid_repr_picklable_captured(tmp_path: Path) -> None:
             "    return inner\n"
         ),
     )
-    with w.catch_warnings(record=True) as caught:
-        w.simplefilter("always")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
         func = mod.outer()
 
     msgs = [str(c.message) for c in caught]
     assert not any("cannot be serialized" in m for m in msgs)
 
-    from pyfuse import get_graph
     node = get_graph().nodes["cvinvalid.outer.<locals>.inner"]
     assert "f" in node.closure_vars
     assert "__import__('pickle')" in node.closure_vars["f"]
@@ -1367,7 +1363,6 @@ def test_closure_lambda_captured(tmp_path: Path) -> None:
     )
     func = mod.outer()
 
-    from pyfuse import get_graph
     node = get_graph().nodes["cvlambda.outer.<locals>.inner"]
     assert "fn" in node.closure_vars
     assert "lambda" in node.closure_vars["fn"]
@@ -1405,8 +1400,6 @@ def test_closure_untraced_func_with_deps(tmp_path: Path) -> None:
 
 def test_closure_builtin_still_warns(tmp_path: Path) -> None:
     """Builtin callables captured in closure still produce warning."""
-    import warnings as w
-
     mod = create_module(
         tmp_path,
         "cvbuiltin",
@@ -1425,8 +1418,8 @@ def test_closure_builtin_still_warns(tmp_path: Path) -> None:
             "    return inner\n"
         ),
     )
-    with w.catch_warnings(record=True) as caught:
-        w.simplefilter("always")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
         mod.outer()
 
     msgs = [str(c.message) for c in caught]
@@ -1456,7 +1449,6 @@ def test_closure_defaultdict_constructor_expr(tmp_path: Path) -> None:
     )
     func = mod.outer()
 
-    from pyfuse import get_graph
     node = get_graph().nodes["cvdefdict.outer.<locals>.inner"]
     assert "d" in node.closure_vars
     assert "defaultdict" in node.closure_vars["d"]
@@ -1485,7 +1477,6 @@ def test_closure_counter_constructor_expr(tmp_path: Path) -> None:
     )
     func = mod.outer()
 
-    from pyfuse import get_graph
     node = get_graph().nodes["cvcounter.outer.<locals>.inner"]
     assert "c" in node.closure_vars
     assert "Counter" in node.closure_vars["c"]
@@ -1514,7 +1505,6 @@ def test_closure_deque_constructor_expr(tmp_path: Path) -> None:
     )
     func = mod.outer()
 
-    from pyfuse import get_graph
     node = get_graph().nodes["cvdeque.outer.<locals>.inner"]
     assert "q" in node.closure_vars
     assert "deque" in node.closure_vars["q"]
@@ -1546,7 +1536,6 @@ def test_closure_pickle_fallback_custom_class(tmp_path: Path) -> None:
     )
     func = mod.outer()
 
-    from pyfuse import get_graph
     node = get_graph().nodes["cvpickle.outer.<locals>.inner"]
     assert "cfg" in node.closure_vars
     assert "__import__('pickle')" in node.closure_vars["cfg"]

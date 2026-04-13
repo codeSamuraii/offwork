@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import atexit
 import contextlib
@@ -11,16 +9,14 @@ import signal
 import sys
 import time
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pyfuse.core.progress import _progress_callback
 from pyfuse.core.task import Task
 from pyfuse.core.version import _VERSION
 from pyfuse.worker.backends.base import Backend
 from pyfuse.worker.result import Result, ResultEnvelope
-
-if TYPE_CHECKING:
-    from pyfuse.worker.worker import Worker
+from pyfuse.worker.worker import Worker
 
 logger = logging.getLogger(__name__)
 
@@ -479,8 +475,6 @@ async def serve(
     import_to_package
         Extra import-name to pip-package-name mappings.
     """
-    from pyfuse.worker.worker import Worker
-
     resolved = _resolve_url(url)
     auto_tag = "on" if auto_install else "off"
     logger.info(

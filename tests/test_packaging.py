@@ -1,12 +1,19 @@
 """Tests for PyPI packaging: version consistency and isolated installation."""
-from __future__ import annotations
 
 import subprocess
 import sys
 import venv
 from pathlib import Path
 
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib  # type: ignore[no-redef]
+
+import pyfuse
 import pytest
+
+from pyfuse.core.version import _FALLBACK_VERSION, _VERSION
 
 pytestmark = pytest.mark.slow
 
@@ -45,27 +52,16 @@ class TestVersionConsistency:
     """Ensure the package exposes a consistent version."""
 
     def test_version_is_string(self) -> None:
-        from pyfuse.core.version import _VERSION
-
         assert isinstance(_VERSION, str)
         assert _VERSION  # non-empty
 
     def test_init_exports_version(self) -> None:
-        import pyfuse
-
         assert hasattr(pyfuse, "__version__")
         assert isinstance(pyfuse.__version__, str)
         assert pyfuse.__version__  # non-empty
 
     def test_pyproject_matches_fallback(self) -> None:
         """The fallback version in version.py must match pyproject.toml."""
-        try:
-            import tomllib
-        except ModuleNotFoundError:
-            import tomli as tomllib  # type: ignore[no-redef]
-
-        from pyfuse.core.version import _FALLBACK_VERSION
-
         pyproject = _project_root() / "pyproject.toml"
         with open(pyproject, "rb") as f:
             data = tomllib.load(f)
@@ -102,11 +98,6 @@ class TestIsolatedInstallation:
 
     def test_install_version_matches(self, tmp_path: Path) -> None:
         """Installed package version matches pyproject.toml."""
-        try:
-            import tomllib
-        except ModuleNotFoundError:
-            import tomli as tomllib  # type: ignore[no-redef]
-
         python = _create_venv_and_install(tmp_path)
 
         pyproject = _project_root() / "pyproject.toml"
