@@ -53,9 +53,13 @@ def _create_backend(url: str, **kwargs: Any) -> Backend:
         from pyfuse.worker.backends.local import LocalBackend
 
         return LocalBackend(url, **kwargs)
+    if scheme in ("amqp", "amqps"):
+        from pyfuse.worker.backends.rabbitmq import RabbitMQBackend
+
+        return RabbitMQBackend(url, **kwargs)
     raise ValueError(
         f"Unknown backend scheme: {scheme!r}. "
-        f"Supported: redis://, rediss://, local://"
+        f"Supported: redis://, rediss://, local://, amqp://, amqps://"
     )
 
 
