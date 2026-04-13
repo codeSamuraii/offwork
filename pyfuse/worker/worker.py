@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import functools
 import hashlib
 import inspect
 import logging
-import functools
-import contextvars
 from typing import Any
-from dataclasses import field, dataclass
+from dataclasses import dataclass, field
 
 from pyfuse.core.task import Task, resolve_args
 from pyfuse.core.errors import WorkerError

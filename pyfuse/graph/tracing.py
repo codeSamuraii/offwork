@@ -9,9 +9,9 @@ import functools
 import sysconfig
 import threading
 import contextvars
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import Any, TYPE_CHECKING, TypeVar
 from pathlib import Path
-from collections.abc import Callable, Generator, AsyncGenerator
+from collections.abc import AsyncGenerator, Callable, Generator
 
 if TYPE_CHECKING:
     from pyfuse.worker.backends.base import Backend

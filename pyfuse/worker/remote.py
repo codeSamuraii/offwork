@@ -11,12 +11,11 @@ import inspect
 import logging
 import contextlib
 from typing import Any
-from collections.abc import Callable, Awaitable
+from collections.abc import Awaitable, Callable
 
-from pyfuse.core.task import Task
-from pyfuse.graph.graph import Graph
-from pyfuse.core.version import _VERSION
 from pyfuse.core.progress import _progress_callback
+from pyfuse.core.task import Task
+from pyfuse.core.version import _VERSION
 from pyfuse.worker.result import Result, ResultEnvelope
 from pyfuse.worker.worker import Worker
 from pyfuse.worker.backends.base import Backend
@@ -142,6 +141,8 @@ async def submit_remote(
 
     Called internally by ``traced_func.run(...)``.
     """
+    from pyfuse.graph.graph import Graph
+
     if isinstance(backend, str):
         resolved_backend = _create_backend(backend)
     elif isinstance(backend, Backend):

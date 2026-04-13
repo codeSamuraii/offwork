@@ -74,8 +74,6 @@ class RabbitMQBackend(Backend):
 
     async def _get_channel(self) -> Any:
         """Return the shared channel, creating connection if needed."""
-        if aio_pika_module is None:
-            raise RuntimeError("aio-pika is not available")
         async with self._lock:
             if self._connection is None or self._connection.is_closed:
                 self._connection = await aio_pika_module.connect_robust(self._url)
@@ -86,8 +84,6 @@ class RabbitMQBackend(Backend):
 
     async def _new_channel(self) -> Any:
         """Create a dedicated channel for long-running operations."""
-        if aio_pika_module is None:
-            raise RuntimeError("aio-pika is not available")
         async with self._lock:
             if self._connection is None or self._connection.is_closed:
                 self._connection = await aio_pika_module.connect_robust(self._url)
