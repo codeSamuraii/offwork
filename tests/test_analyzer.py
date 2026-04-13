@@ -1,7 +1,6 @@
-from __future__ import annotations
-
 from pathlib import Path
 
+from pyfuse import reconstruct, serialize
 from pyfuse.graph.analyzer import (
     _resolve_owner_class,
     detect_traced_dependencies,
@@ -458,8 +457,6 @@ def test_detect_multiple_typed_params() -> None:
 
 def test_detect_typed_obj_method_e2e_reconstruction(tmp_path: Path) -> None:
     """End-to-end: typed obj.method() detected statically, reconstructed, executable."""
-    from pyfuse import reconstruct, serialize
-
     mod = create_module(
         tmp_path,
         "typede2e",

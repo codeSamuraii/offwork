@@ -1,6 +1,6 @@
 """Tests for temporary virtual environment management."""
-from __future__ import annotations
 
+import argparse
 import os
 import shutil
 import subprocess
@@ -11,6 +11,11 @@ from pathlib import Path
 
 import pytest
 
+from pyfuse.__main__ import (
+    _detect_pyfuse_extras,
+    _detect_script_packages,
+    main,
+)
 from pyfuse._venv import (
     TempVenv,
     _DEFAULT_PREFIX,
@@ -136,8 +141,6 @@ class TestCleanupStaleVenvs:
 
 class TestDetectScriptPackages:
     def test_detects_third_party(self, tmp_path: pytest.TempPathFactory) -> None:
-        from pyfuse.__main__ import _detect_script_packages
-
         script = tmp_path / "test_script.py"  # type: ignore[operator]
         script.write_text("import requests\nimport json\nimport yaml\n")
         packages = _detect_script_packages(str(script))
@@ -147,15 +150,11 @@ class TestDetectScriptPackages:
         assert "json" not in packages
 
     def test_handles_syntax_error(self, tmp_path: pytest.TempPathFactory) -> None:
-        from pyfuse.__main__ import _detect_script_packages
-
         script = tmp_path / "bad.py"  # type: ignore[operator]
         script.write_text("def broken(:\n")
         assert _detect_script_packages(str(script)) == []
 
     def test_from_imports(self, tmp_path: pytest.TempPathFactory) -> None:
-        from pyfuse.__main__ import _detect_script_packages
-
         script = tmp_path / "test_from.py"  # type: ignore[operator]
         script.write_text("from dateutil import parser\nfrom os.path import join\n")
         packages = _detect_script_packages(str(script))
@@ -164,8 +163,6 @@ class TestDetectScriptPackages:
         assert "os" not in packages
 
     def test_skips_local_packages(self, tmp_path: pytest.TempPathFactory) -> None:
-        from pyfuse.__main__ import _detect_script_packages
-
         # Create a local package directory
         local_pkg = tmp_path / "mylocalpkg"  # type: ignore[operator]
         local_pkg.mkdir()
@@ -180,8 +177,6 @@ class TestDetectScriptPackages:
         assert "mylocalpkg" not in packages
 
     def test_skips_local_module_file(self, tmp_path: pytest.TempPathFactory) -> None:
-        from pyfuse.__main__ import _detect_script_packages
-
         # Create a local .py module
         (tmp_path / "helpers.py").write_text("x = 1\n")  # type: ignore[operator]
 
@@ -192,8 +187,6 @@ class TestDetectScriptPackages:
         assert "helpers" not in packages
 
     def test_install_package_as(self, tmp_path: pytest.TempPathFactory) -> None:
-        from pyfuse.__main__ import _detect_script_packages
-
         script = tmp_path / "test_ipa.py"  # type: ignore[operator]
         script.write_text(
             "from pyfuse import install_package_as\n"
@@ -214,43 +207,31 @@ class TestDetectScriptPackages:
 
 class TestDetectPyfuseExtras:
     def test_connect_redis(self, tmp_path: pytest.TempPathFactory) -> None:
-        from pyfuse.__main__ import _detect_pyfuse_extras
-
         script = tmp_path / "conn.py"  # type: ignore[operator]
         script.write_text('import pyfuse\npyfuse.connect("redis://localhost:6379")\n')
         assert "redis" in _detect_pyfuse_extras(str(script))
 
     def test_serve_redis(self, tmp_path: pytest.TempPathFactory) -> None:
-        from pyfuse.__main__ import _detect_pyfuse_extras
-
         script = tmp_path / "srv.py"  # type: ignore[operator]
         script.write_text('import pyfuse\npyfuse.serve("rediss://host:6380")\n')
         assert "redis" in _detect_pyfuse_extras(str(script))
 
     def test_bare_connect(self, tmp_path: pytest.TempPathFactory) -> None:
-        from pyfuse.__main__ import _detect_pyfuse_extras
-
         script = tmp_path / "bare.py"  # type: ignore[operator]
         script.write_text('from pyfuse import connect\nconnect("redis://localhost")\n')
         assert "redis" in _detect_pyfuse_extras(str(script))
 
     def test_local_no_redis(self, tmp_path: pytest.TempPathFactory) -> None:
-        from pyfuse.__main__ import _detect_pyfuse_extras
-
         script = tmp_path / "local.py"  # type: ignore[operator]
         script.write_text('import pyfuse\npyfuse.connect("local://localhost:9748")\n')
         assert _detect_pyfuse_extras(str(script)) == []
 
     def test_no_connect_calls(self, tmp_path: pytest.TempPathFactory) -> None:
-        from pyfuse.__main__ import _detect_pyfuse_extras
-
         script = tmp_path / "none.py"  # type: ignore[operator]
         script.write_text('import pyfuse\nx = 1\n')
         assert _detect_pyfuse_extras(str(script)) == []
 
     def test_variable_arg_ignored(self, tmp_path: pytest.TempPathFactory) -> None:
-        from pyfuse.__main__ import _detect_pyfuse_extras
-
         script = tmp_path / "var.py"  # type: ignore[operator]
         script.write_text('import pyfuse\nurl = "redis://localhost"\npyfuse.connect(url)\n')
         assert _detect_pyfuse_extras(str(script)) == []
@@ -259,10 +240,6 @@ class TestDetectPyfuseExtras:
 class TestCLIParsing:
     def test_worker_tmp_flag(self) -> None:
         """Verify --tmp is accepted by the argument parser."""
-        import argparse
-
-        from pyfuse.__main__ import main
-
         parser = argparse.ArgumentParser()
         sub = parser.add_subparsers(dest="command")
         worker_p = sub.add_parser("worker")
@@ -279,8 +256,6 @@ class TestCLIParsing:
 
     def test_run_subcommand(self) -> None:
         """Verify run subcommand parses correctly."""
-        import argparse
-
         parser = argparse.ArgumentParser()
         sub = parser.add_subparsers(dest="command")
         run_p = sub.add_parser("run")

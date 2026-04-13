@@ -1,6 +1,5 @@
-from __future__ import annotations
-
 import json
+import os
 import warnings
 from pathlib import Path
 
@@ -634,7 +633,6 @@ def test_module_constant_with_import(tmp_path: Path) -> None:
 
     ns: dict[str, object] = {}
     exec(source, ns)  # noqa: S102
-    import os
     assert ns["get_sep"]() == os.sep  # type: ignore[operator]
 
 

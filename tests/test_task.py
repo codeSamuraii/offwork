@@ -1,10 +1,8 @@
-from __future__ import annotations
-
 import json
 
 import pytest
 
-from pyfuse.core.task import Task
+from pyfuse.core.task import Task, _TaskEncoder, _resolve
 
 
 class TestTaskCreation:
@@ -87,8 +85,6 @@ class TestSlotsObjectSerialization:
     """Test serialization of objects with __slots__."""
 
     def test_slots_object_roundtrip(self) -> None:
-        from pyfuse.core.task import _TaskEncoder, _resolve
-
         class Point:
             __slots__ = ("x", "y")
 
@@ -104,8 +100,6 @@ class TestSlotsObjectSerialization:
         assert restored.y == 4
 
     def test_slots_inherited(self) -> None:
-        from pyfuse.core.task import _TaskEncoder, _resolve
-
         class Base:
             __slots__ = ("a",)
 
@@ -124,8 +118,6 @@ class TestSlotsObjectSerialization:
         assert restored.b == 2
 
     def test_slots_uninitialized(self) -> None:
-        from pyfuse.core.task import _TaskEncoder, _resolve
-
         class Partial:
             __slots__ = ("x", "y")
 
@@ -142,8 +134,6 @@ class TestSlotsObjectSerialization:
 
     def test_slots_with_dict(self) -> None:
         """Class with __slots__ including __dict__ uses __dict__ path."""
-        from pyfuse.core.task import _TaskEncoder, _resolve
-
         class Mixed:
             __slots__ = ("__dict__", "x")
 

@@ -1,5 +1,4 @@
 """Tests for task cancellation and progress reporting."""
-from __future__ import annotations
 
 import asyncio
 import collections

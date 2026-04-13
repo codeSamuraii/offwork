@@ -1,5 +1,4 @@
 """Tests for the LocalBackend (async-native TCP backend)."""
-from __future__ import annotations
 
 import asyncio
 import socket
@@ -7,7 +6,11 @@ from collections.abc import AsyncIterator
 
 import pytest
 
+from pyfuse import pack, trace
+from pyfuse.core.task import Task
 from pyfuse.worker.backends.local import LocalBackend
+from pyfuse.worker.result import ResultEnvelope
+from pyfuse.worker.worker import Worker
 import pyfuse.worker.remote as _remote
 
 
@@ -166,10 +169,6 @@ class TestEndToEnd:
     @pytest.mark.asyncio
     async def test_submit_execute_result(self) -> None:
         """Full cycle: submit on local backend, execute in worker, read result."""
-        from pyfuse import pack, trace
-        from pyfuse.worker.result import ResultEnvelope
-        from pyfuse.core.task import Task
-        from pyfuse.worker.worker import Worker
 
         @trace
         def add(a: int, b: int) -> int:
@@ -205,10 +204,6 @@ class TestEndToEnd:
     @pytest.mark.asyncio
     async def test_concurrent_tasks(self) -> None:
         """Multiple tasks processed concurrently."""
-        from pyfuse import pack, trace
-        from pyfuse.worker.result import ResultEnvelope
-        from pyfuse.core.task import Task
-        from pyfuse.worker.worker import Worker
 
         @trace
         def double(n: int) -> int:

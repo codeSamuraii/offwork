@@ -7,7 +7,6 @@ Start RabbitMQ before running::
 
 Override the URL with ``PYFUSE_TEST_RABBITMQ_URL``.
 """
-from __future__ import annotations
 
 import asyncio
 import os
@@ -15,6 +14,12 @@ import uuid
 from collections.abc import AsyncIterator
 
 import pytest
+
+from pyfuse import pack, trace
+from pyfuse.core.task import Task
+from pyfuse.worker.result import ResultEnvelope
+from pyfuse.worker.worker import Worker
+import pyfuse.worker.remote as _remote
 
 try:
     import aio_pika
@@ -66,7 +71,7 @@ if _HAS_AIO_PIKA:
 
 class TestRabbitMQBackend:
     @pytest.mark.asyncio
-    async def test_submit_and_listen(self, backend: RabbitMQBackend) -> None:
+    async def test_submit_and_listen(self, backend: "RabbitMQBackend") -> None:
         await backend.submit('{"test": 1}')
         await backend.submit('{"test": 2}')
 
@@ -79,35 +84,35 @@ class TestRabbitMQBackend:
         assert results == ['{"test": 1}', '{"test": 2}']
 
     @pytest.mark.asyncio
-    async def test_send_and_get_result(self, backend: RabbitMQBackend) -> None:
+    async def test_send_and_get_result(self, backend: "RabbitMQBackend") -> None:
         await backend.send_result("t1", '{"ok": true}')
         result = await backend.get_result("t1")
         assert result == '{"ok": true}'
 
     @pytest.mark.asyncio
-    async def test_try_get_result_none(self, backend: RabbitMQBackend) -> None:
+    async def test_try_get_result_none(self, backend: "RabbitMQBackend") -> None:
         assert await backend.try_get_result("missing") is None
 
     @pytest.mark.asyncio
-    async def test_try_get_result_success(self, backend: RabbitMQBackend) -> None:
+    async def test_try_get_result_success(self, backend: "RabbitMQBackend") -> None:
         await backend.send_result("t1", '{"ok": true}')
         result = await backend.try_get_result("t1")
         assert result == '{"ok": true}'
 
     @pytest.mark.asyncio
-    async def test_get_result_timeout(self, backend: RabbitMQBackend) -> None:
+    async def test_get_result_timeout(self, backend: "RabbitMQBackend") -> None:
         with pytest.raises(TimeoutError):
             await backend.get_result("missing", timeout=0.5)
 
     @pytest.mark.asyncio
-    async def test_heartbeat(self, backend: RabbitMQBackend) -> None:
+    async def test_heartbeat(self, backend: "RabbitMQBackend") -> None:
         assert await backend.get_heartbeat("t1") is None
         await backend.send_heartbeat("t1")
         hb = await backend.get_heartbeat("t1")
         assert hb is not None and hb > 0
 
     @pytest.mark.asyncio
-    async def test_cancellation(self, backend: RabbitMQBackend) -> None:
+    async def test_cancellation(self, backend: "RabbitMQBackend") -> None:
         assert not await backend.is_cancelled("t1")
         await backend.cancel_task("t1")
         assert await backend.is_cancelled("t1")
@@ -115,21 +120,21 @@ class TestRabbitMQBackend:
         assert await backend.is_cancelled("t1")
 
     @pytest.mark.asyncio
-    async def test_progress(self, backend: RabbitMQBackend) -> None:
+    async def test_progress(self, backend: "RabbitMQBackend") -> None:
         assert await backend.get_progress("t1") is None
         await backend.send_progress("t1", '{"current": 50}')
         raw = await backend.get_progress("t1")
         assert raw == '{"current": 50}'
 
     @pytest.mark.asyncio
-    async def test_progress_overwrite(self, backend: RabbitMQBackend) -> None:
+    async def test_progress_overwrite(self, backend: "RabbitMQBackend") -> None:
         await backend.send_progress("t1", '{"current": 25}')
         await backend.send_progress("t1", '{"current": 75}')
         raw = await backend.get_progress("t1")
         assert raw == '{"current": 75}'
 
     @pytest.mark.asyncio
-    async def test_close(self, backend: RabbitMQBackend) -> None:
+    async def test_close(self, backend: "RabbitMQBackend") -> None:
         await backend.close()
         assert backend._connection is None
         assert backend._channel is None
@@ -142,7 +147,7 @@ class TestRabbitMQBackend:
 
 class TestNotifications:
     @pytest.mark.asyncio
-    async def test_notify_and_subscribe(self, backend: RabbitMQBackend) -> None:
+    async def test_notify_and_subscribe(self, backend: "RabbitMQBackend") -> None:
         received: list[str] = []
 
         async def _subscribe() -> None:
@@ -171,7 +176,6 @@ class TestConnectDispatch:
     async def test_connect_amqp(self) -> None:
         if not await _rabbitmq_available():
             pytest.skip("RabbitMQ not available")
-        import pyfuse.worker.remote as _remote
 
         try:
             backend = _remote.connect(RABBITMQ_URL)
@@ -191,10 +195,6 @@ class TestEndToEnd:
     async def test_submit_execute_result(self) -> None:
         if not await _rabbitmq_available():
             pytest.skip("RabbitMQ not available")
-        from pyfuse import pack, trace
-        from pyfuse.core.task import Task
-        from pyfuse.worker.result import ResultEnvelope
-        from pyfuse.worker.worker import Worker
 
         @trace
         def add(a: int, b: int) -> int:

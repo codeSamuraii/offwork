@@ -1,6 +1,5 @@
 """Tests for async features: Result.result, __await__, .run(), .map(),
 async worker execution, and heartbeat-based stall detection."""
-from __future__ import annotations
 
 import asyncio
 import collections
@@ -11,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from pyfuse import trace
+from pyfuse import pack, trace
 from pyfuse.core.errors import RemoteError, TaskStalled
 from pyfuse.core.models import FunctionNode, ImportInfo
 from pyfuse.core.task import Task
@@ -255,7 +254,6 @@ class TestHandleTaskAsync:
     @pytest.mark.asyncio
     async def test_handle_async_task(self, backend: InMemoryBackend) -> None:
         """_handle_task correctly processes async functions."""
-        from pyfuse import pack
 
         @trace
         async def async_double(x: int) -> int:
@@ -387,7 +385,6 @@ class TestWorkerHeartbeat:
     @pytest.mark.asyncio
     async def test_handle_task_sends_heartbeats(self, backend: InMemoryBackend) -> None:
         """_handle_task sends heartbeats while executing."""
-        from pyfuse import pack
 
         @trace
         def slow_add(a: int, b: int) -> int:
@@ -416,7 +413,6 @@ class TestWorkerHeartbeat:
         self, backend: InMemoryBackend
     ) -> None:
         """Heartbeat task stops once the task completes."""
-        from pyfuse import pack
 
         @trace
         def quick() -> int:
