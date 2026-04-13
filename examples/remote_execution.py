@@ -1,12 +1,19 @@
 import asyncio
 import math
+from typing import overload
 
 import pyfuse
 from pyfuse import trace
 
 pyfuse.connect("local://localhost:9748")
 
-def add(a: int, b: int) -> int:
+@overload
+def add(a: int, b: int) -> int: ...
+
+@overload
+def add(a: float, b: float) -> float: ...
+
+def add(a: int | float, b: int | float) -> int | float:
     return a + b
 
 @trace

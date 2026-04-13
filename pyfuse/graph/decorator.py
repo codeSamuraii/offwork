@@ -1,27 +1,29 @@
 import logging
 from collections.abc import Callable
-from typing import TypeVar, overload
+from typing import ParamSpec, TypeVar, overload
 
 from pyfuse.graph.graph import Graph
+from pyfuse.typing import TraceDecorator, TracedFunction
 
 logger = logging.getLogger(__name__)
 
-_F = TypeVar("_F", bound=Callable[..., object])
+_R = TypeVar("_R")
+_P = ParamSpec("_P")
 
 
 @overload
-def trace(func: _F) -> _F: ...
+def trace(func: Callable[_P, _R]) -> TracedFunction[_P, _R]: ...
 @overload
-def trace(*, timeout: float | None = ..., retries: int = ..., retry_delay: float = ...) -> Callable[[_F], _F]: ...
+def trace(*, timeout: float | None = ..., retries: int = ..., retry_delay: float = ...) -> TraceDecorator: ...
 
 
 def trace(
-    func: _F | None = None,
+    func: Callable[..., object] | None = None,
     *,
     timeout: float | None = None,
     retries: int = 0,
     retry_delay: float = 1.0,
-) -> _F | Callable[[_F], _F]:
+) -> object:
     """Enable a function for serialization and remote execution.
 
     The decorated function works normally when called directly.
@@ -38,19 +40,19 @@ def trace(
     if func is not None:
         return _apply_trace(func, timeout=timeout, retries=retries, retry_delay=retry_delay)
 
-    def decorator(f: _F) -> _F:
+    def decorator(f: Callable[_P, _R]) -> object:
         return _apply_trace(f, timeout=timeout, retries=retries, retry_delay=retry_delay)
 
     return decorator
 
 
 def _apply_trace(
-    func: _F,
+    func: Callable[_P, _R],
     *,
     timeout: float | None = None,
     retries: int = 0,
     retry_delay: float = 1.0,
-) -> _F:
+) -> TracedFunction[_P, _R]:
     logger.debug("@trace applied to %s", func.__qualname__)
     graph = Graph.default()
     graph.register(func)

@@ -14,7 +14,7 @@ from pyfuse import trace
 
 pyfuse.connect("local://localhost:9748")
 
-async def add(a: int, b: int) -> int:
+async def add(a: float, b: float) -> float:
     return a + b
 
 @trace
@@ -39,12 +39,12 @@ async def main() -> None:
     print(f"map results = {results}")  # [5.0, 13.0, 17.0]
 
     # 4. asyncio.gather -- submit multiple tasks, await concurrently
-    results = await asyncio.gather(
+    gathered = await asyncio.gather(
         hypotenuse.run(3.0, 4.0),
         hypotenuse.run(5.0, 12.0),
         hypotenuse.run(8.0, 15.0),
     )
-    print(f"gather: {results}")  # [5.0, 13.0, 17.0]
+    print(f"gather: {gathered}")  # [5.0, 13.0, 17.0]
 
 
 asyncio.run(main())

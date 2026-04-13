@@ -15,8 +15,6 @@ import pytest
 
 from pyfuse.core.version import _FALLBACK_VERSION, _VERSION
 
-pytestmark = pytest.mark.slow
-
 
 def _project_root() -> Path:
     """Return the repository root (contains pyproject.toml)."""

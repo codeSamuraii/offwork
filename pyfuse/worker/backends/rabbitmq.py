@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 try:
-    import aio_pika
+    import aio_pika  # type: ignore[import-not-found]
 except ImportError:
     raise ImportError(
         "aio-pika package is required for RabbitMQBackend. "

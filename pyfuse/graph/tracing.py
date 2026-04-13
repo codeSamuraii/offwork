@@ -9,13 +9,16 @@ import sysconfig
 import threading
 from collections.abc import AsyncGenerator, Callable, Generator
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, ParamSpec, TypeVar, cast
 
+from pyfuse.typing import TracedFunction
 from pyfuse.worker.backends.base import Backend
 
 logger = logging.getLogger(__name__)
 
 _F = TypeVar("_F", bound=Callable[..., object])
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
 
 _BUILTIN_NAMES = set(dir(builtins))
 
@@ -164,7 +167,7 @@ class TracingMixin:
             with self._lock:
                 self._runtime_deps.setdefault(stack[-1], set()).add(qualified_name)
 
-    def create_wrapper(self, func: _F) -> _F:
+    def create_wrapper(self, func: Callable[_P, _R]) -> TracedFunction[_P, _R]:
         """Wrap func to record runtime caller-callee edges.
 
         The wrapper preserves the original function signature via
@@ -182,7 +185,7 @@ class TracingMixin:
             wrapper = self._wrap_generator(func, qualified_name)
         else:
             wrapper = self._wrap_sync(func, qualified_name)
-        return wrapper  # type: ignore[no-any-return]
+        return cast(TracedFunction[_P, _R], wrapper)
 
     def _wrap_async_generator(self, func: Any, qualified_name: str) -> Any:
         logger.debug("Creating async generator wrapper for %s", qualified_name)

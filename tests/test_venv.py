@@ -25,8 +25,6 @@ from pyfuse._venv import (
     temp_venv,
 )
 
-pytestmark = pytest.mark.slow
-
 
 class TestFindProjectRoot:
     def test_finds_root(self) -> None:
