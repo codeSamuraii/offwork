@@ -3,6 +3,7 @@ from collections.abc import Callable
 from typing import Any
 
 from pyfuse.core.errors import DependencyError, Error, RemoteError, TaskCancelled, TaskStalled, WorkerError
+from pyfuse.core.version import _VERSION
 from pyfuse.core.models import FunctionNode, ImportInfo
 from pyfuse.core.progress import ProgressInfo
 from pyfuse.core.progress import progress as progress
@@ -65,7 +66,10 @@ def pack(func: Callable[..., object], *args: Any, **kwargs: Any) -> Task:
     )
 
 
+__version__: str = _VERSION
+
 __all__ = [
+    "__version__",
     # Primary API
     "trace",
     "connect",

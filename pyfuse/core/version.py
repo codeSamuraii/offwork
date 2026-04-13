@@ -1,1 +1,9 @@
-_VERSION = "0.4.0"
+from importlib.metadata import version as _pkg_version
+
+_FALLBACK_VERSION = "0.4.0"
+
+try:
+    _VERSION: str = _pkg_version("pyfuse")
+except Exception:
+    # Not installed as a package (e.g. running from source checkout).
+    _VERSION = _FALLBACK_VERSION

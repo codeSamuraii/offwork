@@ -17,7 +17,6 @@ from pyfuse.core.progress import _progress_callback
 from pyfuse.core.task import Task
 from pyfuse.core.version import _VERSION
 from pyfuse.worker.backends.base import Backend
-from pyfuse.worker.backends.redis import RedisBackend
 from pyfuse.worker.result import Result, ResultEnvelope
 
 if TYPE_CHECKING:
@@ -48,6 +47,8 @@ def _create_backend(url: str, **kwargs: Any) -> Backend:
     """Create a backend instance from a URL."""
     scheme = url.split("://", 1)[0].lower()
     if scheme in ("redis", "rediss"):
+        from pyfuse.worker.backends.redis import RedisBackend
+
         return RedisBackend(url, **kwargs)
     if scheme == "local":
         from pyfuse.worker.backends.local import LocalBackend
