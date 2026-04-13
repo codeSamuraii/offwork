@@ -12,7 +12,7 @@ import math
 import pyfuse
 from pyfuse import trace
 
-pyfuse.connect("redis://localhost:6379")
+pyfuse.connect("local://localhost:9748")
 
 async def add(a: int, b: int) -> int:
     return a + b

@@ -234,11 +234,11 @@ class TestDetectPyfuseExtras:
         script.write_text('from pyfuse import connect\nconnect("redis://localhost")\n')
         assert "redis" in _detect_pyfuse_extras(str(script))
 
-    def test_shm_no_redis(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_local_no_redis(self, tmp_path: pytest.TempPathFactory) -> None:
         from pyfuse.__main__ import _detect_pyfuse_extras
 
-        script = tmp_path / "shm.py"  # type: ignore[operator]
-        script.write_text('import pyfuse\npyfuse.connect("shm://localhost:9847")\n')
+        script = tmp_path / "local.py"  # type: ignore[operator]
+        script.write_text('import pyfuse\npyfuse.connect("local://localhost:9748")\n')
         assert _detect_pyfuse_extras(str(script)) == []
 
     def test_no_connect_calls(self, tmp_path: pytest.TempPathFactory) -> None:

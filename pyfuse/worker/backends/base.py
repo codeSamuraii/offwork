@@ -8,7 +8,7 @@ class Backend(abc.ABC):
     """Abstract transport backend for remote task execution.
 
     Subclass this to implement custom transports (Redis, RabbitMQ,
-    shared memory, etc.).
+    TCP, etc.).
     """
 
     @abc.abstractmethod

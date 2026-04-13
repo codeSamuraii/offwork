@@ -232,14 +232,14 @@ pyfuse supports pluggable transport backends:
 | Backend | URL scheme | Use case |
 |---------|-----------|----------|
 | Redis | `redis://` / `rediss://` | Production, multi-machine |
-| Shared memory | `shm://` | Same-machine IPC, zero-copy |
+| Local | `local://` | Same-machine IPC (async-native TCP) |
 
 ```python
 # Redis (requires pip install redis)
 pyfuse.connect("redis://localhost:6379")
 
-# Shared memory (no external services needed)
-pyfuse.connect("shm://localhost:9847")
+# Local (no external services needed)
+pyfuse.connect("local://localhost:9748")
 ```
 
 The backend can also be set via the `PYFUSE_BACKEND` environment variable:
@@ -447,7 +447,7 @@ except RemoteError as e:
 
 ```bash
 # Remote execution
-python -m pyfuse worker --backend shm://localhost:9847 --tmp    # Terminal 1
+python -m pyfuse worker --backend local://localhost:9748 --tmp   # Terminal 1
 python -m pyfuse run examples/remote_execution.py               # Terminal 2
 ```
 

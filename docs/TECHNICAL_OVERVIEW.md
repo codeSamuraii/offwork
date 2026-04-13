@@ -43,7 +43,7 @@ pyfuse/
         backends/
             base.py          Backend ABC: async pluggable transport interface
             redis.py         RedisBackend: redis.asyncio with RPUSH/BLPOP pattern
-            shm.py           SharedMemoryBackend: same-machine IPC via shared memory
+            local.py         LocalBackend: async-native TCP for same-machine IPC
 ```
 
 ## Remote execution flow
@@ -107,15 +107,13 @@ Result notifications use Redis Pub/Sub (`PUBLISH`/`SUBSCRIBE`). Batch heartbeat 
 
 The `redis` package is imported lazily and is an optional dependency.
 
-### SharedMemoryBackend
+### LocalBackend
 
-Uses `multiprocessing.shared_memory` for zero-copy payload transfer and `multiprocessing.managers.BaseManager` for cross-process coordination. No external services required -- suitable for same-machine worker pools.
+An async-native TCP backend for same-machine IPC.  A lightweight broker server built on `asyncio.start_server` handles task dispatch, result routing, and heartbeats -- no threads, no `multiprocessing`, no external services.
 
-URL format: `shm://host:port?authkey=secret` (defaults: `127.0.0.1:9847`, authkey `pyfuse`).
+URL format: `local://host:port` (default: `127.0.0.1:9748`).
 
-The backend auto-detects its role: it tries to connect as a client first; if no server is running, it starts one. Shared memory blocks are tracked and cleaned up on exit via `atexit`.
-
-Since `BaseManager` is inherently synchronous, proxy RPC calls are wrapped in `asyncio.to_thread()`. The overhead is negligible for sub-millisecond IPC calls.
+The broker auto-starts as a subprocess on first connection (or can be started explicitly with `server=True`). All I/O is native `asyncio` -- the backend opens TCP connections to the broker and communicates via a length-prefixed JSON protocol. Streaming operations (`listen()`, `subscribe_results()`) use dedicated connections; RPC operations share a single connection protected by an `asyncio.Lock`.
 
 ### Custom backends
 

@@ -38,7 +38,7 @@ Only the entry point needs `@trace`. Everything it calls -- `add()`, imports, cl
 Start an isolated worker (temporary venv with `--tmp`, cleaned up on exit):
 
 ```bash
-pyfuse worker --tmp --backend shm://localhost:9847    # Same machine using shared memory
+pyfuse worker --tmp --backend local://localhost:9748  # Same machine (async TCP)
 pyfuse worker --tmp --backend redis://localhost:6379  # Remote using Redis
 ```
 
@@ -84,7 +84,7 @@ Common mappings (`cv2` -> `opencv-python`, `PIL` -> `Pillow`, etc.) are built in
 - **Class methods** -- `self.method()` and `cls.method()` dependencies are detected. Entire class hierarchies (including `super()`), class-level attributes, decorators (`@dataclass`, etc.), and metaclass keywords are reconstructed.
 - **Retry and timeout** -- `@trace(timeout=30, retries=3)` with exponential backoff.
 - **Batch submission** -- `await func.map([(a1, b1), (a2, b2)])` submits and awaits multiple tasks.
-- **Pluggable backends** -- Redis (`redis://`) for multi-machine, shared memory (`shm://`) for same-machine IPC.
+- **Pluggable backends** -- Redis (`redis://`) for multi-machine, local (`local://`) for same-machine IPC.
 - **Content-hash caching** -- Workers cache compiled functions by content hash. Same code from different clients = cache hit.
 
 ## Examples

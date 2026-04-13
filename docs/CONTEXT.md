@@ -33,7 +33,7 @@ pyfuse/
     └── backends/
         ├── base.py          # Backend ABC: async transport interface
         ├── redis.py         # RedisBackend: redis.asyncio with RPUSH/BLPOP pattern
-        └── shm.py           # SharedMemoryBackend: multiprocessing shared memory IPC
+        └── local.py         # LocalBackend: async-native TCP for same-machine IPC
 ```
 
 ## Architecture overview
@@ -97,7 +97,7 @@ await Worker.run(task)
 - **Class-level attributes**: Class body statements (assignments, annotated assignments, docstrings) are extracted from AST and emitted in reconstructed class blocks. Class decorators (`@dataclass`, etc.) and metaclass keywords (`metaclass=ABCMeta`) are captured and emitted.
 - **Closure handling**: Multi-tier capture: repr validation → traced functions → lambdas (source extraction) → non-traced user functions (auto-registration) → constructor expressions (defaultdict/Counter/deque) → pickle fallback → warning. Traced function references become dependency edges.
 - **Decorator stripping**: `@trace` lines are removed from captured source so reconstructed code doesn't depend on pyfuse.
-- **Backend auto-detection**: `connect()` picks Redis or shared memory based on URL scheme. Falls back to `PYFUSE_BACKEND` env var.
+- **Backend auto-detection**: `connect()` picks Redis or local TCP backend based on URL scheme. Falls back to `PYFUSE_BACKEND` env var.
 - **Worker caching**: Keyed by SHA-256 of all reachable content hashes (sorted + joined). Same code from different clients = cache hit.
 - **Async-native I/O**: All backend methods, worker execution, result handling, pip installation, and subprocess management use `asyncio`. Sync user functions run in `loop.run_in_executor()` to avoid blocking the event loop.
 - **Heartbeat**: Workers send heartbeats via `asyncio.create_task`. Client-side stall detection tracks when heartbeat *values* last changed using local monotonic clock (no cross-machine timestamp comparison).
@@ -166,7 +166,7 @@ pytest                    # run all tests
 pytest tests/test_api.py  # specific module
 ```
 
-15 test modules covering: API surface, AST analysis, async features (Result.result, await, .run(), .start(), .map(), gather, heartbeat, stall detection), auto-discovery (including metaclass keywords, class attributes, class decorators, `__init_subclass__`), dependency management, graph operations, integration scenarios, remote execution, runtime tracing (including closure capture of non-traced functions, lambdas, constructor expressions, pickle fallback), shared memory backend, store operations, stress tests (47 functions across 7 files), task serialization, temp venv management, and worker caching/execution.
+15 test modules covering: API surface, AST analysis, async features (Result.result, await, .run(), .start(), .map(), gather, heartbeat, stall detection), auto-discovery (including metaclass keywords, class attributes, class decorators, `__init_subclass__`), dependency management, graph operations, integration scenarios, local backend (async-native TCP), remote execution, runtime tracing (including closure capture of non-traced functions, lambdas, constructor expressions, pickle fallback), store operations, stress tests (47 functions across 7 files), task serialization, temp venv management, and worker caching/execution.
 
 All async tests use `pytest-asyncio` with `asyncio_mode = "auto"`.
 

@@ -47,13 +47,13 @@ def _create_backend(url: str, **kwargs: Any) -> Backend:
     scheme = url.split("://", 1)[0].lower()
     if scheme in ("redis", "rediss"):
         return RedisBackend(url, **kwargs)
-    if scheme == "shm":
-        from pyfuse.worker.backends.shm import SharedMemoryBackend
+    if scheme == "local":
+        from pyfuse.worker.backends.local import LocalBackend
 
-        return SharedMemoryBackend(url, **kwargs)
+        return LocalBackend(url, **kwargs)
     raise ValueError(
         f"Unknown backend scheme: {scheme!r}. "
-        f"Supported: redis://, rediss://, shm://"
+        f"Supported: redis://, rediss://, local://"
     )
 
 
@@ -66,7 +66,7 @@ def connect(url: str | None = None, **kwargs: Any) -> Backend:
         Backend URL.  Supported schemes:
 
         - ``redis://`` / ``rediss://`` -- :class:`RedisBackend`
-        - ``shm://`` -- :class:`SharedMemoryBackend` (same-machine IPC)
+        - ``local://`` -- :class:`LocalBackend` (same-machine IPC)
 
         When *None*, the ``PYFUSE_BACKEND`` environment variable is used.
 
