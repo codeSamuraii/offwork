@@ -82,6 +82,9 @@ def _get_stdlib_dirs() -> list[str]:
 
 _STDLIB_DIRS = _get_stdlib_dirs()
 
+# Derive our own top-level package name so we never inline pyfuse internals.
+_SELF_TOP_PACKAGE = (__package__ or __name__).split(".")[0]
+
 
 def _is_stdlib_module(module: str) -> bool:
     """Return True if *module* belongs to the standard library."""
@@ -106,6 +109,8 @@ def _is_user_defined(obj: object) -> bool:
     else:
         return False
     if _is_stdlib_module(module):
+        return False
+    if module.split(".")[0] == _SELF_TOP_PACKAGE:
         return False
     try:
         source_file = inspect.getfile(obj)

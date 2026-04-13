@@ -24,9 +24,13 @@ class RedisBackend(Backend):
     DEFAULT_QUEUE_KEY = "pyfuse:tasks"
     RESULT_PREFIX = "pyfuse:result:"
     HEARTBEAT_PREFIX = "pyfuse:heartbeat:"
+    CANCEL_PREFIX = "pyfuse:cancel:"
+    PROGRESS_PREFIX = "pyfuse:progress:"
     NOTIFY_CHANNEL = "pyfuse:notify"
     DEFAULT_RESULT_TTL = 300
     HEARTBEAT_TTL = 30
+    CANCEL_TTL = 3600
+    PROGRESS_TTL = 300
 
     def __init__(
         self,
@@ -100,6 +104,25 @@ class RedisBackend(Backend):
             tid: float(v) if v is not None else None
             for tid, v in zip(task_ids, values)
         }
+
+    async def cancel_task(self, task_id: str) -> None:
+        key = f"{self.CANCEL_PREFIX}{task_id}"
+        await self._redis.set(key, "1", ex=self.CANCEL_TTL)
+
+    async def is_cancelled(self, task_id: str) -> bool:
+        key = f"{self.CANCEL_PREFIX}{task_id}"
+        return int(await self._redis.exists(key)) > 0
+
+    async def send_progress(self, task_id: str, progress_json: str) -> None:
+        key = f"{self.PROGRESS_PREFIX}{task_id}"
+        await self._redis.set(key, progress_json, ex=self.PROGRESS_TTL)
+
+    async def get_progress(self, task_id: str) -> str | None:
+        key = f"{self.PROGRESS_PREFIX}{task_id}"
+        raw = await self._redis.get(key)
+        if raw is None:
+            return None
+        return raw.decode() if isinstance(raw, bytes) else raw
 
     async def notify_result(self, task_id: str) -> None:
         await self._redis.publish(self.NOTIFY_CHANNEL, task_id)

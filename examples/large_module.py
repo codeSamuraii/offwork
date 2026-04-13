@@ -52,7 +52,7 @@ def full_sensor_report(sensor_count: int, readings_per_sensor: int, seed: int = 
 
 async def main() -> None:
     # Connect to the worker
-    pyfuse.connect("redis://localhost:6379")
+    pyfuse.connect("local://localhost:9748")
 
     # Local call
     local_result = full_sensor_report(3, 50, seed=42)

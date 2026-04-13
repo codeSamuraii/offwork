@@ -118,6 +118,57 @@ result = await to_yaml.run({"key": "value"})
 
 Common mappings like `cv2` -> `opencv-python` and `PIL` -> `Pillow` are built in.
 
+## Task cancellation
+
+Cancel a pending or in-progress task with `await future.cancel()`:
+
+```python
+from pyfuse import TaskCancelled
+
+future = await slow_task.start(data)
+await asyncio.sleep(1)
+await future.cancel()
+
+try:
+    result = await future
+except TaskCancelled:
+    print("Task was cancelled")
+```
+
+If the worker hasn't started execution yet, it skips the task entirely. If execution is already in progress, the client receives `TaskCancelled` when awaiting the result.
+
+## Progress reporting
+
+Long-running tasks can report progress back to the client:
+
+```python
+from pyfuse import trace, progress
+
+@trace
+def process_batch(items: list[str]) -> list[str]:
+    results = []
+    for i, item in enumerate(items):
+        results.append(transform(item))
+        progress(i + 1, len(items), message=f"Processing {item}")
+    return results
+```
+
+Query progress from the client:
+
+```python
+future = await process_batch.start(items)
+
+while not await future.done():
+    p = await future.progress()
+    if p is not None:
+        print(f"{p.current}/{p.total} ({p.percent:.0f}%) - {p.message}")
+    await asyncio.sleep(0.5)
+
+result = await future
+```
+
+`progress()` is a silent no-op when called outside a worker, so the function works unchanged locally.
+
 ## Async API
 
 pyfuse is async-native. All remote execution methods are coroutines.
@@ -259,7 +310,14 @@ future = await hypotenuse.start(3.0, 4.0)
 
 # Check status without blocking
 await future.done()      # True / False
-await future.status()    # "pending", "success", or "error"
+await future.status()    # "pending", "success", "error", or "cancelled"
+
+# Check progress (from pyfuse.progress() calls)
+p = await future.progress()    # ProgressInfo or None
+if p: print(f"{p.current}/{p.total}")
+
+# Cancel a task
+await future.cancel()    # raises TaskCancelled when awaited
 
 # Await the result
 result = await future                          # shorthand
@@ -428,7 +486,7 @@ merged = json.dumps({
 ## Error handling
 
 ```python
-from pyfuse import trace, Error, RemoteError
+from pyfuse import trace, Error, RemoteError, TaskCancelled
 
 # Tracing errors
 try:
@@ -441,6 +499,8 @@ try:
     result = await future.result()
 except RemoteError as e:
     print(e)  # includes remote traceback
+except TaskCancelled:
+    print("Task was cancelled")
 ```
 
 ## Running the examples

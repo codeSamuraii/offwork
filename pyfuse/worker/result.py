@@ -9,7 +9,8 @@ from collections.abc import Generator
 from dataclasses import dataclass
 from typing import Any, Self
 
-from pyfuse.core.errors import RemoteError, TaskStalled
+from pyfuse.core.errors import RemoteError, TaskCancelled, TaskStalled
+from pyfuse.core.progress import ProgressInfo
 from pyfuse.worker.backends.base import Backend
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,10 @@ class ResultEnvelope:
         return cls(task_id=task_id, status="ok", result=result)
 
     @classmethod
+    def cancelled(cls, task_id: str) -> Self:
+        return cls(task_id=task_id, status="cancelled")
+
+    @classmethod
     def failure(cls, task_id: str, exc: BaseException) -> Self:
         return cls(
             task_id=task_id,
@@ -51,7 +56,7 @@ class ResultEnvelope:
         }
         if self.status == "ok":
             d["result"] = self.result
-        else:
+        elif self.status == "error":
             d["error_type"] = self.error_type
             d["error_message"] = self.error_message
             d["error_traceback"] = self.error_traceback
@@ -91,8 +96,12 @@ class Result:
         return self._task_id
 
     def _unwrap(self) -> Any:
-        """Unwrap a cached envelope, raising on error."""
+        """Unwrap a cached envelope, raising on error or cancellation."""
         assert self._envelope is not None
+        if self._envelope.status == "cancelled":
+            raise TaskCancelled(
+                f"Task {self._task_id} was cancelled"
+            ) from None
         if self._envelope.status == "error":
             msg = (
                 f"{self._envelope.error_type}: "
@@ -172,6 +181,38 @@ class Result:
         """Allow ``await result`` as shorthand for ``await result.result()``."""
         return self.result().__await__()
 
+    # -- cancellation ----------------------------------------------------------
+
+    async def cancel(self) -> None:
+        """Cancel the task.
+
+        Marks the task as cancelled in the backend.  If the worker
+        hasn't started execution yet, it will skip the task.  If
+        execution is already in progress, it will continue but the
+        client will receive a :class:`TaskCancelled` error.
+
+        Awaiting the result after cancellation raises
+        :class:`TaskCancelled`.
+        """
+        await self._backend.cancel_task(self._task_id)
+        await self._backend.send_result(
+            self._task_id,
+            ResultEnvelope.cancelled(self._task_id).to_json(),
+        )
+
+    # -- progress --------------------------------------------------------------
+
+    async def progress(self) -> ProgressInfo | None:
+        """Return the latest progress reported by the task, or ``None``.
+
+        Progress is available when the task function calls
+        :func:`pyfuse.progress`.
+        """
+        raw = await self._backend.get_progress(self._task_id)
+        if raw is None:
+            return None
+        return ProgressInfo.from_json(raw)
+
     # -- non-blocking queries --------------------------------------------------
 
     async def done(self) -> bool:
@@ -185,13 +226,17 @@ class Result:
         return False
 
     async def status(self) -> str:
-        """Return ``"pending"``, ``"success"``, or ``"error"``."""
+        """Return ``"pending"``, ``"success"``, ``"error"``, or ``"cancelled"``."""
         if self._envelope is None:
             raw = await self._backend.try_get_result(self._task_id)
             if raw is None:
                 return "pending"
             self._envelope = ResultEnvelope.from_json(raw)
-        return "success" if self._envelope.status == "ok" else "error"
+        if self._envelope.status == "ok":
+            return "success"
+        if self._envelope.status == "cancelled":
+            return "cancelled"
+        return "error"
 
     def __repr__(self) -> str:
         s = "pending" if self._envelope is None else self._envelope.status

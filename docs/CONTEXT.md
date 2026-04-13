@@ -18,7 +18,8 @@ pyfuse/
 │   ├── task.py              # Task dataclass: serializable envelope (graph + args + options)
 │   ├── models.py            # FunctionNode and ImportInfo dataclasses, content hashing
 │   ├── version.py           # _VERSION = "0.4.0"
-│   └── errors.py            # Error, WorkerError, RemoteError, DependencyError, TaskStalled
+│   ├── errors.py            # Error, WorkerError, RemoteError, DependencyError, TaskStalled, TaskCancelled
+│   └── progress.py          # ProgressInfo dataclass, progress() function, context variable
 ├── graph/
 │   ├── decorator.py         # @trace: marks functions, adds .run()/.start()/.map()
 │   ├── graph.py             # Graph class: registration, auto-discovery, serialization
@@ -54,9 +55,9 @@ Data models and error types. `FunctionNode` represents a function in the graph, 
 
 Handles remote execution. Built entirely on `asyncio`:
 
-- **`worker.py`**: `Worker` class reconstructs functions from serialized stores, caches compiled namespaces by subgraph content hash, and executes with retry/timeout policies. Async user functions are awaited directly; sync user functions run in `loop.run_in_executor()`. Timeouts use `asyncio.wait_for()`.
-- **`remote.py`**: Orchestrates the connection lifecycle, worker event loop (`asyncio.TaskGroup` + `asyncio.Semaphore` for bounded concurrency), and heartbeat tasks (`asyncio.create_task`).
-- **`result.py`**: `Result` is an awaitable future returned by `.start()`. Simple async polling loop for stall detection.
+- **`worker.py`**: `Worker` class reconstructs functions from serialized stores, caches compiled namespaces by subgraph content hash, and executes with retry/timeout policies. Async user functions are awaited directly; sync user functions run in `loop.run_in_executor()` with explicit context propagation via `contextvars.copy_context()`. Timeouts use `asyncio.wait_for()`.
+- **`remote.py`**: Orchestrates the connection lifecycle, worker event loop (`asyncio.Semaphore` for bounded concurrency), heartbeat tasks (`asyncio.create_task`), progress injection, cancellation checking, and graceful shutdown via signal handling.
+- **`result.py`**: `Result` is an awaitable future returned by `.start()`. Simple async polling loop for stall detection. Supports `cancel()` and `progress()` methods.
 - **`deps.py`**: Package installation via `asyncio.create_subprocess_exec`.
 - **`backends/`**: All backend methods are `async def`. `listen()` and `subscribe_results()` are async generators.
 
@@ -99,8 +100,11 @@ await Worker.run(task)
 - **Decorator stripping**: `@trace` lines are removed from captured source so reconstructed code doesn't depend on pyfuse.
 - **Backend auto-detection**: `connect()` picks Redis or local TCP backend based on URL scheme. Falls back to `PYFUSE_BACKEND` env var.
 - **Worker caching**: Keyed by SHA-256 of all reachable content hashes (sorted + joined). Same code from different clients = cache hit.
-- **Async-native I/O**: All backend methods, worker execution, result handling, pip installation, and subprocess management use `asyncio`. Sync user functions run in `loop.run_in_executor()` to avoid blocking the event loop.
+- **Async-native I/O**: All backend methods, worker execution, result handling, pip installation, and subprocess management use `asyncio`. Sync user functions run in `loop.run_in_executor()` with explicit `contextvars.copy_context()` to propagate progress callbacks.
 - **Heartbeat**: Workers send heartbeats via `asyncio.create_task`. Client-side stall detection tracks when heartbeat *values* last changed using local monotonic clock (no cross-machine timestamp comparison).
+- **Task cancellation**: Cooperative via backend flags. Workers check before execution; clients store a "cancelled" result envelope. `TaskCancelled` is raised on await.
+- **Progress reporting**: Uses `contextvars.ContextVar` for the progress callback. Sync functions get context propagated via explicit copy. Progress updates are fire-and-forget async tasks.
+- **Graceful shutdown**: Signal-based (`SIGINT`/`SIGTERM`). First signal stops the listener and waits for in-flight tasks. Second signal cancels all tasks.
 
 ## Serialization format (v0.4.0)
 
@@ -146,7 +150,16 @@ results = await func.map([(a1, b1), ...]) # batch submit + await all (returns va
 result = await future                     # shorthand for await future.result()
 result = await future.result(timeout=10, stall_timeout=10.0)  # with options
 await future.done()                       # non-blocking check
-await future.status()                     # "pending", "success", or "error"
+await future.status()                     # "pending", "success", "error", or "cancelled"
+
+# Cancellation
+await future.cancel()                     # cancel task; raises TaskCancelled when awaited
+
+# Progress reporting
+pyfuse.progress(75.0)                     # report percentage (no-op locally)
+pyfuse.progress(3, 10, message="step 3")  # report current/total with message
+p = await future.progress()               # get latest ProgressInfo (or None)
+if p: print(f"{p.current}/{p.total} {p.percent:.0f}%")
 
 # Serialization (sync -- pure CPU)
 pyfuse.serialize(func)                    # -> JSON string
@@ -166,7 +179,7 @@ pytest                    # run all tests
 pytest tests/test_api.py  # specific module
 ```
 
-15 test modules covering: API surface, AST analysis, async features (Result.result, await, .run(), .start(), .map(), gather, heartbeat, stall detection), auto-discovery (including metaclass keywords, class attributes, class decorators, `__init_subclass__`), dependency management, graph operations, integration scenarios, local backend (async-native TCP), remote execution, runtime tracing (including closure capture of non-traced functions, lambdas, constructor expressions, pickle fallback), store operations, stress tests (47 functions across 7 files), task serialization, temp venv management, and worker caching/execution.
+16 test modules covering: API surface, AST analysis, async features (Result.result, await, .run(), .start(), .map(), gather, heartbeat, stall detection), auto-discovery (including metaclass keywords, class attributes, class decorators, `__init_subclass__`), cancellation and progress reporting, dependency management, graph operations, integration scenarios, local backend (async-native TCP), remote execution, runtime tracing (including closure capture of non-traced functions, lambdas, constructor expressions, pickle fallback), store operations, stress tests (47 functions across 7 files), task serialization, temp venv management, and worker caching/execution.
 
 All async tests use `pytest-asyncio` with `asyncio_mode = "auto"`.
 
@@ -185,7 +198,7 @@ pytest                          # test suite
 - `analyzer.py` is the core of static analysis (~365 lines). Changes here affect what gets captured.
 - `tracing.py` uses `contextvars.ContextVar` for thread/async safety. The `_runtime_deps` dict is guarded by `threading.Lock`.
 - The `Task` wire format keeps `graph` as a JSON string (not nested object) to keep the envelope flat.
-- Backend implementations must satisfy the `Backend` ABC in `backends/base.py`. All methods are `async def`. New methods (`notify_result`, `subscribe_results`, `get_heartbeats`) are non-abstract with safe defaults -- custom backends don't break.
+- Backend implementations must satisfy the `Backend` ABC in `backends/base.py`. All methods are `async def`. New methods (`notify_result`, `subscribe_results`, `get_heartbeats`, `cancel_task`, `is_cancelled`, `send_progress`, `get_progress`) are non-abstract with safe defaults -- custom backends don't break.
 - `install_package_as()` is a no-op at runtime; the AST analyzer in `decorator.py`/`analyzer.py` detects the `with` block pattern and tags `ImportInfo` objects with the package name.
 - `_capture_closure()` in `graph.py` uses a multi-tier strategy: repr validation → traced functions → lambdas (source extraction) → non-traced user functions (auto-registration) → constructor expressions (defaultdict/Counter/deque) → pickle fallback → warning. Returns function objects for auto-registration.
 - `_set_class_metadata()` in `graph.py` captures class-level attributes and decorators from the class source AST. Called from both `_auto_register_class` and `_discover_self_call_deps` to handle both constructor-discovered and directly-traced method classes.

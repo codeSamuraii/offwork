@@ -4,14 +4,16 @@ import asyncio
 import atexit
 import contextlib
 import inspect
+import json
 import logging
 import os
 import signal
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from pyfuse.core.progress import _progress_callback
 from pyfuse.core.task import Task
 from pyfuse.core.version import _VERSION
 from pyfuse.worker.backends.base import Backend
@@ -200,6 +202,78 @@ async def _heartbeat_loop(
             pass
 
 
+_PROGRESS_MIN_INTERVAL = 0.05  # 50ms rate limit
+
+
+def _make_progress_callback(
+    backend: Backend,
+    task_id: str,
+    loop: asyncio.AbstractEventLoop,
+) -> tuple[
+    Callable[[float, float | None, str | None], None],
+    Callable[[], Awaitable[None]],
+]:
+    """Create a rate-limited progress callback.
+
+    Returns ``(callback, flush)``.  The callback stores the latest
+    progress locally and only sends to the backend when at least 50 ms
+    have elapsed since the last send.  Call ``await flush()`` after
+    execution to guarantee the final state is delivered.
+    """
+    state: dict[str, Any] = {
+        "latest": None,          # latest progress dict (always kept)
+        "last_sent": 0.0,        # monotonic time of last send
+        "task": None,            # most recent fire-and-forget Task
+        "flushed": False,        # set by flush() to block late sends
+    }
+
+    def _do_send(data_json: str) -> None:
+        if state["flushed"]:
+            return
+        state["task"] = asyncio.create_task(
+            backend.send_progress(task_id, data_json),
+        )
+
+    def _on_progress(
+        current: float,
+        total: float | None = None,
+        message: str | None = None,
+    ) -> None:
+        if state["flushed"]:
+            return
+        d: dict[str, Any] = {"current": current}
+        if total is not None:
+            d["total"] = total
+        if message is not None:
+            d["message"] = message
+        state["latest"] = d
+
+        now = time.monotonic()
+        if now - state["last_sent"] >= _PROGRESS_MIN_INTERVAL:
+            data_json = json.dumps(d, separators=(",", ":"))
+            state["last_sent"] = now
+            try:
+                asyncio.get_running_loop()
+                _do_send(data_json)
+            except RuntimeError:
+                loop.call_soon_threadsafe(_do_send, data_json)
+
+    async def _flush() -> None:
+        state["flushed"] = True
+        # Cancel any in-flight fire-and-forget send to prevent stale overwrites
+        t: asyncio.Task[None] | None = state.get("task")
+        if t is not None and not t.done():
+            t.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await t
+        # Always send the authoritative final state
+        if state["latest"] is not None:
+            data_json = json.dumps(state["latest"], separators=(",", ":"))
+            await backend.send_progress(task_id, data_json)
+
+    return _on_progress, _flush
+
+
 def _log_task_result(
     task: Task,
     envelope: ResultEnvelope,
@@ -213,6 +287,11 @@ def _log_task_result(
         logger.info(
             "\u2713  %-40s %6.0fms  %s  %s",
             task.function_name, elapsed_ms, short_id, details,
+        )
+    elif envelope.status == "cancelled":
+        logger.info(
+            "\u2718  %-40s          %s  cancelled",
+            task.function_name, short_id,
         )
     else:
         error_msg = f"  {envelope.error_type}: {envelope.error_message}"
@@ -231,8 +310,19 @@ async def _handle_task(
     task = Task.from_json(task_json)
     logger.debug("Received task %s: %s", task.task_id, task.function_name)
 
+    # Check cancellation before execution
+    if await backend.is_cancelled(task.task_id):
+        envelope = ResultEnvelope.cancelled(task.task_id)
+        _log_task_result(task, envelope, 0, worker)
+        return
+
     cancel_event = asyncio.Event()
     hb_task = asyncio.create_task(_heartbeat_loop(backend, task.task_id, cancel_event))
+
+    # Set up rate-limited progress callback
+    loop = asyncio.get_running_loop()
+    progress_cb, flush = _make_progress_callback(backend, task.task_id, loop)
+    token = _progress_callback.set(progress_cb)
 
     t0 = time.monotonic()
     try:
@@ -242,14 +332,21 @@ async def _handle_task(
         logger.debug("Task %s failed", task.task_id, exc_info=True)
         envelope = ResultEnvelope.failure(task.task_id, exc)
     finally:
+        _progress_callback.reset(token)
         cancel_event.set()
         hb_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await hb_task
 
     elapsed_ms = (time.monotonic() - t0) * 1000
+
+    # Flush any pending progress, then send the result unconditionally.
+    # If the client cancelled mid-execution, it already stored a cancelled
+    # result envelope (via Result.cancel) which the client reads first.
+    await flush()
     await backend.send_result(task.task_id, envelope.to_json())
     await backend.notify_result(task.task_id)
+
     _log_task_result(task, envelope, elapsed_ms, worker)
 
 
@@ -258,16 +355,81 @@ async def _worker_loop(
     backend: Backend,
     concurrency: int,
 ) -> None:
-    """Consume tasks from *backend* and dispatch to *worker*."""
+    """Consume tasks from *backend* and dispatch to *worker*.
+
+    Supports graceful shutdown: on the first SIGINT/SIGTERM, stops
+    accepting new tasks and waits for in-progress tasks to complete.
+    On the second signal, cancels all in-progress tasks immediately.
+    """
+    shutdown = asyncio.Event()
+    pending: set[asyncio.Task[None]] = set()
     sem = asyncio.Semaphore(concurrency)
+
+    _got_first_signal = False
+
+    def _on_shutdown_signal() -> None:
+        nonlocal _got_first_signal
+        if not _got_first_signal:
+            _got_first_signal = True
+            shutdown.set()
+        else:
+            logger.warning("Forced shutdown — cancelling %d task(s).", len(pending))
+            for t in pending:
+                t.cancel()
+
+    # Install signal handlers (not available on Windows)
+    loop = asyncio.get_running_loop()
+    _signals_installed = False
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _on_shutdown_signal)
+            _signals_installed = True
+        except (NotImplementedError, RuntimeError):
+            pass
 
     async def bounded_handle(task_json: str) -> None:
         async with sem:
             await _handle_task(worker, backend, task_json)
 
-    async with asyncio.TaskGroup() as tg:
+    async def _listen() -> None:
         async for task_json in backend.listen():
-            tg.create_task(bounded_handle(task_json))
+            if shutdown.is_set():
+                return
+            task = asyncio.create_task(bounded_handle(task_json))
+            pending.add(task)
+            task.add_done_callback(pending.discard)
+
+    listen_task = asyncio.create_task(_listen())
+
+    try:
+        await shutdown.wait()
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        shutdown.set()
+
+    # Stop accepting new tasks
+    listen_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await listen_task
+
+    # Wait for in-flight tasks to complete
+    if pending:
+        logger.info(
+            "Graceful shutdown: waiting for %d task(s) to complete... "
+            "(Ctrl+C to force quit)",
+            len(pending),
+        )
+        try:
+            await asyncio.gather(*pending, return_exceptions=True)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            for t in pending:
+                t.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    # Clean up signal handlers
+    if _signals_installed:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            with contextlib.suppress(NotImplementedError, RuntimeError):
+                loop.remove_signal_handler(sig)
 
 
 async def serve(
@@ -311,8 +473,6 @@ async def serve(
 
     try:
         await _worker_loop(worker, backend, concurrency)
-    except KeyboardInterrupt:
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
-        logger.info("Worker stopped.")
     finally:
         await disconnect()
+        logger.info("Worker stopped.")

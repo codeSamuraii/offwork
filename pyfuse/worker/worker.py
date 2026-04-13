@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import functools
 import hashlib
 import inspect
@@ -122,8 +123,9 @@ class Worker:
             return await cached.func(*args, **kwargs)
 
         loop = asyncio.get_running_loop()
+        ctx = contextvars.copy_context()
         return await loop.run_in_executor(
-            None, functools.partial(cached.func, *args, **kwargs),
+            None, ctx.run, functools.partial(cached.func, *args, **kwargs),
         )
 
     async def run_with_policy(self, task: Task) -> Any:
@@ -221,6 +223,7 @@ async def execute(
         return await cached.func(*resolved_args, **resolved_kwargs)
 
     loop = asyncio.get_running_loop()
+    ctx = contextvars.copy_context()
     return await loop.run_in_executor(
-        None, functools.partial(cached.func, *resolved_args, **resolved_kwargs),
+        None, ctx.run, functools.partial(cached.func, *resolved_args, **resolved_kwargs),
     )

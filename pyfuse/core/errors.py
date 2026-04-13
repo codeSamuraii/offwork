@@ -32,6 +32,10 @@ class TaskStalled(Error):
     """Raised when a worker stops sending heartbeats for a task."""
 
 
+class TaskCancelled(Error):
+    """Raised when a task is cancelled before or during execution."""
+
+
 # ---------------------------------------------------------------------------
 # Custom excepthook: suppress client traceback for RemoteError
 # ---------------------------------------------------------------------------

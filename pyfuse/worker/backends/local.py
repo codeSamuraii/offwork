@@ -67,6 +67,8 @@ class _Broker:
         self._tasks: asyncio.Queue[str] = asyncio.Queue()
         self._results: dict[str, asyncio.Queue[str]] = {}
         self._heartbeats: dict[str, float] = {}
+        self._cancelled: set[str] = set()
+        self._progress: dict[str, str] = {}
         self._result_subs: list[asyncio.Queue[str]] = []
 
     def _result_slot(self, task_id: str) -> asyncio.Queue[str]:
@@ -116,7 +118,10 @@ class _Broker:
             self._tasks.put_nowait(msg["data"])
             return {"ok": True}
         if op == "result_put":
-            self._result_slot(msg["task_id"]).put_nowait(msg["data"])
+            try:
+                self._result_slot(msg["task_id"]).put_nowait(msg["data"])
+            except asyncio.QueueFull:
+                pass  # first result wins (e.g., cancel before worker result)
             for sub in self._result_subs:
                 sub.put_nowait(msg["task_id"])
             return {"ok": True}
@@ -135,6 +140,16 @@ class _Broker:
                 "ok": True,
                 "data": {tid: self._heartbeats.get(tid) for tid in msg["task_ids"]},
             }
+        if op == "cancel":
+            self._cancelled.add(msg["task_id"])
+            return {"ok": True}
+        if op == "is_cancelled":
+            return {"ok": True, "data": msg["task_id"] in self._cancelled}
+        if op == "progress_put":
+            self._progress[msg["task_id"]] = msg["data"]
+            return {"ok": True}
+        if op == "progress_get":
+            return {"ok": True, "data": self._progress.get(msg["task_id"])}
         return {"ok": False, "error": f"unknown op: {op}"}
 
     # -- streaming handlers ----------------------------------------------------
@@ -357,6 +372,22 @@ class LocalBackend(Backend):
         resp = await self._request({"op": "hb_batch", "task_ids": task_ids})
         result: dict[str, float | None] = resp.get("data", {})
         return result
+
+    async def cancel_task(self, task_id: str) -> None:
+        await self._request({"op": "cancel", "task_id": task_id})
+
+    async def is_cancelled(self, task_id: str) -> bool:
+        resp = await self._request({"op": "is_cancelled", "task_id": task_id})
+        return bool(resp.get("data", False))
+
+    async def send_progress(self, task_id: str, progress_json: str) -> None:
+        await self._request({
+            "op": "progress_put", "task_id": task_id, "data": progress_json,
+        })
+
+    async def get_progress(self, task_id: str) -> str | None:
+        resp = await self._request({"op": "progress_get", "task_id": task_id})
+        return resp.get("data")
 
     async def notify_result(self, task_id: str) -> None:
         pass  # broker dispatches notifications inside result_put

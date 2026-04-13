@@ -2,8 +2,10 @@ import inspect
 from collections.abc import Callable
 from typing import Any
 
-from pyfuse.core.errors import DependencyError, Error, RemoteError, TaskStalled, WorkerError
+from pyfuse.core.errors import DependencyError, Error, RemoteError, TaskCancelled, TaskStalled, WorkerError
 from pyfuse.core.models import FunctionNode, ImportInfo
+from pyfuse.core.progress import ProgressInfo
+from pyfuse.core.progress import progress as progress
 from pyfuse.core.task import Task
 from pyfuse.graph.decorator import trace
 from pyfuse.graph.graph import Graph
@@ -70,6 +72,7 @@ __all__ = [
     "disconnect",
     "serve",
     "install_package_as",
+    "progress",
     # Serialization
     "serialize",
     "reconstruct",
@@ -77,10 +80,12 @@ __all__ = [
     "execute",
     # Result
     "Result",
+    "ProgressInfo",
     # Errors
     "Error",
     "RemoteError",
     "TaskStalled",
+    "TaskCancelled",
     # Graph
     "get_graph",
     "Graph",

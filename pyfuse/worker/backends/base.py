@@ -57,6 +57,38 @@ class Backend(abc.ABC):
         """
         return {tid: await self.get_heartbeat(tid) for tid in task_ids}
 
+    # -- Cancellation ----------------------------------------------------------
+
+    async def cancel_task(self, task_id: str) -> None:
+        """Mark a task as cancelled.
+
+        The worker checks this flag before starting execution.
+        The default implementation is a no-op.
+        """
+
+    async def is_cancelled(self, task_id: str) -> bool:
+        """Return whether a task has been cancelled.
+
+        The default implementation always returns ``False``.
+        """
+        return False
+
+    # -- Progress --------------------------------------------------------------
+
+    async def send_progress(self, task_id: str, progress_json: str) -> None:
+        """Store the latest progress data for a task.
+
+        Called by the worker when user code calls :func:`pyfuse.progress`.
+        The default implementation is a no-op.
+        """
+
+    async def get_progress(self, task_id: str) -> str | None:
+        """Return the latest progress JSON for a task, or ``None``.
+
+        The default returns ``None``.
+        """
+        return None
+
     # -- Result notifications --------------------------------------------------
 
     async def notify_result(self, task_id: str) -> None:

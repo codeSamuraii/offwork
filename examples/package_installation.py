@@ -118,7 +118,7 @@ def markdown_word_freq(md_text: str) -> str:
 # ---------------------------------------------------------------------------
 
 async def main() -> None:
-    pyfuse.connect("redis://localhost:6379")
+    pyfuse.connect("local://localhost:9748")
 
     # Simple package (import name == pip name)
     print("--- requests (auto-detected) ---")
@@ -127,7 +127,7 @@ async def main() -> None:
 
     # Mismatched package names
     print("\n--- PyYAML (install_package_as) ---")
-    result = await to_yaml.run({"framework": "pyfuse", "version": "0.3.0"})
+    result = await to_yaml.run({"framework": "pyfuse", "version": "0.4.0"})
     print(f"  YAML output:\n{result}")
 
     print("--- python-dateutil (install_package_as) ---")

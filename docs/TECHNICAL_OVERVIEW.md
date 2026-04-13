@@ -58,12 +58,13 @@ pyfuse/
 ### Worker side: `await serve()` / `python -m pyfuse worker`
 
 1. **Listen** -- `async for task_json in backend.listen()` yields tasks as they arrive.
-2. **Deserialize** -- Parse the JSON graph into a `Store`.
-3. **Cache check** -- Compute a subgraph key (SHA-256 of all reachable content hashes). If cached, skip to step 6.
-4. **Install dependencies** -- Extract third-party imports, install missing packages via `asyncio.create_subprocess_exec`.
-5. **Reconstruct** -- Produce a self-contained Python script from the store. `compile()` and `exec()` it into a fresh namespace.
-6. **Execute** -- Call the function with the provided arguments. Async functions are awaited directly; sync functions run in an executor. Apply retry/timeout policies via `asyncio.wait_for`.
-7. **Send result** -- Wrap the return value (or exception traceback) in a `ResultEnvelope` and send it back.
+2. **Cancellation check** -- If `await backend.is_cancelled(task_id)` returns ``True``, skip execution and log the cancellation.
+3. **Deserialize** -- Parse the JSON graph into a `Store`.
+4. **Cache check** -- Compute a subgraph key (SHA-256 of all reachable content hashes). If cached, skip to step 7.
+5. **Install dependencies** -- Extract third-party imports, install missing packages via `asyncio.create_subprocess_exec`.
+6. **Reconstruct** -- Produce a self-contained Python script from the store. `compile()` and `exec()` it into a fresh namespace.
+7. **Execute** -- Call the function with the provided arguments. Async functions are awaited directly; sync functions run in an executor with explicit context propagation (for progress reporting). Apply retry/timeout policies via `asyncio.wait_for`.
+8. **Send result** -- Wrap the return value (or exception traceback) in a `ResultEnvelope` and send it back. If cancelled during execution, skip result delivery.
 
 ### Client side: `await future` / `await future.result()`
 
@@ -89,6 +90,10 @@ The `Backend` ABC defines an async transport interface:
 | `async send_heartbeat(task_id)` | Signal active processing (no-op default) |
 | `async get_heartbeat(task_id)` | Get last heartbeat timestamp |
 | `async get_heartbeats(task_ids)` | Batch heartbeat fetch (default loops over `get_heartbeat`) |
+| `async cancel_task(task_id)` | Mark a task as cancelled (no-op default) |
+| `async is_cancelled(task_id)` | Check cancellation flag (default returns `False`) |
+| `async send_progress(task_id, json)` | Store latest progress data (no-op default) |
+| `async get_progress(task_id)` | Get latest progress JSON (default returns `None`) |
 | `async notify_result(task_id)` | Push notification that result is ready (no-op default) |
 | `async subscribe_results()` | Async iterator yielding task_ids on result arrival |
 | `async close()` | Release resources |
@@ -101,6 +106,8 @@ Uses `redis.asyncio.Redis` with `RPUSH`/`BLPOP` patterns. Keys:
 - `pyfuse:tasks` -- task queue
 - `pyfuse:result:{task_id}` -- per-task result (TTL: 300s)
 - `pyfuse:heartbeat:{task_id}` -- worker heartbeat timestamp (TTL: 30s)
+- `pyfuse:cancel:{task_id}` -- cancellation flag (TTL: 3600s)
+- `pyfuse:progress:{task_id}` -- latest progress JSON (TTL: 300s)
 - `pyfuse:notify` -- Pub/Sub channel for result notifications
 
 Result notifications use Redis Pub/Sub (`PUBLISH`/`SUBSCRIBE`). Batch heartbeat fetching uses `MGET` for efficiency.
@@ -283,9 +290,11 @@ Error (includes remote traceback):
 | Method / Property | Description |
 |------------------|-------------|
 | `await result` | Shorthand for `await result.result()` |
-| `await result.result(timeout, stall_timeout=10.0)` | Await with options; raises `RemoteError` on failure, `TaskStalled` on stall |
+| `await result.result(timeout, stall_timeout=10.0)` | Await with options; raises `RemoteError` on failure, `TaskStalled` on stall, `TaskCancelled` on cancel |
+| `await result.cancel()` | Cancel the task; awaiting raises `TaskCancelled` |
+| `await result.progress()` | Latest `ProgressInfo` (or `None`) |
 | `await result.done()` | Non-blocking check |
-| `await result.status()` | `"pending"`, `"success"`, or `"error"` |
+| `await result.status()` | `"pending"`, `"success"`, `"error"`, or `"cancelled"` |
 | `.task_id` | The task identifier |
 
 ## Serialization format
@@ -416,6 +425,54 @@ Stall detection only triggers after at least one heartbeat has been observed, av
 | Method | Stall detection |
 |--------|----------------|
 | `await result.result()` | On by default (`stall_timeout=10.0`). Disable with `stall_timeout=None` |
+
+## Task cancellation
+
+Tasks can be cancelled via `await result.cancel()`. Cancellation is cooperative:
+
+1. **Client** calls `cancel()`, which sets a cancellation flag in the backend and stores a ``"cancelled"`` result envelope.
+2. **Worker** checks `is_cancelled()` before starting execution. If cancelled, the task is skipped entirely (no result sent, since the cancel already stored one).
+3. **During execution**: if `cancel()` is called while a task is running, the execution continues. When the worker finishes, it checks `is_cancelled()` again and discards the result if cancelled.
+4. **Client** receives `TaskCancelled` when awaiting a cancelled task.
+
+### Backend storage
+
+| Backend | Cancellation storage |
+|---------|---------------------|
+| Redis | `SET pyfuse:cancel:{task_id} 1 EX 3600` |
+| Local | In-memory `set()` in the broker |
+
+## Progress reporting
+
+Tasks can report progress via `pyfuse.progress(percent)` or `pyfuse.progress(current, total)`.
+
+### How it works
+
+1. **Context variable**: A `contextvars.ContextVar` holds the progress callback. The worker sets it before executing each task.
+2. **Sync function support**: `Worker.run()` explicitly propagates context variables to executor threads via `contextvars.copy_context().run()`.
+3. **Rate-limited sends**: The progress callback rate-limits backend sends to one per 50 ms. Intermediate updates are stored locally. A ``flush()`` coroutine sends the final state after execution completes.
+4. **No-op locally**: When called outside a worker, `progress()` is a silent no-op (context variable is ``None``).
+
+### Backend storage
+
+| Backend | Progress storage |
+|---------|-----------------|
+| Redis | `SET pyfuse:progress:{task_id} <json> EX 300` |
+| Local | In-memory `dict` in the broker |
+
+## Graceful shutdown
+
+Workers support graceful shutdown via signal handling:
+
+1. **First SIGINT/SIGTERM**: Sets a shutdown event, stops accepting new tasks, and waits for in-progress tasks to complete.
+2. **Second SIGINT/SIGTERM**: Cancels all in-progress tasks immediately and exits.
+
+Signal handlers are installed via `loop.add_signal_handler()` (Unix). On Windows, falls back to `KeyboardInterrupt` handling. The worker logs shutdown progress:
+
+```
+12:30:00 INFO    Graceful shutdown: waiting for 2 task(s) to complete... (Ctrl+C to force quit)
+12:30:02 INFO    Worker stopped.
+```
 
 ## Thread and task safety
 

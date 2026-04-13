@@ -81,6 +81,9 @@ Common mappings (`cv2` -> `opencv-python`, `PIL` -> `Pillow`, etc.) are built in
 - **Third-party package auto-install** -- Workers install missing packages via pip before execution.
 - **Async-native** -- The entire I/O layer is built on `asyncio`. `.run()`, `.start()`, `.map()`, `await result`, and `asyncio.gather` all work out of the box.
 - **Heartbeat & stall detection** -- Workers send periodic heartbeats. Clients raise `TaskStalled` when a worker stops responding.
+- **Task cancellation** -- `await future.cancel()` cancels pending or in-progress tasks.
+- **Progress reporting** -- Call `pyfuse.progress(75.0)` or `pyfuse.progress(3, 10)` inside tasks; query with `await future.progress()`.
+- **Graceful shutdown** -- Workers finish in-progress tasks before stopping. Second Ctrl+C force-quits.
 - **Class methods** -- `self.method()` and `cls.method()` dependencies are detected. Entire class hierarchies (including `super()`), class-level attributes, decorators (`@dataclass`, etc.), and metaclass keywords are reconstructed.
 - **Retry and timeout** -- `@trace(timeout=30, retries=3)` with exponential backoff.
 - **Batch submission** -- `await func.map([(a1, b1), (a2, b2)])` submits and awaits multiple tasks.
@@ -98,6 +101,8 @@ pyfuse run examples/remote_execution.py
 - **[`examples/remote_execution.py`](examples/remote_execution.py)** -- Remote execution with auto-discovered dependencies
 - **[`examples/async_execution.py`](examples/async_execution.py)** -- Async: `.run()`, `.start()`, `.map()`, `asyncio.gather`
 - **[`examples/package_installation.py`](examples/package_installation.py)** -- Auto-installing third-party packages on workers
+- **[`examples/progress_reporting.py`](examples/progress_reporting.py)** -- Real-time progress tracking from long-running tasks
+- **[`examples/cancellation.py`](examples/cancellation.py)** -- Cancelling pending or in-progress tasks
 - **[`examples/large_module.py`](examples/large_module.py)** -- Stress test: 47 functions across 7 files, one `@trace`
 
 ## Documentation
