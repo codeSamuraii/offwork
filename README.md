@@ -38,8 +38,8 @@ Only the entry point needs `@trace`. Everything it calls -- `add()`, imports, cl
 Start an isolated worker (temporary venv with `--tmp`, cleaned up on exit):
 
 ```bash
-pyfuse worker --tmp --backend local://localhost:9748  # Same machine (async TCP)
-pyfuse worker --tmp --backend redis://localhost:6379  # Remote using Redis
+pyfuse worker --tmp --backend local://localhost:9748   # Same machine (async TCP)
+pyfuse worker --tmp --backend redis://localhost:6379   # Remote using Redis
 ```
 
 Run a script:

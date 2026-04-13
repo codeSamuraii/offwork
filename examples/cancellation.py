@@ -7,7 +7,7 @@ Usage:
     pyfuse worker --backend redis://localhost:6379 --tmp
 
     # Terminal 2 -- run this script
-    python -m pyfuse run examples/cancellation.py
+    pyfuse run examples/cancellation.py
 """
 
 import asyncio

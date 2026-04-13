@@ -189,13 +189,27 @@ async def _heartbeat_loop(
     backend: Backend,
     task_id: str,
     cancel_event: asyncio.Event,
+    exec_task: asyncio.Task[Any] | None = None,
 ) -> None:
-    """Send periodic heartbeats until *cancel_event* is set."""
+    """Send periodic heartbeats and check for cancellation.
+
+    When *exec_task* is provided and the backend reports the task as
+    cancelled, the execution task is cancelled via
+    :meth:`asyncio.Task.cancel`, which raises :class:`CancelledError`
+    at the next ``await`` in async user functions.
+    """
     while not cancel_event.is_set():
         try:
             await backend.send_heartbeat(task_id)
         except Exception:
             pass  # best-effort
+        if exec_task is not None:
+            try:
+                if await backend.is_cancelled(task_id):
+                    exec_task.cancel()
+                    return
+            except Exception:
+                pass
         try:
             await asyncio.wait_for(cancel_event.wait(), timeout=_HEARTBEAT_INTERVAL)
         except asyncio.TimeoutError:
@@ -316,18 +330,25 @@ async def _handle_task(
         _log_task_result(task, envelope, 0, worker)
         return
 
-    cancel_event = asyncio.Event()
-    hb_task = asyncio.create_task(_heartbeat_loop(backend, task.task_id, cancel_event))
-
     # Set up rate-limited progress callback
     loop = asyncio.get_running_loop()
     progress_cb, flush = _make_progress_callback(backend, task.task_id, loop)
     token = _progress_callback.set(progress_cb)
 
+    # Run execution as a task so the heartbeat loop can cancel it
+    exec_task: asyncio.Task[Any] = asyncio.create_task(worker.run_with_policy(task))
+
+    cancel_event = asyncio.Event()
+    hb_task = asyncio.create_task(
+        _heartbeat_loop(backend, task.task_id, cancel_event, exec_task),
+    )
+
     t0 = time.monotonic()
     try:
-        result = await worker.run_with_policy(task)
+        result = await exec_task
         envelope = ResultEnvelope.success(task.task_id, result)
+    except asyncio.CancelledError:
+        envelope = ResultEnvelope.cancelled(task.task_id)
     except Exception as exc:
         logger.debug("Task %s failed", task.task_id, exc_info=True)
         envelope = ResultEnvelope.failure(task.task_id, exc)

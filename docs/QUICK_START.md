@@ -36,7 +36,7 @@ def hypotenuse(a: float, b: float) -> float:
 ### 2. Start a worker
 
 ```bash
-python -m pyfuse worker --backend redis://localhost:6379
+pyfuse worker --backend redis://localhost:6379
 ```
 
 The worker waits for tasks, reconstructs the function source on the fly, and executes it -- no prior knowledge of your code required.
@@ -250,13 +250,13 @@ result = await fetch_and_process.run("https://example.com")
 
 ```bash
 # 4 concurrent tasks
-python -m pyfuse worker --backend redis://localhost:6379 -c 4
+pyfuse worker --backend redis://localhost:6379 -c 4
 
 # Disable automatic pip installs
-python -m pyfuse worker --backend redis://localhost:6379 --no-auto-install
+pyfuse worker --backend redis://localhost:6379 --no-auto-install
 
 # Run in an isolated temporary venv (auto-cleaned on exit)
-python -m pyfuse worker --backend redis://localhost:6379 --tmp
+pyfuse worker --backend redis://localhost:6379 --tmp
 ```
 
 Or start a worker programmatically:
@@ -273,7 +273,7 @@ asyncio.run(pyfuse.serve("redis://localhost:6379", concurrency=4))
 The `run` command creates an isolated venv, auto-detects third-party dependencies from the script (including `install_package_as` blocks), installs them, and runs the script:
 
 ```bash
-python -m pyfuse run examples/remote_execution.py
+pyfuse run examples/remote_execution.py
 ```
 
 ## Backends
@@ -507,8 +507,8 @@ except TaskCancelled:
 
 ```bash
 # Remote execution
-python -m pyfuse worker --backend local://localhost:9748 --tmp   # Terminal 1
-python -m pyfuse run examples/remote_execution.py               # Terminal 2
+pyfuse worker --backend local://localhost:9748 --tmp   # Terminal 1
+pyfuse run examples/remote_execution.py               # Terminal 2
 ```
 
 The `--tmp` flag creates an isolated temporary venv for the worker, which is auto-cleaned on exit.

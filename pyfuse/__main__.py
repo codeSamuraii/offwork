@@ -2,12 +2,12 @@
 
 Usage::
 
-    python -m pyfuse worker --backend redis://localhost:6379
-    python -m pyfuse worker --backend redis://localhost:6379 --tmp
-    python -m pyfuse run examples/script.py
-    python -m pyfuse info
-    python -m pyfuse serialize mymodule:csv_to_json
-    python -m pyfuse reconstruct graph.json csv_to_json
+    pyfuse worker --backend redis://localhost:6379
+    pyfuse worker --backend redis://localhost:6379 --tmp
+    pyfuse run examples/script.py
+    pyfuse info
+    pyfuse serialize mymodule:csv_to_json
+    pyfuse reconstruct graph.json csv_to_json
 """
 from __future__ import annotations
 

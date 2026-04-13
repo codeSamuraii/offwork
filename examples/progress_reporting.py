@@ -8,7 +8,7 @@ Usage:
     pyfuse worker --backend redis://localhost:6379 --tmp
 
     # Terminal 2 -- run this script
-    python -m pyfuse run examples/progress_reporting.py
+    pyfuse run examples/progress_reporting.py
 """
 
 import asyncio

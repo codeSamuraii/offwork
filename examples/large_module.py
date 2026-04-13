@@ -8,7 +8,7 @@ Requires Redis on localhost:6379.  Install: pip install redis
 
 Usage:
     # Terminal 1 -- start a worker
-    python -m pyfuse worker --backend redis://localhost:6379
+    pyfuse worker --backend redis://localhost:6379
 
     # Terminal 2 -- run this script
     python examples/large_module.py

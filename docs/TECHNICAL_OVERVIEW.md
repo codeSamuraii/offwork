@@ -7,7 +7,7 @@ pyfuse enables remote execution of Python functions without deploying code to wo
 ```
   Client                              Worker
   ──────                              ──────
-  @trace                              python -m pyfuse worker
+  @trace                              pyfuse worker
   await func.run(args)                ← listen for tasks
     │                                   │
     ├─ capture source + deps            ├─ deserialize graph
@@ -22,7 +22,7 @@ pyfuse enables remote execution of Python functions without deploying code to wo
 ```
 pyfuse/
     __init__.py              Public API: trace, connect, serve, serialize, reconstruct, ...
-    __main__.py              CLI: python -m pyfuse worker/run/info/serialize/reconstruct
+    __main__.py              CLI: pyfuse worker/run/info/serialize/reconstruct
     _venv.py                 Temporary virtual environment management (async)
     core/
         models.py            FunctionNode, ImportInfo dataclasses (incl. content hashing, class metadata)
@@ -55,7 +55,7 @@ pyfuse/
 3. **Submit** -- `await backend.submit(task_json)` sends the task to the transport layer.
 4. **Return** -- `.run()` awaits the result and returns the value directly. `.start()` returns a `Result` handle immediately.
 
-### Worker side: `await serve()` / `python -m pyfuse worker`
+### Worker side: `await serve()` / `pyfuse worker`
 
 1. **Listen** -- `async for task_json in backend.listen()` yields tasks as they arrive.
 2. **Cancellation check** -- If `await backend.is_cancelled(task_id)` returns ``True``, skip execution and log the cancellation.
@@ -513,20 +513,20 @@ When a module contains `from X import *`:
 
 ```bash
 # Start a worker
-python -m pyfuse worker --backend redis://localhost:6379
-python -m pyfuse worker --backend redis://localhost:6379 -c 4
-python -m pyfuse worker --backend redis://localhost:6379 --no-auto-install
-python -m pyfuse worker --backend redis://localhost:6379 --tmp   # isolated temp venv
+pyfuse worker --backend redis://localhost:6379
+pyfuse worker --backend redis://localhost:6379 -c 4
+pyfuse worker --backend redis://localhost:6379 --no-auto-install
+pyfuse worker --backend redis://localhost:6379 --tmp   # isolated temp venv
 
 # Run a script in a temporary venv (auto-detects and installs dependencies)
-python -m pyfuse run examples/script.py
+pyfuse run examples/script.py
 
 # Show configuration
-python -m pyfuse info
+pyfuse info
 
 # Serialize a function to JSON
-python -m pyfuse serialize mymodule:csv_to_json
+pyfuse serialize mymodule:csv_to_json
 
 # Reconstruct source from a graph file
-python -m pyfuse reconstruct graph.json csv_to_json
+pyfuse reconstruct graph.json csv_to_json
 ```

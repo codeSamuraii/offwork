@@ -125,6 +125,22 @@ def _slow_store() -> tuple[Store, str]:
     return store, store.to_json()
 
 
+def _async_slow_store() -> tuple[Store, str]:
+    store = Store()
+    node = _node("slow_async", (
+        "async def slow_async(n):\n"
+        "    import asyncio\n"
+        "    total = 0\n"
+        "    for i in range(n):\n"
+        "        await asyncio.sleep(0.1)\n"
+        "        total += i\n"
+        "    return total"
+    ))
+    h = store.put(node)
+    store.set_ref("slow_async", h)
+    return store, store.to_json()
+
+
 def _progress_store() -> tuple[Store, str]:
     store = Store()
     node = _node("process", (
@@ -238,8 +254,42 @@ class TestCancellation:
         assert task.task_id not in backend.results
 
     @pytest.mark.asyncio
-    async def test_cancel_during_execution(self, backend: InMemoryBackend) -> None:
-        """Worker sends its result normally; cancel semantics are client-side."""
+    async def test_cancel_during_async_execution(
+        self, backend: InMemoryBackend, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Cancelling during async execution interrupts the function."""
+        monkeypatch.setattr(_remote, "_HEARTBEAT_INTERVAL", 0.1)
+
+        _, json_str = _async_slow_store()
+        # 30 iterations × 0.1 s = 3 s without cancellation
+        task = Task(graph_json=json_str, function_name="slow_async", args=(30,))
+
+        worker = Worker(auto_install=False)
+
+        async def cancel_later() -> None:
+            await asyncio.sleep(0.15)
+            await backend.cancel_task(task.task_id)
+
+        t0 = time.monotonic()
+        asyncio.create_task(cancel_later())
+        await _handle_task(worker, backend, task.to_json())
+        elapsed = time.monotonic() - t0
+
+        # Should finish well before 3 s (the function was interrupted)
+        assert elapsed < 1.5
+
+        # Worker sends a cancelled envelope
+        assert task.task_id in backend.results
+        env = ResultEnvelope.from_json(backend.results[task.task_id])
+        assert env.status == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_cancel_during_sync_execution(
+        self, backend: InMemoryBackend, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Cancelling during sync execution marks result as cancelled."""
+        monkeypatch.setattr(_remote, "_HEARTBEAT_INTERVAL", 0.1)
+
         _, json_str = _slow_store()
         task = Task(graph_json=json_str, function_name="slow", args=(5,))
 
@@ -252,10 +302,10 @@ class TestCancellation:
         asyncio.create_task(cancel_later())
         await _handle_task(worker, backend, task.to_json())
 
-        # Worker always sends its result; client reads cancel envelope first
+        # Executor thread can't be interrupted, but the coroutine is cancelled
         assert task.task_id in backend.results
         env = ResultEnvelope.from_json(backend.results[task.task_id])
-        assert env.status == "ok"
+        assert env.status == "cancelled"
 
 
 # ---------------------------------------------------------------------------
