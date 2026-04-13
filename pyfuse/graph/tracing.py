@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-import builtins
-import contextvars
-import functools
-import inspect
-import logging
 import os
 import sys
+import inspect
+import logging
+import builtins
+import functools
 import sysconfig
 import threading
-from collections.abc import AsyncGenerator, Callable, Generator
-from pathlib import Path
+import contextvars
 from typing import TYPE_CHECKING, Any, TypeVar
+from pathlib import Path
+from collections.abc import Callable, Generator, AsyncGenerator
 
 if TYPE_CHECKING:
     from pyfuse.worker.backends.base import Backend
@@ -31,7 +31,7 @@ def _make_start_method(
     async def start(*args: object, backend: str | Backend | None = None, **kwargs: object) -> object:
         from pyfuse.worker.remote import submit_remote
 
-        return await submit_remote(func, wrapper, *args, _backend=backend, **kwargs)
+        return await submit_remote(func, wrapper, *args, backend=backend, **kwargs)
 
     return start
 

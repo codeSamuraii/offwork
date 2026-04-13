@@ -1,11 +1,16 @@
 from __future__ import annotations
 
-import asyncio
 import time
-from collections.abc import AsyncIterator
+import asyncio
 from typing import Any
+from collections.abc import AsyncIterator
 
 from pyfuse.worker.backends.base import Backend
+
+try:
+    import redis.asyncio as redis_async
+except ImportError:
+    redis_async = None
 
 
 class RedisBackend(Backend):
@@ -39,14 +44,12 @@ class RedisBackend(Backend):
         queue_key: str | None = None,
         result_ttl: int | None = None,
     ) -> None:
-        try:
-            import redis.asyncio as _redis
-        except ImportError:
+        if redis_async is None:
             raise ImportError(
                 "redis package is required for RedisBackend. "
                 "Install it with: pip install redis"
             ) from None
-        self._redis: Any = _redis.Redis.from_url(url)
+        self._redis: Any = redis_async.Redis.from_url(url)
         self._queue_key = queue_key or self.DEFAULT_QUEUE_KEY
         self._result_ttl = result_ttl or self.DEFAULT_RESULT_TTL
 

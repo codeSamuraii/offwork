@@ -11,16 +11,22 @@ Usage::
 """
 from __future__ import annotations
 
-import argparse
-import ast
-import asyncio
-import importlib
-import logging
 import os
-import signal
+import ast
 import sys
-from collections.abc import Callable
+import signal
+import asyncio
+import logging
+import argparse
+import importlib
 from pathlib import Path
+from collections.abc import Callable
+from importlib.metadata import version as pkg_version
+
+from pyfuse import serialize, reconstruct
+from pyfuse._venv import temp_venv
+from pyfuse.worker.deps import DEFAULT_IMPORT_TO_PACKAGE
+from pyfuse.worker.remote import serve
 
 
 def _build_worker_cmd(python: str, args: argparse.Namespace) -> list[str]:
@@ -38,8 +44,6 @@ def _build_worker_cmd(python: str, args: argparse.Namespace) -> list[str]:
 
 async def _run_in_tmp_venv(args: argparse.Namespace) -> None:
     """Create a temporary venv and re-exec the worker inside it."""
-    from pyfuse._venv import temp_venv
-
     extras: list[str] = []
     if args.backend and args.backend.startswith(("redis://", "rediss://")):
         extras.append("redis")
@@ -85,14 +89,10 @@ def _cmd_worker(args: argparse.Namespace) -> None:
 
     _configure_logging(_resolve_log_level(args))
 
-    from pyfuse.worker.remote import serve
-
     asyncio.run(serve(args.backend, concurrency=args.concurrency, auto_install=not args.no_auto_install))
 
 
 def _cmd_info(_args: argparse.Namespace) -> None:
-    from importlib.metadata import version as pkg_version
-
     try:
         ver = pkg_version("pyfuse")
     except Exception:
@@ -131,15 +131,11 @@ def _import_target(target: str) -> Callable[..., object]:
 
 
 def _cmd_serialize(args: argparse.Namespace) -> None:
-    from pyfuse import serialize
-
     func = _import_target(args.target)
     print(serialize(func))
 
 
 def _cmd_reconstruct(args: argparse.Namespace) -> None:
-    from pyfuse import reconstruct
-
     graph_json = Path(args.graph_file).read_text()
     print(reconstruct(graph_json, args.function))
 
@@ -191,8 +187,6 @@ def _extract_top_modules(node: ast.AST) -> list[str]:
 
 def _detect_script_packages(script: str) -> list[str]:
     """Parse a script file and return pip package names for third-party imports."""
-    from pyfuse.worker.deps import DEFAULT_IMPORT_TO_PACKAGE
-
     _source, tree = _parse_script(script)
     if tree is None:
         return []
@@ -301,8 +295,6 @@ async def _run_subprocess_async(
 
 
 async def _cmd_run_async(args: argparse.Namespace) -> None:
-    from pyfuse._venv import temp_venv
-
     script = Path(args.script).resolve()
     if not script.exists():
         print(f"Error: script not found: {script}", file=sys.stderr)

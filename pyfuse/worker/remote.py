@@ -1,27 +1,28 @@
 from __future__ import annotations
 
-import asyncio
-import atexit
-import contextlib
-import inspect
-import json
-import logging
 import os
-import signal
 import sys
+import json
 import time
-from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+import atexit
+import signal
+import asyncio
+import inspect
+import logging
+import contextlib
+from typing import Any
+from collections.abc import Callable, Awaitable
 
-from pyfuse.core.progress import _progress_callback
 from pyfuse.core.task import Task
+from pyfuse.graph.graph import Graph
 from pyfuse.core.version import _VERSION
-from pyfuse.worker.backends.base import Backend
-from pyfuse.worker.backends.redis import RedisBackend
+from pyfuse.core.progress import _progress_callback
 from pyfuse.worker.result import Result, ResultEnvelope
-
-if TYPE_CHECKING:
-    from pyfuse.worker.worker import Worker
+from pyfuse.worker.worker import Worker
+from pyfuse.worker.backends.base import Backend
+from pyfuse.worker.backends.local import LocalBackend
+from pyfuse.worker.backends.redis import RedisBackend
+from pyfuse.worker.backends.rabbitmq import RabbitMQBackend
 
 logger = logging.getLogger(__name__)
 
@@ -50,12 +51,8 @@ def _create_backend(url: str, **kwargs: Any) -> Backend:
     if scheme in ("redis", "rediss"):
         return RedisBackend(url, **kwargs)
     if scheme == "local":
-        from pyfuse.worker.backends.local import LocalBackend
-
         return LocalBackend(url, **kwargs)
     if scheme in ("amqp", "amqps"):
-        from pyfuse.worker.backends.rabbitmq import RabbitMQBackend
-
         return RabbitMQBackend(url, **kwargs)
     raise ValueError(
         f"Unknown backend scheme: {scheme!r}. "
@@ -138,21 +135,19 @@ async def submit_remote(
     func: Callable[..., object],
     wrapper: Callable[..., object],
     *args: Any,
-    _backend: str | Backend | None = None,
+    backend: str | Backend | None = None,
     **kwargs: Any,
 ) -> Result:
     """Pack and submit a function to the remote backend.
 
     Called internally by ``traced_func.run(...)``.
     """
-    from pyfuse.graph.graph import Graph
-
-    if isinstance(_backend, str):
-        backend = _create_backend(_backend)
-    elif isinstance(_backend, Backend):
-        backend = _backend
+    if isinstance(backend, str):
+        resolved_backend = _create_backend(backend)
+    elif isinstance(backend, Backend):
+        resolved_backend = backend
     else:
-        backend = get_backend()
+        resolved_backend = get_backend()
 
     unwrapped = inspect.unwrap(func)
     function_name = f"{unwrapped.__module__}.{unwrapped.__qualname__}"
@@ -169,9 +164,9 @@ async def submit_remote(
         retry_delay=opts.get("retry_delay", 1.0),
     )
 
-    await backend.submit(task.to_json())
+    await resolved_backend.submit(task.to_json())
     logger.info("Submitted task %s for %s", task.task_id, function_name)
-    return Result(task.task_id, backend)
+    return Result(task.task_id, resolved_backend)
 
 
 def _build_detail_tags(worker: Worker) -> str:
@@ -461,8 +456,8 @@ async def serve(
     url: str | None = None,
     *,
     concurrency: int = 1,
-    auto_install: bool = True,
     import_to_package: dict[str, str] | None = None,
+    auto_install: bool = True,
 ) -> None:
     """Start a worker loop that pops tasks from the backend and executes them.
 
@@ -473,13 +468,11 @@ async def serve(
         When *None*, the ``PYFUSE_BACKEND`` environment variable is used.
     concurrency
         Number of concurrent tasks (default: 1).
-    auto_install
-        Automatically install missing third-party dependencies via pip.
     import_to_package
         Extra import-name to pip-package-name mappings.
+    auto_install
+        Automatically install missing third-party dependencies via pip.
     """
-    from pyfuse.worker.worker import Worker
-
     resolved = _resolve_url(url)
     auto_tag = "on" if auto_install else "off"
     logger.info(

@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import asyncio
-import contextvars
-import functools
 import hashlib
 import inspect
 import logging
-from dataclasses import dataclass, field
+import functools
+import contextvars
 from typing import Any
+from dataclasses import field, dataclass
 
+from pyfuse.core.task import Task, resolve_args
 from pyfuse.core.errors import WorkerError
 from pyfuse.core.models import FunctionNode
-from pyfuse.core.task import Task
 from pyfuse.graph.store import Store
 from pyfuse.worker.deps import ensure_dependencies
 
@@ -113,8 +113,6 @@ class Worker:
         Async functions are awaited directly. Sync functions run in an
         executor to avoid blocking the event loop.
         """
-        from pyfuse.core.task import resolve_args
-
         cached = await self._get_cached(task.graph_json, task.function_name)
         args, kwargs = resolve_args(task.args, task.kwargs, cached.namespace)
         logger.debug("Executing %s (cache key: %s)", task.function_name, cached.subgraph_key)
@@ -213,8 +211,6 @@ async def execute(
         return await worker.run(json_str_or_task)
     if function_name is None:
         raise TypeError("function_name is required when passing a JSON string")
-
-    from pyfuse.core.task import resolve_args
 
     cached = await worker._get_cached(json_str_or_task, function_name)
     resolved_args, resolved_kwargs = resolve_args(args, {}, cached.namespace)
