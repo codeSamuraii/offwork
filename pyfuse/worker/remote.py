@@ -483,12 +483,13 @@ async def serve(
     """
     from pyfuse.worker.sandbox import SandboxExecutor
     from pyfuse.worker.sandbox.config import SandboxConfig
+    from pyfuse.worker.sandbox.noop import NoopExecutor as _Noop
 
     resolved = _resolve_url(url)
     auto_tag = "on" if auto_install else "off"
     sandbox_tag = "vm" if (
-        isinstance(sandbox, SandboxConfig) and sandbox.enabled
-        or isinstance(sandbox, SandboxExecutor)
+        (isinstance(sandbox, SandboxConfig) and sandbox.enabled)
+        or (isinstance(sandbox, SandboxExecutor) and not isinstance(sandbox, _Noop))
     ) else "off"
     logger.info(
         "pyfuse worker v%s  \u2502  %s  \u2502  concurrency=%d  \u2502  "

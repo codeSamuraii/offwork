@@ -198,12 +198,13 @@ class VMExecutor(SandboxExecutor):
         )
         await proc.communicate()
 
-        # Start agent in background.
-        start_cmd = ssh_base + [
-            "nohup", "python3", "/tmp/guest_agent.py",
-            "--port", str(self._cfg.guest_port),
-            "</dev/null", ">/tmp/guest_agent.log", "2>&1", "&",
-        ]
+        # Start agent in background via a shell so redirections work.
+        agent_cmd = (
+            f"nohup python3 /tmp/guest_agent.py "
+            f"--port {self._cfg.guest_port} "
+            f"</dev/null >/tmp/guest_agent.log 2>&1 &"
+        )
+        start_cmd = ssh_base + [agent_cmd]
         proc = await asyncio.create_subprocess_exec(
             *start_cmd,
             stdout=asyncio.subprocess.PIPE,
