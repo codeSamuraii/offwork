@@ -87,7 +87,17 @@ def _cmd_worker(args: argparse.Namespace) -> None:
 
     _configure_logging(_resolve_log_level(args))
 
-    asyncio.run(serve(args.backend, concurrency=args.concurrency, auto_install=not args.no_auto_install))
+    sandbox_config = None
+    if args.sandbox:
+        from pyfuse.worker.sandbox.config import SandboxConfig
+        sandbox_config = SandboxConfig(enabled=True)
+
+    asyncio.run(serve(
+        args.backend,
+        concurrency=args.concurrency,
+        auto_install=not args.no_auto_install,
+        sandbox=sandbox_config,
+    ))
 
 
 def _cmd_info(_args: argparse.Namespace) -> None:
@@ -333,6 +343,8 @@ def _add_worker_parser(sub: "argparse._SubParsersAction[argparse.ArgumentParser]
                     help="Disable automatic pip dependency installation")
     p.add_argument("--tmp", action="store_true",
                     help="Run the worker in a temporary virtual environment (deleted on exit)")
+    p.add_argument("--sandbox", action="store_true",
+                    help="Run function execution inside an isolated micro-VM (requires tart on macOS)")
     p.add_argument("-v", "--verbose", action="store_true",
                     help="Enable debug logging")
     p.add_argument("--log-level", default=None, metavar="LEVEL",
@@ -361,6 +373,87 @@ def _add_reconstruct_parser(sub: "argparse._SubParsersAction[argparse.ArgumentPa
     p.add_argument("function", help="Function name to reconstruct")
 
 
+def _cmd_sandbox(args: argparse.Namespace) -> None:
+    """Handle ``pyfuse sandbox setup|status|teardown`` subcommands."""
+    action = getattr(args, "sandbox_action", None)
+    if action is None:
+        print("Usage: pyfuse sandbox {setup|status|teardown}", file=sys.stderr)
+        sys.exit(1)
+
+    import shutil
+    from pathlib import Path
+
+    if action == "setup":
+        setup_script = Path(__file__).resolve().parent.parent / "scripts" / "setup_sandbox_macos.sh"
+        if not setup_script.exists():
+            # Try relative to package root in installed mode
+            import pyfuse
+            pkg_root = Path(pyfuse.__file__).resolve().parent.parent
+            setup_script = pkg_root / "scripts" / "setup_sandbox_macos.sh"
+        if not setup_script.exists():
+            print(
+                "Error: setup script not found. Please run:\n"
+                "  curl -sSL https://raw.githubusercontent.com/codeSamuraii/pyfuse/main/scripts/setup_sandbox_macos.sh | bash",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        os.execvp("bash", ["bash", str(setup_script)])
+
+    elif action == "status":
+        asyncio.run(_sandbox_status())
+
+    elif action == "teardown":
+        asyncio.run(_sandbox_teardown())
+
+
+async def _sandbox_status() -> None:
+    """Print the current sandbox VM status."""
+    import shutil
+    if shutil.which("tart") is None:
+        print("tart: not installed")
+        print("Status: sandbox not available")
+        return
+
+    from pyfuse.worker.sandbox.vm import _vm_exists, _vm_running
+    name = os.environ.get("PYFUSE_SANDBOX_VM", "pyfuse-sandbox")
+    exists = await _vm_exists(name)
+    print(f"tart: installed")
+    print(f"VM '{name}': {'exists' if exists else 'not found'}")
+    if exists:
+        running = await _vm_running(name)
+        print(f"State: {'running' if running else 'stopped'}")
+    else:
+        print("Status: run 'pyfuse sandbox setup' to create the VM")
+
+
+async def _sandbox_teardown() -> None:
+    """Stop and delete the sandbox VM."""
+    import shutil
+    if shutil.which("tart") is None:
+        print("tart is not installed, nothing to tear down.", file=sys.stderr)
+        return
+
+    from pyfuse.worker.sandbox.vm import _vm_exists, _vm_running, _tart_wait
+    name = os.environ.get("PYFUSE_SANDBOX_VM", "pyfuse-sandbox")
+    if not await _vm_exists(name):
+        print(f"VM '{name}' does not exist.", file=sys.stderr)
+        return
+    if await _vm_running(name):
+        print(f"Stopping VM '{name}'...")
+        await _tart_wait("stop", name)
+    print(f"Deleting VM '{name}'...")
+    await _tart_wait("delete", name)
+    print("Done.")
+
+
+def _add_sandbox_parser(sub: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+    p = sub.add_parser("sandbox", help="Manage the sandbox micro-VM")
+    sandbox_sub = p.add_subparsers(dest="sandbox_action")
+    sandbox_sub.add_parser("setup", help="Install tart and prepare the sandbox VM")
+    sandbox_sub.add_parser("status", help="Show sandbox VM status")
+    sandbox_sub.add_parser("teardown", help="Stop and delete the sandbox VM")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pyfuse", description="pyfuse - distributed task execution",
@@ -371,6 +464,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("info", help="Show pyfuse configuration")
     _add_serialize_parser(sub)
     _add_reconstruct_parser(sub)
+    _add_sandbox_parser(sub)
     return parser
 
 
@@ -380,6 +474,7 @@ _COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "info": _cmd_info,
     "serialize": _cmd_serialize,
     "reconstruct": _cmd_reconstruct,
+    "sandbox": _cmd_sandbox,
 }
 
 

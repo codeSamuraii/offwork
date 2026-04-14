@@ -460,6 +460,7 @@ async def serve(
     concurrency: int = 1,
     auto_install: bool = True,
     import_to_package: dict[str, str] | None = None,
+    sandbox: "SandboxConfig | SandboxExecutor | None" = None,
 ) -> None:
     """Start a worker loop that pops tasks from the backend and executes them.
 
@@ -474,12 +475,25 @@ async def serve(
         Automatically install missing third-party dependencies via pip.
     import_to_package
         Extra import-name to pip-package-name mappings.
+    sandbox
+        Optional sandbox configuration or executor.  When a
+        :class:`~pyfuse.worker.sandbox.SandboxConfig` with
+        ``enabled=True`` is passed, function execution runs inside
+        an isolated micro-VM.
     """
+    from pyfuse.worker.sandbox import SandboxExecutor
+    from pyfuse.worker.sandbox.config import SandboxConfig
+
     resolved = _resolve_url(url)
     auto_tag = "on" if auto_install else "off"
+    sandbox_tag = "vm" if (
+        isinstance(sandbox, SandboxConfig) and sandbox.enabled
+        or isinstance(sandbox, SandboxExecutor)
+    ) else "off"
     logger.info(
-        "pyfuse worker v%s  \u2502  %s  \u2502  concurrency=%d  \u2502  auto_install=%s",
-        _VERSION, resolved, concurrency, auto_tag,
+        "pyfuse worker v%s  \u2502  %s  \u2502  concurrency=%d  \u2502  "
+        "auto_install=%s  \u2502  sandbox=%s",
+        _VERSION, resolved, concurrency, auto_tag, sandbox_tag,
     )
 
     try:
@@ -488,7 +502,11 @@ async def serve(
         logger.error("Could not connect to %s: %s", resolved, exc)
         sys.exit(1)
 
-    worker = Worker(auto_install=auto_install, import_to_package=import_to_package)
+    worker = Worker(
+        auto_install=auto_install,
+        import_to_package=import_to_package,
+        sandbox=sandbox,
+    )
     logger.info("Listening for tasks \u2014 Ctrl+C to stop.")
 
     try:
