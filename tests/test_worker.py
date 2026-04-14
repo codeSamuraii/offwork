@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from typing import cast
 
 import pytest
@@ -170,7 +171,7 @@ class TestRun:
         store.set_ref("m.env_sep", h)
         worker = Worker(auto_install=False)
         result = await worker.run(Task(graph_json=store.to_json(), function_name="env_sep"))
-        assert result.endswith("/")
+        assert result.endswith(os.sep)
 
     @pytest.mark.asyncio
     async def test_sandbox_blocks_ctypes_import(self) -> None:
