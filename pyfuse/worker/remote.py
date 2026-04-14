@@ -487,10 +487,14 @@ async def serve(
 
     resolved = _resolve_url(url)
     auto_tag = "on" if auto_install else "off"
-    sandbox_tag = "vm" if (
-        (isinstance(sandbox, SandboxConfig) and sandbox.enabled)
-        or (isinstance(sandbox, SandboxExecutor) and not isinstance(sandbox, _Noop))
-    ) else "off"
+    if isinstance(sandbox, SandboxConfig) and sandbox.enabled:
+        sandbox_tag = sandbox.backend
+    elif isinstance(sandbox, SandboxExecutor) and not isinstance(sandbox, _Noop):
+        # Infer from concrete type
+        from pyfuse.worker.sandbox.docker import DockerExecutor as _Docker
+        sandbox_tag = "docker" if isinstance(sandbox, _Docker) else "vm"
+    else:
+        sandbox_tag = "off"
     logger.info(
         "pyfuse worker v%s  \u2502  %s  \u2502  concurrency=%d  \u2502  "
         "auto_install=%s  \u2502  sandbox=%s",

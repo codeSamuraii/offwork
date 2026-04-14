@@ -90,7 +90,7 @@ def _cmd_worker(args: argparse.Namespace) -> None:
     sandbox_config = None
     if args.sandbox:
         from pyfuse.worker.sandbox.config import SandboxConfig
-        sandbox_config = SandboxConfig(enabled=True)
+        sandbox_config = SandboxConfig(enabled=True, backend=args.sandbox)
 
     asyncio.run(serve(
         args.backend,
@@ -343,8 +343,11 @@ def _add_worker_parser(sub: "argparse._SubParsersAction[argparse.ArgumentParser]
                     help="Disable automatic pip dependency installation")
     p.add_argument("--tmp", action="store_true",
                     help="Run the worker in a temporary virtual environment (deleted on exit)")
-    p.add_argument("--sandbox", action="store_true",
-                    help="Run function execution inside an isolated micro-VM (requires tart on macOS)")
+    p.add_argument("--sandbox", nargs="?", const="vm", default=None,
+                    metavar="BACKEND", choices=["vm", "docker"],
+                    help="Run function execution inside an isolated sandbox. "
+                         "Choices: 'vm' (tart, macOS only), 'docker'. "
+                         "Default when flag is given without a value: 'vm'.")
     p.add_argument("-v", "--verbose", action="store_true",
                     help="Enable debug logging")
     p.add_argument("--log-level", default=None, metavar="LEVEL",
@@ -383,47 +386,79 @@ def _cmd_sandbox(args: argparse.Namespace) -> None:
     import shutil
     from pathlib import Path
 
+    use_docker = getattr(args, "docker", False)
+
     if action == "setup":
-        setup_script = Path(__file__).resolve().parent.parent / "scripts" / "setup_sandbox_macos.sh"
-        if not setup_script.exists():
-            # Try relative to package root in installed mode
-            import pyfuse
-            pkg_root = Path(pyfuse.__file__).resolve().parent.parent
-            setup_script = pkg_root / "scripts" / "setup_sandbox_macos.sh"
-        if not setup_script.exists():
-            print(
-                "Error: setup script not found. Please run:\n"
-                "  curl -sSL https://raw.githubusercontent.com/codeSamuraii/pyfuse/main/scripts/setup_sandbox_macos.sh | bash",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        os.execvp("bash", ["bash", str(setup_script)])
+        if use_docker:
+            asyncio.run(_docker_setup())
+        else:
+            setup_script = Path(__file__).resolve().parent.parent / "scripts" / "setup_sandbox_macos.sh"
+            if not setup_script.exists():
+                # Try relative to package root in installed mode
+                import pyfuse
+                pkg_root = Path(pyfuse.__file__).resolve().parent.parent
+                setup_script = pkg_root / "scripts" / "setup_sandbox_macos.sh"
+            if not setup_script.exists():
+                print(
+                    "Error: setup script not found. Please run:\n"
+                    "  curl -sSL https://raw.githubusercontent.com/codeSamuraii/pyfuse/main/scripts/setup_sandbox_macos.sh | bash",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            os.execvp("bash", ["bash", str(setup_script)])
 
     elif action == "status":
         asyncio.run(_sandbox_status())
 
     elif action == "teardown":
-        asyncio.run(_sandbox_teardown())
+        if use_docker:
+            asyncio.run(_docker_teardown())
+        else:
+            asyncio.run(_sandbox_teardown())
 
 
 async def _sandbox_status() -> None:
-    """Print the current sandbox VM status."""
+    """Print the current sandbox status for both VM and Docker."""
     import shutil
-    if shutil.which("tart") is None:
-        print("tart: not installed")
-        print("Status: sandbox not available")
-        return
 
-    from pyfuse.worker.sandbox.vm import _vm_exists, _vm_running
-    name = os.environ.get("PYFUSE_SANDBOX_VM", "pyfuse-sandbox")
-    exists = await _vm_exists(name)
-    print(f"tart: installed")
-    print(f"VM '{name}': {'exists' if exists else 'not found'}")
-    if exists:
-        running = await _vm_running(name)
-        print(f"State: {'running' if running else 'stopped'}")
+    # -- VM status --
+    if shutil.which("tart") is not None:
+        from pyfuse.worker.sandbox.vm import _vm_exists, _vm_running
+        name = os.environ.get("PYFUSE_SANDBOX_VM", "pyfuse-sandbox")
+        exists = await _vm_exists(name)
+        print("VM (tart):")
+        print(f"  tart: installed")
+        print(f"  VM '{name}': {'exists' if exists else 'not found'}")
+        if exists:
+            running = await _vm_running(name)
+            print(f"  State: {'running' if running else 'stopped'}")
+        else:
+            print("  Hint: run 'pyfuse sandbox setup' to create the VM")
     else:
-        print("Status: run 'pyfuse sandbox setup' to create the VM")
+        print("VM (tart): not installed")
+
+    print()
+
+    # -- Docker status --
+    if shutil.which("docker") is not None:
+        from pyfuse.worker.sandbox.docker import (
+            _container_exists, _container_running, _image_exists,
+        )
+        image = os.environ.get("PYFUSE_SANDBOX_DOCKER_IMAGE", "pyfuse-sandbox")
+        container = os.environ.get("PYFUSE_SANDBOX_DOCKER_CONTAINER", "pyfuse-sandbox")
+        img_ok = await _image_exists(image)
+        print("Docker:")
+        print(f"  docker: installed")
+        print(f"  Image '{image}': {'exists' if img_ok else 'not found'}")
+        if await _container_exists(container):
+            running = await _container_running(container)
+            print(f"  Container '{container}': {'running' if running else 'stopped'}")
+        else:
+            print(f"  Container '{container}': not found")
+        if not img_ok:
+            print("  Hint: run 'pyfuse sandbox setup --docker' to build the image")
+    else:
+        print("Docker: not installed")
 
 
 async def _sandbox_teardown() -> None:
@@ -446,12 +481,67 @@ async def _sandbox_teardown() -> None:
     print("Done.")
 
 
+async def _docker_setup() -> None:
+    """Build the Docker sandbox image."""
+    import shutil
+    if shutil.which("docker") is None:
+        print(
+            "Error: 'docker' command not found.\n"
+            "Install Docker from https://docs.docker.com/get-docker/",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from pyfuse.worker.sandbox.docker import _build_image, _image_exists
+    image = os.environ.get("PYFUSE_SANDBOX_DOCKER_IMAGE", "pyfuse-sandbox")
+    if await _image_exists(image):
+        print(f"Image '{image}' already exists. Rebuilding...")
+    else:
+        print(f"Building image '{image}'...")
+    await _build_image(image)
+    print(f"Done. Start a sandboxed worker with:")
+    print(f"  pyfuse worker --backend redis://localhost:6379 --sandbox docker")
+
+
+async def _docker_teardown() -> None:
+    """Stop and remove the Docker sandbox container and image."""
+    import shutil
+    if shutil.which("docker") is None:
+        print("Docker is not installed, nothing to tear down.", file=sys.stderr)
+        return
+
+    from pyfuse.worker.sandbox.docker import (
+        _container_exists, _container_running, _docker_wait, _image_exists,
+    )
+    container = os.environ.get("PYFUSE_SANDBOX_DOCKER_CONTAINER", "pyfuse-sandbox")
+    image = os.environ.get("PYFUSE_SANDBOX_DOCKER_IMAGE", "pyfuse-sandbox")
+
+    if await _container_exists(container):
+        if await _container_running(container):
+            print(f"Stopping container '{container}'...")
+            await _docker_wait("stop", container)
+        print(f"Removing container '{container}'...")
+        await _docker_wait("rm", container)
+
+    if await _image_exists(image):
+        print(f"Removing image '{image}'...")
+        await _docker_wait("rmi", image)
+
+    print("Done.")
+
+
 def _add_sandbox_parser(sub: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
-    p = sub.add_parser("sandbox", help="Manage the sandbox micro-VM")
+    p = sub.add_parser("sandbox", help="Manage the sandbox (VM or Docker)")
+    p.add_argument("--docker", action="store_true",
+                    help="Use Docker instead of tart VM")
     sandbox_sub = p.add_subparsers(dest="sandbox_action")
-    sandbox_sub.add_parser("setup", help="Install tart and prepare the sandbox VM")
-    sandbox_sub.add_parser("status", help="Show sandbox VM status")
-    sandbox_sub.add_parser("teardown", help="Stop and delete the sandbox VM")
+    setup_p = sandbox_sub.add_parser("setup", help="Set up the sandbox environment")
+    setup_p.add_argument("--docker", action="store_true",
+                          help="Build the Docker sandbox image instead of a tart VM")
+    sandbox_sub.add_parser("status", help="Show sandbox status (VM and Docker)")
+    teardown_p = sandbox_sub.add_parser("teardown", help="Stop and remove the sandbox")
+    teardown_p.add_argument("--docker", action="store_true",
+                             help="Tear down the Docker sandbox instead of a tart VM")
 
 
 def _build_parser() -> argparse.ArgumentParser:

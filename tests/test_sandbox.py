@@ -2,12 +2,15 @@
 
 These tests exercise:
   - NoopExecutor (local exec, default behaviour)
+  - DockerExecutor (container-based sandbox)
   - Guest agent protocol and execution logic
   - SandboxConfig and create_executor factory
   - Worker integration with sandbox
 
 The VMExecutor tests that require a running tart VM are skipped in CI
 (no Apple Silicon + Virtualization.framework available).
+DockerExecutor tests that require a running Docker daemon are also
+included (unit tests run without Docker; integration would need it).
 """
 
 import asyncio
@@ -16,6 +19,7 @@ import struct
 
 import pytest
 
+from pyfuse.core.errors import WorkerError
 from pyfuse.core.task import Task
 from pyfuse.worker.sandbox import SandboxExecutor, SandboxConfig, NoopExecutor, create_executor
 from pyfuse.worker.sandbox._protocol import encode, decode_header, HEADER_SIZE, async_send, async_recv
@@ -351,6 +355,7 @@ class TestSandboxConfig:
     def test_defaults(self) -> None:
         cfg = SandboxConfig()
         assert cfg.enabled is False
+        assert cfg.backend == "vm"
         assert cfg.vm_name == "pyfuse-sandbox"
         assert cfg.guest_port == 9749
         assert cfg.cpus == 2
@@ -358,11 +363,18 @@ class TestSandboxConfig:
         assert cfg.timeout == 60.0
         assert cfg.boot_timeout == 30.0
         assert cfg.ssh_key_path is None
+        assert cfg.docker_image == "pyfuse-sandbox"
+        assert cfg.docker_container_name == "pyfuse-sandbox"
 
     def test_frozen(self) -> None:
         cfg = SandboxConfig()
         with pytest.raises(AttributeError):
             cfg.enabled = True  # type: ignore[misc]
+
+    def test_docker_backend(self) -> None:
+        cfg = SandboxConfig(enabled=True, backend="docker")
+        assert cfg.backend == "docker"
+        assert cfg.docker_image == "pyfuse-sandbox"
 
 
 class TestCreateExecutor:
@@ -378,6 +390,15 @@ class TestCreateExecutor:
         from pyfuse.worker.sandbox.vm import VMExecutor
         executor = create_executor(SandboxConfig(enabled=True))
         assert isinstance(executor, VMExecutor)
+
+    def test_enabled_docker_returns_docker_executor(self) -> None:
+        from pyfuse.worker.sandbox.docker import DockerExecutor
+        executor = create_executor(SandboxConfig(enabled=True, backend="docker"))
+        assert isinstance(executor, DockerExecutor)
+
+    def test_disabled_docker_returns_noop(self) -> None:
+        executor = create_executor(SandboxConfig(enabled=False, backend="docker"))
+        assert isinstance(executor, NoopExecutor)
 
 
 # ===========================================================================
@@ -488,3 +509,113 @@ class TestWorkerWithFakeSandbox:
         assert worker.cache_info()["size"] == 1
         # But sandbox should be called twice (different args)
         assert len(sandbox.calls) == 2
+
+
+# ===========================================================================
+# DockerExecutor unit tests (no Docker daemon needed)
+# ===========================================================================
+
+
+class TestDockerExecutor:
+    def test_instantiation_with_config(self) -> None:
+        from pyfuse.worker.sandbox.docker import DockerExecutor
+        cfg = SandboxConfig(enabled=True, backend="docker", docker_image="my-img")
+        executor = DockerExecutor(cfg)
+        assert executor._cfg.docker_image == "my-img"
+        assert executor._cfg.backend == "docker"
+        assert not executor._started
+
+    def test_instantiation_default_config(self) -> None:
+        from pyfuse.worker.sandbox.docker import DockerExecutor
+        executor = DockerExecutor()
+        assert executor._cfg.docker_image == "pyfuse-sandbox"
+        assert executor._cfg.backend == "docker"
+
+    def test_is_sandbox_executor(self) -> None:
+        from pyfuse.worker.sandbox.docker import DockerExecutor
+        executor = DockerExecutor()
+        assert isinstance(executor, SandboxExecutor)
+        assert not isinstance(executor, NoopExecutor)
+
+    def test_context_manager_protocol(self) -> None:
+        """DockerExecutor supports async context manager (from base class)."""
+        from pyfuse.worker.sandbox.docker import DockerExecutor
+        executor = DockerExecutor()
+        assert hasattr(executor, "__aenter__")
+        assert hasattr(executor, "__aexit__")
+
+
+class TestDockerHelpers:
+    """Test Docker CLI helper functions."""
+
+    def test_check_docker_available_raises_when_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from pyfuse.worker.sandbox import docker as docker_mod
+        monkeypatch.setattr("shutil.which", lambda _cmd: None)
+        with pytest.raises(WorkerError, match="docker"):
+            docker_mod._check_docker_available()
+
+    def test_dockerfile_dir_contains_dockerfile(self) -> None:
+        from pyfuse.worker.sandbox.docker import _DOCKERFILE_DIR
+        assert (_DOCKERFILE_DIR / "Dockerfile").exists()
+
+    def test_dockerfile_dir_contains_guest_agent(self) -> None:
+        from pyfuse.worker.sandbox.docker import _DOCKERFILE_DIR
+        assert (_DOCKERFILE_DIR / "guest_agent.py").exists()
+
+
+# ===========================================================================
+# Worker integration with DockerExecutor (via SandboxConfig)
+# ===========================================================================
+
+
+class TestWorkerWithDockerConfig:
+    @pytest.mark.asyncio
+    async def test_config_docker_creates_docker_executor(self) -> None:
+        from pyfuse.worker.sandbox.docker import DockerExecutor
+        worker = Worker(
+            auto_install=False,
+            sandbox=SandboxConfig(enabled=True, backend="docker"),
+        )
+        assert worker.sandboxed
+        assert isinstance(worker._sandbox, DockerExecutor)
+
+    @pytest.mark.asyncio
+    async def test_config_docker_disabled_creates_noop(self) -> None:
+        worker = Worker(
+            auto_install=False,
+            sandbox=SandboxConfig(enabled=False, backend="docker"),
+        )
+        assert not worker.sandboxed
+        assert isinstance(worker._sandbox, NoopExecutor)
+
+
+# ===========================================================================
+# DockerExecutor factory
+# ===========================================================================
+
+
+class TestDockerFactory:
+    def test_create_docker_executor_with_config(self) -> None:
+        from pyfuse.worker.sandbox.docker import DockerExecutor, create_docker_executor
+        cfg = SandboxConfig(enabled=True, backend="docker", docker_image="custom")
+        executor = create_docker_executor(cfg)
+        assert isinstance(executor, DockerExecutor)
+        assert executor._cfg.docker_image == "custom"
+
+    def test_create_docker_executor_defaults(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from pyfuse.worker.sandbox.docker import DockerExecutor, create_docker_executor
+        monkeypatch.delenv("PYFUSE_SANDBOX_DOCKER_IMAGE", raising=False)
+        monkeypatch.delenv("PYFUSE_SANDBOX_DOCKER_CONTAINER", raising=False)
+        executor = create_docker_executor()
+        assert isinstance(executor, DockerExecutor)
+        assert executor._cfg.docker_image == "pyfuse-sandbox"
+        assert executor._cfg.docker_container_name == "pyfuse-sandbox"
+
+    def test_create_docker_executor_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from pyfuse.worker.sandbox.docker import DockerExecutor, create_docker_executor
+        monkeypatch.setenv("PYFUSE_SANDBOX_DOCKER_IMAGE", "my-image")
+        monkeypatch.setenv("PYFUSE_SANDBOX_DOCKER_CONTAINER", "my-container")
+        executor = create_docker_executor()
+        assert isinstance(executor, DockerExecutor)
+        assert executor._cfg.docker_image == "my-image"
+        assert executor._cfg.docker_container_name == "my-container"

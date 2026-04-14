@@ -2,7 +2,7 @@
 
 The sandbox provides a :class:`SandboxExecutor` abstraction that the
 :class:`~pyfuse.worker.worker.Worker` uses to run reconstructed Python
-code.  Two implementations are shipped:
+code.  Three implementations are shipped:
 
 :class:`NoopExecutor`
     Runs code in the host process — identical to the pre-sandbox
@@ -12,11 +12,20 @@ code.  Two implementations are shipped:
     Runs code inside a lightweight Apple-Silicon micro-VM managed by
     `tart <https://github.com/cirruslabs/tart>`_.
 
+:class:`DockerExecutor`
+    Runs code inside a Docker container.  Works on any platform with
+    Docker installed.
+
 Quick start::
 
     from pyfuse.worker.sandbox import create_executor, SandboxConfig
 
-    executor = create_executor(SandboxConfig(enabled=True))
+    # VM (Apple Silicon)
+    executor = create_executor(SandboxConfig(enabled=True, backend="vm"))
+
+    # Docker (any platform)
+    executor = create_executor(SandboxConfig(enabled=True, backend="docker"))
+
     result = await executor.execute(source, "my_func", (arg1,), {})
 """
 
@@ -31,11 +40,21 @@ def create_executor(config: SandboxConfig | None = None) -> SandboxExecutor:
     When ``config`` is *None* or ``config.enabled`` is ``False``, a
     :class:`NoopExecutor` is returned (zero overhead).
 
-    When ``config.enabled`` is ``True``, a :class:`VMExecutor` backed
-    by *tart* is returned.
+    When ``config.enabled`` is ``True``, the ``config.backend`` field
+    selects the isolation technology:
+
+    ``"vm"``
+        :class:`VMExecutor` backed by *tart* (Apple Silicon only).
+    ``"docker"``
+        :class:`DockerExecutor` backed by Docker.
     """
     if config is None or not config.enabled:
         return NoopExecutor()
+
+    if config.backend == "docker":
+        from pyfuse.worker.sandbox.docker import DockerExecutor
+
+        return DockerExecutor(config)
 
     from pyfuse.worker.sandbox.vm import VMExecutor
 
