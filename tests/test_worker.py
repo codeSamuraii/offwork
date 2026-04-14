@@ -1,5 +1,6 @@
 import asyncio
 import json
+from typing import cast
 
 import pytest
 
@@ -118,9 +119,10 @@ class TestRun:
         _, json_str = _class_store()
         store = Store.from_json(json_str)
         source = store.reconstruct("greet")
-        ns: dict = {}
+        ns: dict[str, object] = {}
         exec(compile(source, "<test>", "exec"), ns)
-        instance = ns["Greeter"]()
+        greeter_cls = cast(type[object], ns["Greeter"])
+        instance = greeter_cls()
         task = Task(graph_json=json_str, function_name="greet", args=(instance, "world"))
         worker = Worker(auto_install=False)
         assert await worker.run(task) == "hello world"
