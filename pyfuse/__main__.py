@@ -383,9 +383,6 @@ def _cmd_sandbox(args: argparse.Namespace) -> None:
         print("Usage: pyfuse sandbox {setup|status|teardown}", file=sys.stderr)
         sys.exit(1)
 
-    import shutil
-    from pathlib import Path
-
     use_docker = getattr(args, "docker", False)
 
     if action == "setup":

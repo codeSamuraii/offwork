@@ -15,7 +15,6 @@ included (unit tests run without Docker; integration would need it).
 
 import asyncio
 import json
-import struct
 
 import pytest
 
@@ -146,7 +145,6 @@ class TestProtocol:
     async def test_async_send_recv(self) -> None:
         """Test async send/recv using an in-memory stream pair."""
         # Create a connected pair of streams via a TCP loopback
-        server_ready = asyncio.Event()
         received: list[dict] = []
 
         async def _server(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -301,7 +299,6 @@ class TestGuestAgentServer:
     @pytest.mark.asyncio
     async def test_end_to_end(self) -> None:
         """Start the guest agent as a TCP server and execute a request."""
-        from pyfuse.worker.sandbox.guest_agent import serve as guest_serve
 
         # Start server on a random port
         server = await asyncio.start_server(

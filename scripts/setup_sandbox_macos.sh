@@ -59,7 +59,7 @@ install_tart() {
 }
 
 create_vm() {
-    if tart list 2>/dev/null | grep -q "$VM_NAME"; then
+    if tart list 2>/dev/null | grep -Fxq -- "$VM_NAME"; then
         info "VM '$VM_NAME' already exists, skipping creation."
         return
     fi

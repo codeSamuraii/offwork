@@ -39,8 +39,9 @@ class SandboxConfig:
         ``"vm"`` backend.
     docker_image
         Docker image to use for the sandbox container.  The default is
-        ``pyfuse-sandbox``.  When ``"auto"``, the image is built
-        automatically from the bundled Dockerfile on first use.
+        ``pyfuse-sandbox``.  If the configured image does not already
+        exist locally, the Docker backend may build it from the bundled
+        Dockerfile on first use.
     docker_container_name
         Name assigned to the running container (for easy management).
     """
