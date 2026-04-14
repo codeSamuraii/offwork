@@ -280,7 +280,10 @@ async def _mapped_port(container: str, guest_port: int) -> int:
     for line in stdout.strip().splitlines():
         parts = line.rsplit(":", 1)
         if len(parts) == 2:
-            return int(parts[1])
+            try:
+                return int(parts[1])
+            except ValueError:
+                continue
     raise WorkerError(
         f"Unexpected 'docker port' output for {container}:{guest_port}: "
         f"{stdout.strip()!r}"

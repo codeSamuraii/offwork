@@ -532,8 +532,6 @@ async def _docker_teardown() -> None:
 
 def _add_sandbox_parser(sub: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
     p = sub.add_parser("sandbox", help="Manage the sandbox (VM or Docker)")
-    p.add_argument("--docker", action="store_true",
-                    help="Use Docker instead of tart VM")
     sandbox_sub = p.add_subparsers(dest="sandbox_action")
     setup_p = sandbox_sub.add_parser("setup", help="Set up the sandbox environment")
     setup_p.add_argument("--docker", action="store_true",
