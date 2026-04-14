@@ -89,6 +89,9 @@ Common mappings (`cv2` -> `opencv-python`, `PIL` -> `Pillow`, etc.) are built in
 - **Batch submission** -- `await func.map([(a1, b1), (a2, b2)])` submits and awaits multiple tasks.
 - **Pluggable backends** -- Redis (`redis://`) for multi-machine, local (`local://`) for same-machine IPC.
 - **Content-hash caching** -- Workers cache compiled functions by content hash. Same code from different clients = cache hit.
+- **Best-effort exec sandboxing** -- Workers reject known-dangerous imports/calls (`ctypes`, `subprocess`, `open()`, `os.system()`, etc.) before reconstructing callables.
+
+This sandbox is a mitigation layer, not a hard isolation boundary. For untrusted code, run workers inside OS-level isolation such as containers, user namespaces, seccomp, or dedicated VMs.
 
 ## Examples
 

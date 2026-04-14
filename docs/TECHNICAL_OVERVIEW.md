@@ -62,9 +62,11 @@ pyfuse/
 3. **Deserialize** -- Parse the JSON graph into a `Store`.
 4. **Cache check** -- Compute a subgraph key (SHA-256 of all reachable content hashes). If cached, skip to step 7.
 5. **Install dependencies** -- Extract third-party imports, install missing packages via `asyncio.create_subprocess_exec`.
-6. **Reconstruct** -- Produce a self-contained Python script from the store. `compile()` and `exec()` it into a fresh namespace.
+6. **Reconstruct** -- Produce a self-contained Python script from the store. Before `exec()`, the worker validates the AST against a best-effort sandbox policy and executes with restricted builtins/imports.
 7. **Execute** -- Call the function with the provided arguments. Async functions are awaited directly; sync functions run in an executor with explicit context propagation (for progress reporting). Apply retry/timeout policies via `asyncio.wait_for`.
 8. **Send result** -- Wrap the return value (or exception traceback) in a `ResultEnvelope` and send it back. If cancelled during execution, skip result delivery.
+
+The sandbox blocks a focused set of high-risk operations (for example `ctypes`, `subprocess`, direct `open()`, and `os.system()`), but it is not a complete security boundary. Strong isolation still requires a separate worker process/container with OS-enforced restrictions.
 
 ### Client side: `await future` / `await future.result()`
 

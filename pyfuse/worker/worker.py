@@ -12,6 +12,7 @@ from pyfuse.core.models import FunctionNode
 from pyfuse.core.task import Task, resolve_args
 from pyfuse.graph.store import Store
 from pyfuse.worker.deps import ensure_dependencies
+from pyfuse.worker.sandbox import DEFAULT_EXEC_SANDBOX, ExecSandbox
 
 logger = logging.getLogger(__name__)
 
@@ -83,15 +84,19 @@ class Worker:
         Automatically install missing third-party dependencies via pip.
     import_to_package
         Extra import-name -> pip-package-name mappings (merged with defaults).
+    sandbox
+        Best-effort guardrails applied before `exec`. Pass ``None`` to disable.
     """
 
     def __init__(
         self,
         auto_install: bool = True,
         import_to_package: dict[str, str] | None = None,
+        sandbox: ExecSandbox | None = DEFAULT_EXEC_SANDBOX,
     ) -> None:
         self._import_to_package = import_to_package
         self._auto_install = auto_install
+        self._sandbox = sandbox
         self._cache: dict[str, _CachedFunction] = {}
         self._last_build_info: BuildInfo | None = None
 
@@ -181,8 +186,14 @@ class Worker:
         source = store.reconstruct(function_name)
         logger.debug("Reconstructed source for %s:\n%s", function_name, source)
 
+        namespace: dict[str, Any]
+        if self._sandbox is None:
+            namespace = {}
+        else:
+            self._sandbox.validate_source(source, function_name)
+            namespace = self._sandbox.build_namespace()
+
         code = compile(source, f"<pyfuse:{function_name}>", "exec")
-        namespace: dict[str, Any] = {}
         exec(code, namespace)  # noqa: S102
 
         func = _extract_target_callable(namespace, store, function_name)

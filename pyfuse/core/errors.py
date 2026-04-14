@@ -10,6 +10,10 @@ class WorkerError(Error):
     """Raised when worker execution fails."""
 
 
+class SandboxViolationError(WorkerError):
+    """Raised when sandbox rules reject reconstructed worker code."""
+
+
 class DependencyError(Error):
     """Raised when dependency installation fails."""
 

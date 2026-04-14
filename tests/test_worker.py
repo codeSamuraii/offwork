@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from pyfuse.core.errors import WorkerError
+from pyfuse.core.errors import SandboxViolationError, WorkerError
 from pyfuse.core.models import FunctionNode, ImportInfo
 from pyfuse.graph.store import Store
 from pyfuse.core.task import Task
@@ -156,6 +156,57 @@ class TestRun:
         assert worker.cache_info()["size"] == 1
         await worker.run(task)
         assert worker.cache_info()["size"] == 1
+
+    @pytest.mark.asyncio
+    async def test_sandbox_allows_safe_os_usage(self) -> None:
+        node = _node(
+            "env_sep",
+            source="import os\n\ndef env_sep():\n    return os.getenv('PYFUSE_TEST_ENV', '') + os.sep\n",
+        )
+        store = Store()
+        h = store.put(node)
+        store.set_ref("m.env_sep", h)
+        worker = Worker(auto_install=False)
+        result = await worker.run(Task(graph_json=store.to_json(), function_name="env_sep"))
+        assert result.endswith("/")
+
+    @pytest.mark.asyncio
+    async def test_sandbox_blocks_ctypes_import(self) -> None:
+        node = _node(
+            "unsafe",
+            source="import ctypes\n\ndef unsafe():\n    return ctypes.c_int(1).value\n",
+        )
+        store = Store()
+        h = store.put(node)
+        store.set_ref("m.unsafe", h)
+        worker = Worker(auto_install=False)
+        with pytest.raises(SandboxViolationError, match="ctypes"):
+            await worker.run(Task(graph_json=store.to_json(), function_name="unsafe"))
+
+    @pytest.mark.asyncio
+    async def test_sandbox_blocks_open_builtin(self) -> None:
+        node = _node(
+            "unsafe",
+            source="def unsafe():\n    return open('/etc/passwd').read()\n",
+        )
+        store = Store()
+        h = store.put(node)
+        store.set_ref("m.unsafe", h)
+        worker = Worker(auto_install=False)
+        with pytest.raises(SandboxViolationError, match="open"):
+            await worker.run(Task(graph_json=store.to_json(), function_name="unsafe"))
+
+    @pytest.mark.asyncio
+    async def test_sandbox_can_be_disabled(self) -> None:
+        node = _node(
+            "eval_ok",
+            source="def eval_ok():\n    return eval('40 + 2')\n",
+        )
+        store = Store()
+        h = store.put(node)
+        store.set_ref("m.eval_ok", h)
+        worker = Worker(auto_install=False, sandbox=None)
+        assert await worker.run(Task(graph_json=store.to_json(), function_name="eval_ok")) == 42
 
 
 # -- Caching -----------------------------------------------------------------
