@@ -156,8 +156,12 @@ class Task:
         if self.signature is None or self.signer is None:
             return False
 
-        signer_bytes = bytes.fromhex(self.signer)
-        sig_bytes = bytes.fromhex(self.signature)
+        try:
+            signer_bytes = bytes.fromhex(self.signer)
+            sig_bytes = bytes.fromhex(self.signature)
+        except ValueError:
+            return False
+
         payload = self._canonical_payload()
 
         if trust is not None:
@@ -172,9 +176,13 @@ class Task:
         """SHA-256 fingerprint of the signer's public key, or *None*."""
         if self.signer is None:
             return None
+        try:
+            raw = bytes.fromhex(self.signer)
+        except ValueError:
+            return None
         from pyfuse.core.signing import _fingerprint
 
-        return _fingerprint(bytes.fromhex(self.signer))
+        return _fingerprint(raw)
 
     @property
     def is_signed(self) -> bool:

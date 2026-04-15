@@ -135,6 +135,12 @@ class TestVerifyHelpers:
         bad_sig = bytes([b ^ 0xFF for b in sig])
         assert _verify(kp.public_bytes, b"data", bad_sig) is False
 
+    def test_verify_malformed_public_key(self) -> None:
+        assert _verify(b"short", b"data", b"\x00" * 64) is False
+
+    def test_verify_empty_public_key(self) -> None:
+        assert _verify(b"", b"data", b"\x00" * 64) is False
+
     def test_fingerprint_deterministic(self) -> None:
         raw = b"\x00" * 32
         assert _fingerprint(raw) == _fingerprint(raw)
@@ -320,6 +326,22 @@ class TestTaskSigning:
     def test_verify_unsigned(self) -> None:
         task = Task(graph_json="{}", function_name="f")
         assert task.verify() is False
+
+    def test_verify_malformed_signer_hex(self) -> None:
+        task = Task(graph_json="{}", function_name="f", signer="not-hex", signature="ab" * 32)
+        assert task.verify() is False
+
+    def test_verify_malformed_signature_hex(self) -> None:
+        task = Task(graph_json="{}", function_name="f", signer="ab" * 32, signature="zzz")
+        assert task.verify() is False
+
+    def test_verify_valid_hex_wrong_length(self) -> None:
+        task = Task(graph_json="{}", function_name="f", signer="ab" * 32, signature="cd" * 10)
+        assert task.verify() is False
+
+    def test_signer_fingerprint_malformed_hex(self) -> None:
+        task = Task(graph_json="{}", function_name="f", signer="not-valid-hex")
+        assert task.signer_fingerprint is None
 
     def test_tampered_graph_detected(self) -> None:
         kp = KeyPair.generate()

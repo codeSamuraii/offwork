@@ -273,11 +273,11 @@ def _verify(public_bytes: bytes, data: bytes, signature: bytes) -> bool:
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-    key = Ed25519PublicKey.from_public_bytes(public_bytes)
     try:
+        key = Ed25519PublicKey.from_public_bytes(public_bytes)
         key.verify(signature, data)
         return True
-    except InvalidSignature:
+    except (InvalidSignature, ValueError):
         return False
 
 
