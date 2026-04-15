@@ -88,13 +88,13 @@ def _cmd_worker(args: argparse.Namespace) -> None:
     _configure_logging(_resolve_log_level(args))
 
     trust_store = None
-    trusted_keys = getattr(args, "trusted_keys", None) or os.environ.get("PYFUSE_TRUSTED_KEYS")
-    if trusted_keys:
+    trust_dir = getattr(args, "trusted_keys", None) or os.environ.get("PYFUSE_TRUSTED_KEYS")
+    if trust_dir:
         from pyfuse.core.signing import TrustStore
 
-        trust_store = TrustStore.from_directory(trusted_keys)
+        trust_store = TrustStore.from_directory(trust_dir)
         logging.getLogger("pyfuse").info(
-            "Loaded %d trusted key(s) from %s", len(trust_store), trusted_keys,
+            "Loaded %d trusted key(s) from %s", len(trust_store), trust_dir,
         )
 
     asyncio.run(serve(
