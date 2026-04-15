@@ -15,8 +15,7 @@ from pyfuse.worker.backends.base import Backend
 from pyfuse.worker.deps import install_package_as
 from pyfuse.worker.remote import connect, disconnect, serve
 from pyfuse.worker.result import Result, ResultEnvelope
-from pyfuse.worker.sandbox import SandboxExecutor, create_executor
-from pyfuse.worker.sandbox.config import SandboxConfig
+from pyfuse.worker.sandbox import DockerSandbox
 from pyfuse.worker.worker import Worker
 from pyfuse.worker.worker import execute as execute
 
@@ -100,7 +99,5 @@ __all__ = [
     "Worker",
     "Backend",
     # Sandbox
-    "SandboxConfig",
-    "SandboxExecutor",
-    "create_executor",
+    "DockerSandbox",
 ]

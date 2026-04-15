@@ -1,16 +1,12 @@
-"""Tests for the sandbox subsystem.
+"""Tests for the Docker sandbox subsystem.
 
 These tests exercise:
-  - NoopExecutor (local exec, default behaviour)
-  - DockerExecutor (container-based sandbox)
+  - DockerSandbox class (instantiation, configuration)
   - Guest agent protocol and execution logic
-  - SandboxConfig and create_executor factory
-  - Worker integration with sandbox
+  - Worker integration (with and without sandbox)
 
-The VMExecutor tests that require a running tart VM are skipped in CI
-(no Apple Silicon + Virtualization.framework available).
-DockerExecutor tests that require a running Docker daemon are also
-included (unit tests run without Docker; integration would need it).
+DockerSandbox integration tests that require a running Docker daemon
+are skipped unless Docker is available.
 """
 
 import asyncio
@@ -20,7 +16,7 @@ import pytest
 
 from pyfuse.core.errors import WorkerError
 from pyfuse.core.task import Task
-from pyfuse.worker.sandbox import SandboxExecutor, SandboxConfig, NoopExecutor, create_executor
+from pyfuse.worker.sandbox import DockerSandbox
 from pyfuse.worker.sandbox._protocol import encode, decode_header, HEADER_SIZE, async_send, async_recv
 from pyfuse.worker.sandbox.guest_agent import _execute_request
 from pyfuse.worker.worker import Worker
@@ -58,73 +54,6 @@ def _make_store_json(source: str, name: str = "f", module: str = "m") -> str:
 
 
 # ===========================================================================
-# NoopExecutor
-# ===========================================================================
-
-
-class TestNoopExecutor:
-    @pytest.mark.asyncio
-    async def test_simple_function(self) -> None:
-        executor = NoopExecutor()
-        result = await executor.execute(
-            "def f(x):\n    return x * 2\n",
-            "f", (21,), {},
-        )
-        assert result == 42
-
-    @pytest.mark.asyncio
-    async def test_with_kwargs(self) -> None:
-        executor = NoopExecutor()
-        result = await executor.execute(
-            "def f(x, y=10):\n    return x + y\n",
-            "f", (5,), {"y": 3},
-        )
-        assert result == 8
-
-    @pytest.mark.asyncio
-    async def test_async_function(self) -> None:
-        executor = NoopExecutor()
-        result = await executor.execute(
-            "async def af(x):\n    return x + 10\n",
-            "af", (5,), {},
-        )
-        assert result == 15
-
-    @pytest.mark.asyncio
-    async def test_class_method(self) -> None:
-        source = (
-            "class Greeter:\n"
-            "    def greet(self, name):\n"
-            "        return f'hello {name}'\n"
-        )
-        executor = NoopExecutor()
-        # For a method, we need an instance
-        ns: dict = {}
-        exec(compile(source, "<test>", "exec"), ns)
-        instance = ns["Greeter"]()
-        result = await executor.execute(
-            source, "greet", (instance, "world"), {},
-            owner_class="m.Greeter",
-        )
-        assert result == "hello world"
-
-    @pytest.mark.asyncio
-    async def test_function_not_found(self) -> None:
-        executor = NoopExecutor()
-        with pytest.raises(RuntimeError, match="not found"):
-            await executor.execute("def g(): pass\n", "f", (), {})
-
-    @pytest.mark.asyncio
-    async def test_start_stop_are_noop(self) -> None:
-        executor = NoopExecutor()
-        await executor.start()
-        await executor.stop()
-        # Should work fine as context manager too
-        async with executor:
-            pass
-
-
-# ===========================================================================
 # Protocol
 # ===========================================================================
 
@@ -144,7 +73,6 @@ class TestProtocol:
     @pytest.mark.asyncio
     async def test_async_send_recv(self) -> None:
         """Test async send/recv using an in-memory stream pair."""
-        # Create a connected pair of streams via a TCP loopback
         received: list[dict] = []
 
         async def _server(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -169,7 +97,7 @@ class TestProtocol:
 
 
 # ===========================================================================
-# Guest Agent execution logic (tested without a VM)
+# Guest Agent execution logic
 # ===========================================================================
 
 
@@ -299,8 +227,6 @@ class TestGuestAgentServer:
     @pytest.mark.asyncio
     async def test_end_to_end(self) -> None:
         """Start the guest agent as a TCP server and execute a request."""
-
-        # Start server on a random port
         server = await asyncio.start_server(
             lambda r, w: None, "127.0.0.1", 0
         )
@@ -308,7 +234,6 @@ class TestGuestAgentServer:
         server.close()
         await server.wait_closed()
 
-        # Start guest agent in background
         from pyfuse.worker.sandbox.guest_agent import _handle_client
         agent_server = await asyncio.start_server(
             _handle_client, "127.0.0.1", port,
@@ -344,111 +269,116 @@ class TestGuestAgentServer:
 
 
 # ===========================================================================
-# SandboxConfig & create_executor
+# DockerSandbox
 # ===========================================================================
 
 
-class TestSandboxConfig:
-    def test_defaults(self) -> None:
-        cfg = SandboxConfig()
-        assert cfg.enabled is False
-        assert cfg.backend == "vm"
-        assert cfg.vm_name == "pyfuse-sandbox"
-        assert cfg.guest_port == 9749
-        assert cfg.cpus == 2
-        assert cfg.memory_gb == 2
-        assert cfg.timeout == 60.0
-        assert cfg.boot_timeout == 30.0
-        assert cfg.ssh_key_path is None
-        assert cfg.docker_image == "pyfuse-sandbox"
-        assert cfg.docker_container_name == "pyfuse-sandbox"
+class TestDockerSandbox:
+    def test_default_params(self) -> None:
+        sb = DockerSandbox()
+        assert sb.image == "pyfuse-sandbox"
+        assert sb.container_name == "pyfuse-sandbox"
+        assert sb.guest_port == 9749
+        assert sb.cpus == 2
+        assert sb.memory_gb == 2
+        assert sb.timeout == 60.0
+        assert sb.boot_timeout == 30.0
+        assert not sb._started
 
-    def test_frozen(self) -> None:
-        cfg = SandboxConfig()
-        with pytest.raises(AttributeError):
-            cfg.enabled = True  # type: ignore[misc]
+    def test_custom_params(self) -> None:
+        sb = DockerSandbox(image="my-img", container_name="my-box", timeout=120.0)
+        assert sb.image == "my-img"
+        assert sb.container_name == "my-box"
+        assert sb.timeout == 120.0
 
-    def test_docker_backend(self) -> None:
-        cfg = SandboxConfig(enabled=True, backend="docker")
-        assert cfg.backend == "docker"
-        assert cfg.docker_image == "pyfuse-sandbox"
+    def test_context_manager_protocol(self) -> None:
+        sb = DockerSandbox()
+        assert hasattr(sb, "__aenter__")
+        assert hasattr(sb, "__aexit__")
 
 
-class TestCreateExecutor:
-    def test_none_returns_noop(self) -> None:
-        executor = create_executor(None)
-        assert isinstance(executor, NoopExecutor)
+class TestDockerHelpers:
+    """Test Docker CLI helper functions."""
 
-    def test_disabled_returns_noop(self) -> None:
-        executor = create_executor(SandboxConfig(enabled=False))
-        assert isinstance(executor, NoopExecutor)
+    def test_check_docker_available_raises_when_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from pyfuse.worker.sandbox import docker as docker_mod
+        monkeypatch.setattr("shutil.which", lambda _cmd: None)
+        with pytest.raises(WorkerError, match="docker"):
+            docker_mod._check_docker_available()
 
-    def test_enabled_returns_vm_executor(self) -> None:
-        from pyfuse.worker.sandbox.vm import VMExecutor
-        executor = create_executor(SandboxConfig(enabled=True))
-        assert isinstance(executor, VMExecutor)
+    def test_dockerfile_dir_contains_dockerfile(self) -> None:
+        from pyfuse.worker.sandbox.docker import _DOCKERFILE_DIR
+        assert (_DOCKERFILE_DIR / "Dockerfile").exists()
 
-    def test_enabled_docker_returns_docker_executor(self) -> None:
-        from pyfuse.worker.sandbox.docker import DockerExecutor
-        executor = create_executor(SandboxConfig(enabled=True, backend="docker"))
-        assert isinstance(executor, DockerExecutor)
-
-    def test_disabled_docker_returns_noop(self) -> None:
-        executor = create_executor(SandboxConfig(enabled=False, backend="docker"))
-        assert isinstance(executor, NoopExecutor)
+    def test_dockerfile_dir_contains_guest_agent(self) -> None:
+        from pyfuse.worker.sandbox.docker import _DOCKERFILE_DIR
+        assert (_DOCKERFILE_DIR / "guest_agent.py").exists()
 
 
 # ===========================================================================
-# Worker integration with NoopExecutor (default path unchanged)
+# Worker without sandbox (default path)
 # ===========================================================================
 
 
-class TestWorkerWithNoopSandbox:
+class TestWorkerWithoutSandbox:
     @pytest.mark.asyncio
-    async def test_default_worker_uses_noop(self) -> None:
+    async def test_default_worker_not_sandboxed(self) -> None:
         worker = Worker(auto_install=False)
-        assert isinstance(worker._sandbox, NoopExecutor)
+        assert worker._sandbox is None
         assert not worker.sandboxed
 
     @pytest.mark.asyncio
-    async def test_explicit_noop(self) -> None:
-        worker = Worker(auto_install=False, sandbox=NoopExecutor())
-        assert not worker.sandboxed
-
-    @pytest.mark.asyncio
-    async def test_config_disabled(self) -> None:
-        worker = Worker(auto_install=False, sandbox=SandboxConfig(enabled=False))
-        assert not worker.sandboxed
-
-    @pytest.mark.asyncio
-    async def test_config_enabled(self) -> None:
-        from pyfuse.worker.sandbox.vm import VMExecutor
-        worker = Worker(auto_install=False, sandbox=SandboxConfig(enabled=True))
-        assert worker.sandboxed
-        assert isinstance(worker._sandbox, VMExecutor)
-
-    @pytest.mark.asyncio
-    async def test_execute_still_works_without_sandbox(self) -> None:
-        """Ensure the default (no-sandbox) path is not broken."""
+    async def test_execute_sync_function(self) -> None:
         json_str = _make_store_json("def f(x):\n    return x * 2\n")
         task = Task(graph_json=json_str, function_name="f", args=(21,))
         worker = Worker(auto_install=False)
         assert await worker.run(task) == 42
 
     @pytest.mark.asyncio
-    async def test_execute_async_without_sandbox(self) -> None:
+    async def test_execute_async_function(self) -> None:
         json_str = _make_store_json("async def f(x):\n    return x + 10\n")
         task = Task(graph_json=json_str, function_name="f", args=(5,))
         worker = Worker(auto_install=False)
         assert await worker.run(task) == 15
 
+    @pytest.mark.asyncio
+    async def test_sandbox_false_means_no_sandbox(self) -> None:
+        worker = Worker(auto_install=False, sandbox=False)
+        assert not worker.sandboxed
+
+    @pytest.mark.asyncio
+    async def test_sandbox_none_means_no_sandbox(self) -> None:
+        worker = Worker(auto_install=False, sandbox=None)
+        assert not worker.sandboxed
+
 
 # ===========================================================================
-# Worker integration with a custom SandboxExecutor
+# Worker with sandbox enabled
 # ===========================================================================
 
 
-class _FakeSandbox(SandboxExecutor):
+class TestWorkerWithSandbox:
+    @pytest.mark.asyncio
+    async def test_sandbox_true_creates_docker_sandbox(self) -> None:
+        worker = Worker(auto_install=False, sandbox=True)
+        assert worker.sandboxed
+        assert isinstance(worker._sandbox, DockerSandbox)
+
+    @pytest.mark.asyncio
+    async def test_sandbox_instance(self) -> None:
+        sb = DockerSandbox(image="custom-img")
+        worker = Worker(auto_install=False, sandbox=sb)
+        assert worker.sandboxed
+        assert worker._sandbox is sb
+        assert worker._sandbox.image == "custom-img"
+
+
+# ===========================================================================
+# Worker with a fake sandbox (duck-typed)
+# ===========================================================================
+
+
+class _FakeSandbox:
     """Test double that records calls and returns a fixed value."""
 
     def __init__(self, return_value: object = 42) -> None:
@@ -478,8 +408,8 @@ class TestWorkerWithFakeSandbox:
     @pytest.mark.asyncio
     async def test_delegates_to_sandbox(self) -> None:
         sandbox = _FakeSandbox(return_value=99)
-        worker = Worker(auto_install=False, sandbox=sandbox)
-        assert worker.sandboxed
+        worker = Worker(auto_install=False)
+        worker._sandbox = sandbox  # type: ignore[assignment]
 
         json_str = _make_store_json("def f(x):\n    return x * 2\n")
         task = Task(graph_json=json_str, function_name="f", args=(21,))
@@ -493,7 +423,8 @@ class TestWorkerWithFakeSandbox:
     @pytest.mark.asyncio
     async def test_caching_still_works(self) -> None:
         sandbox = _FakeSandbox(return_value=0)
-        worker = Worker(auto_install=False, sandbox=sandbox)
+        worker = Worker(auto_install=False)
+        worker._sandbox = sandbox  # type: ignore[assignment]
 
         json_str = _make_store_json("def f(x):\n    return x\n")
         task1 = Task(graph_json=json_str, function_name="f", args=(1,))
@@ -507,112 +438,183 @@ class TestWorkerWithFakeSandbox:
         # But sandbox should be called twice (different args)
         assert len(sandbox.calls) == 2
 
-
 # ===========================================================================
-# DockerExecutor unit tests (no Docker daemon needed)
-# ===========================================================================
-
-
-class TestDockerExecutor:
-    def test_instantiation_with_config(self) -> None:
-        from pyfuse.worker.sandbox.docker import DockerExecutor
-        cfg = SandboxConfig(enabled=True, backend="docker", docker_image="my-img")
-        executor = DockerExecutor(cfg)
-        assert executor._cfg.docker_image == "my-img"
-        assert executor._cfg.backend == "docker"
-        assert not executor._started
-
-    def test_instantiation_default_config(self) -> None:
-        from pyfuse.worker.sandbox.docker import DockerExecutor
-        executor = DockerExecutor()
-        assert executor._cfg.docker_image == "pyfuse-sandbox"
-        assert executor._cfg.backend == "docker"
-
-    def test_is_sandbox_executor(self) -> None:
-        from pyfuse.worker.sandbox.docker import DockerExecutor
-        executor = DockerExecutor()
-        assert isinstance(executor, SandboxExecutor)
-        assert not isinstance(executor, NoopExecutor)
-
-    def test_context_manager_protocol(self) -> None:
-        """DockerExecutor supports async context manager (from base class)."""
-        from pyfuse.worker.sandbox.docker import DockerExecutor
-        executor = DockerExecutor()
-        assert hasattr(executor, "__aenter__")
-        assert hasattr(executor, "__aexit__")
-
-
-class TestDockerHelpers:
-    """Test Docker CLI helper functions."""
-
-    def test_check_docker_available_raises_when_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from pyfuse.worker.sandbox import docker as docker_mod
-        monkeypatch.setattr("shutil.which", lambda _cmd: None)
-        with pytest.raises(WorkerError, match="docker"):
-            docker_mod._check_docker_available()
-
-    def test_dockerfile_dir_contains_dockerfile(self) -> None:
-        from pyfuse.worker.sandbox.docker import _DOCKERFILE_DIR
-        assert (_DOCKERFILE_DIR / "Dockerfile").exists()
-
-    def test_dockerfile_dir_contains_guest_agent(self) -> None:
-        from pyfuse.worker.sandbox.docker import _DOCKERFILE_DIR
-        assert (_DOCKERFILE_DIR / "guest_agent.py").exists()
-
-
-# ===========================================================================
-# Worker integration with DockerExecutor (via SandboxConfig)
+# Guest agent progress support
 # ===========================================================================
 
 
-class TestWorkerWithDockerConfig:
-    @pytest.mark.asyncio
-    async def test_config_docker_creates_docker_executor(self) -> None:
-        from pyfuse.worker.sandbox.docker import DockerExecutor
-        worker = Worker(
-            auto_install=False,
-            sandbox=SandboxConfig(enabled=True, backend="docker"),
-        )
-        assert worker.sandboxed
-        assert isinstance(worker._sandbox, DockerExecutor)
+class TestGuestAgentProgress:
+    """Test that pyfuse.progress() calls inside the guest agent produce
+    ``{"status": "progress", ...}`` frames on the wire."""
 
     @pytest.mark.asyncio
-    async def test_config_docker_disabled_creates_noop(self) -> None:
-        worker = Worker(
-            auto_install=False,
-            sandbox=SandboxConfig(enabled=False, backend="docker"),
+    async def test_progress_from_sync_function(self) -> None:
+        """Sync function calling pyfuse.progress() sends progress frames."""
+        source = (
+            "from pyfuse import progress\n\n"
+            "def f(n):\n"
+            "    for i in range(n):\n"
+            "        progress(i + 1, n, message=f'step {i+1}')\n"
+            "    return 'done'\n"
         )
-        assert not worker.sandboxed
-        assert isinstance(worker._sandbox, NoopExecutor)
+
+        # Start the agent on a random port
+        from pyfuse.worker.sandbox.guest_agent import _handle_client
+        agent_server = await asyncio.start_server(
+            _handle_client, "127.0.0.1", 0,
+        )
+        port = agent_server.sockets[0].getsockname()[1]
+
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            await async_send(writer, {
+                "source": source,
+                "function_name": "f",
+                "args": [3],
+                "kwargs": {},
+            })
+
+            # Expect 3 progress messages then the final ok
+            messages = []
+            while True:
+                msg = await async_recv(reader)
+                messages.append(msg)
+                if msg["status"] != "progress":
+                    break
+
+            writer.close()
+        finally:
+            agent_server.close()
+            await agent_server.wait_closed()
+
+        assert len(messages) == 4  # 3 progress + 1 ok
+        for i, m in enumerate(messages[:3]):
+            assert m["status"] == "progress"
+            assert m["current"] == i + 1
+            assert m["total"] == 3
+            assert m["message"] == f"step {i+1}"
+        assert messages[-1] == {"status": "ok", "result": "done"}
+
+    @pytest.mark.asyncio
+    async def test_progress_from_async_function(self) -> None:
+        """Async function calling pyfuse.progress() sends progress frames."""
+        source = (
+            "import pyfuse\n\n"
+            "async def af(n):\n"
+            "    for i in range(n):\n"
+            "        pyfuse.progress(i + 1, n)\n"
+            "    return n\n"
+        )
+
+        from pyfuse.worker.sandbox.guest_agent import _handle_client
+        agent_server = await asyncio.start_server(
+            _handle_client, "127.0.0.1", 0,
+        )
+        port = agent_server.sockets[0].getsockname()[1]
+
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            await async_send(writer, {
+                "source": source,
+                "function_name": "af",
+                "args": [2],
+                "kwargs": {},
+            })
+
+            messages = []
+            while True:
+                msg = await async_recv(reader)
+                messages.append(msg)
+                if msg["status"] != "progress":
+                    break
+
+            writer.close()
+        finally:
+            agent_server.close()
+            await agent_server.wait_closed()
+
+        assert len(messages) == 3  # 2 progress + 1 ok
+        assert messages[0] == {"status": "progress", "current": 1, "total": 2}
+        assert messages[1] == {"status": "progress", "current": 2, "total": 2}
+        assert messages[2] == {"status": "ok", "result": 2}
+
+    @pytest.mark.asyncio
+    async def test_no_progress_still_works(self) -> None:
+        """Functions that don't call progress() work as before."""
+        resp = await _execute_request({
+            "source": "def f(x):\n    return x + 1\n",
+            "function_name": "f",
+            "args": [5],
+            "kwargs": {},
+        })
+        assert resp == {"status": "ok", "result": 6}
+
+    @pytest.mark.asyncio
+    async def test_pyfuse_shim_cleaned_up(self) -> None:
+        """The fake pyfuse module is removed after execution."""
+        import sys
+        had_pyfuse = "pyfuse" in sys.modules
+        original = sys.modules.get("pyfuse")
+
+        await _execute_request({
+            "source": "from pyfuse import progress\ndef f():\n    return 1\n",
+            "function_name": "f",
+            "args": [],
+            "kwargs": {},
+        })
+
+        if had_pyfuse:
+            assert sys.modules.get("pyfuse") is original
+        # pyfuse IS in sys.modules because the test suite imports it,
+        # so just verify it's the real one, not a fake
+        assert hasattr(sys.modules["pyfuse"], "trace")
 
 
 # ===========================================================================
-# DockerExecutor factory
+# DockerSandbox progress forwarding
 # ===========================================================================
 
 
-class TestDockerFactory:
-    def test_create_docker_executor_with_config(self) -> None:
-        from pyfuse.worker.sandbox.docker import DockerExecutor, create_docker_executor
-        cfg = SandboxConfig(enabled=True, backend="docker", docker_image="custom")
-        executor = create_docker_executor(cfg)
-        assert isinstance(executor, DockerExecutor)
-        assert executor._cfg.docker_image == "custom"
+class TestDockerSandboxProgressForwarding:
+    """Test that DockerSandbox._read_response forwards progress messages."""
 
-    def test_create_docker_executor_defaults(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from pyfuse.worker.sandbox.docker import DockerExecutor, create_docker_executor
-        monkeypatch.delenv("PYFUSE_SANDBOX_DOCKER_IMAGE", raising=False)
-        monkeypatch.delenv("PYFUSE_SANDBOX_DOCKER_CONTAINER", raising=False)
-        executor = create_docker_executor()
-        assert isinstance(executor, DockerExecutor)
-        assert executor._cfg.docker_image == "pyfuse-sandbox"
-        assert executor._cfg.docker_container_name == "pyfuse-sandbox"
+    @pytest.mark.asyncio
+    async def test_read_response_forwards_progress(self) -> None:
+        """_read_response calls progress_cb for each progress frame."""
+        from pyfuse.worker.sandbox.docker import DockerSandbox
+        from pyfuse.worker.sandbox._protocol import encode
 
-    def test_create_docker_executor_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from pyfuse.worker.sandbox.docker import DockerExecutor, create_docker_executor
-        monkeypatch.setenv("PYFUSE_SANDBOX_DOCKER_IMAGE", "my-image")
-        monkeypatch.setenv("PYFUSE_SANDBOX_DOCKER_CONTAINER", "my-container")
-        executor = create_docker_executor()
-        assert isinstance(executor, DockerExecutor)
-        assert executor._cfg.docker_image == "my-image"
-        assert executor._cfg.docker_container_name == "my-container"
+        progress_calls: list[tuple] = []
+
+        def _on_progress(current: float, total: float | None, message: str | None) -> None:
+            progress_calls.append((current, total, message))
+
+        # Set up a fake server that sends 2 progress frames + final ok
+        async def _fake_agent(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            _req = await async_recv(reader)
+            await async_send(writer, {"status": "progress", "current": 1, "total": 3})
+            await async_send(writer, {"status": "progress", "current": 2, "total": 3, "message": "half"})
+            await async_send(writer, {"status": "ok", "result": 42})
+            writer.close()
+
+        server = await asyncio.start_server(_fake_agent, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+
+        try:
+            sb = DockerSandbox()
+            sb._reader, sb._writer = await asyncio.open_connection("127.0.0.1", port)
+            sb._started = True
+            sb._host_port = port
+
+            resp = await sb._send_request(
+                {"source": "...", "function_name": "f", "args": [], "kwargs": {}},
+                progress_cb=_on_progress,
+            )
+        finally:
+            server.close()
+            await server.wait_closed()
+
+        assert resp == {"status": "ok", "result": 42}
+        assert len(progress_calls) == 2
+        assert progress_calls[0] == (1, 3, None)
+        assert progress_calls[1] == (2, 3, "half")

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Lightweight guest agent for pyfuse VM sandbox.
+"""Lightweight guest agent for pyfuse sandbox.
 
-This script is deployed inside the micro-VM and listens for execution
-requests over TCP.  It is completely self-contained (stdlib only) so
-the VM only needs a working Python ≥ 3.10 interpreter.
+This script is deployed inside the Docker container and listens for
+execution requests over TCP.  It is completely self-contained (stdlib
+only) so the container only needs a working Python ≥ 3.10 interpreter.
 
 Wire protocol
 -------------
@@ -42,11 +42,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextvars
+import functools
 import inspect
 import json
 import struct
 import sys
 import traceback as tb_mod
+import types
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -132,8 +135,77 @@ def _extract_callable(
     return func
 
 
-async def _execute_request(req: dict[str, Any]) -> dict[str, Any]:
-    """Execute a single request and return a response dict."""
+def _install_pyfuse_shim(
+    writer: asyncio.StreamWriter | None,
+) -> tuple[Any, ...]:
+    """Install a fake ``pyfuse`` package so ``from pyfuse import progress`` works.
+
+    The shim's ``progress()`` writes a ``{"status": "progress", ...}``
+    frame directly to *writer*.  When *writer* is ``None`` (unit tests),
+    progress calls are silently ignored.
+
+    Returns the previous ``sys.modules`` entries so they can be restored.
+    """
+
+    def _progress(
+        _value: float,
+        _total: int | None = None,
+        /,
+        *,
+        message: str | None = None,
+    ) -> None:
+        if writer is None:
+            return
+        msg: dict[str, Any] = {"status": "progress", "current": _value}
+        if _total is not None:
+            msg["total"] = _total
+        if message is not None:
+            msg["message"] = message
+        # Synchronous write — fine from the event-loop thread and from
+        # executor threads via loop.call_soon_threadsafe (see below).
+        writer.write(_encode(msg))
+
+    # Build a minimal pyfuse package hierarchy.
+    fake = types.ModuleType("pyfuse")
+    fake.progress = _progress  # type: ignore[attr-defined]
+    fake_core = types.ModuleType("pyfuse.core")
+    fake_core_progress = types.ModuleType("pyfuse.core.progress")
+    fake_core_progress.progress = _progress  # type: ignore[attr-defined]
+    fake.core = fake_core  # type: ignore[attr-defined]
+    fake_core.progress = fake_core_progress  # type: ignore[attr-defined]
+
+    saved = (
+        sys.modules.get("pyfuse"),
+        sys.modules.get("pyfuse.core"),
+        sys.modules.get("pyfuse.core.progress"),
+    )
+    sys.modules["pyfuse"] = fake
+    sys.modules["pyfuse.core"] = fake_core
+    sys.modules["pyfuse.core.progress"] = fake_core_progress
+    return saved
+
+
+def _uninstall_pyfuse_shim(saved: tuple[Any, ...]) -> None:
+    for key, prev in zip(
+        ("pyfuse", "pyfuse.core", "pyfuse.core.progress"), saved
+    ):
+        if prev is None:
+            sys.modules.pop(key, None)
+        else:
+            sys.modules[key] = prev
+
+
+async def _execute_request(
+    req: dict[str, Any],
+    writer: asyncio.StreamWriter | None = None,
+) -> dict[str, Any]:
+    """Execute a single request and return a response dict.
+
+    When *writer* is provided, ``pyfuse.progress()`` calls inside the
+    user function are forwarded as ``{"status": "progress", ...}``
+    frames over the wire before the final ``ok`` / ``error`` response.
+    """
+    saved = _install_pyfuse_shim(writer)
     try:
         source: str = req["source"]
         function_name: str = req["function_name"]
@@ -155,7 +227,17 @@ async def _execute_request(req: dict[str, Any]) -> dict[str, Any]:
         if inspect.iscoroutinefunction(func):
             result = await func(*args, **kwargs)
         else:
-            result = func(*args, **kwargs)
+            # Run sync functions in an executor so the event loop stays
+            # free to flush buffered progress writes.
+            loop = asyncio.get_running_loop()
+            ctx = contextvars.copy_context()
+            result = await loop.run_in_executor(
+                None, ctx.run, functools.partial(func, *args, **kwargs),
+            )
+
+        # Flush any buffered progress frames before the final response.
+        if writer is not None:
+            await writer.drain()
 
         return {"status": "ok", "result": result}
 
@@ -166,6 +248,8 @@ async def _execute_request(req: dict[str, Any]) -> dict[str, Any]:
             "error_message": str(exc),
             "error_traceback": "".join(tb_mod.format_exception(exc)),
         }
+    finally:
+        _uninstall_pyfuse_shim(saved)
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +266,7 @@ async def _handle_client(
     try:
         while True:
             req = await _recv(reader)
-            resp = await _execute_request(req)
+            resp = await _execute_request(req, writer)
             await _send(writer, resp)
     except (asyncio.IncompleteReadError, ConnectionError, OSError):
         pass

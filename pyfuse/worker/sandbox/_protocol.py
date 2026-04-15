@@ -5,7 +5,7 @@ The format is identical to the one used by the local backend
 header followed by a UTF-8 JSON payload.
 
 This module is intentionally dependency-free (stdlib only) so it can be
-shipped into the guest VM without installing pyfuse there.
+shipped into the container without installing pyfuse there.
 """
 
 import json

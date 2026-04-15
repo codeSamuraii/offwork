@@ -2,14 +2,15 @@
 # setup_sandbox_docker.sh — Build the pyfuse Docker sandbox image.
 #
 # What it does:
-#   1. Checks that Docker is installed and running.
+#   1. Detects a Docker-compatible runtime (Docker, colima, Podman …).
 #   2. Builds the pyfuse-sandbox Docker image from the bundled Dockerfile.
 #
-# After running this script the worker can be started with:
-#   pyfuse worker --backend redis://... --sandbox docker
+# Supported platforms:
+#   - Linux  (Docker Engine, Podman, or any OCI-compatible runtime)
+#   - macOS  (Docker Desktop, colima, OrbStack, Rancher Desktop …)
 #
-# Requirements:
-#   - Docker installed and running
+# After running this script the worker can be started with:
+#   pyfuse worker --backend redis://... --sandbox
 #
 # Usage:
 #   bash scripts/setup_sandbox_docker.sh
@@ -30,9 +31,28 @@ die()   { printf "\033[1;31m[pyfuse]\033[0m %s\n" "$*" >&2; exit 1; }
 # ---- Checks ---------------------------------------------------------------
 
 check_docker() {
-    command -v docker &>/dev/null || die "Docker is not installed. Get it from https://docs.docker.com/get-docker/"
-    docker info &>/dev/null || die "Docker daemon is not running. Please start Docker."
-    ok "Docker is installed and running."
+    if ! command -v docker &>/dev/null; then
+        die "Docker CLI not found.
+  Linux:  https://docs.docker.com/engine/install/
+  macOS:  brew install --cask docker   OR   brew install colima && colima start"
+    fi
+
+    if ! docker info &>/dev/null 2>&1; then
+        # Provide helpful hints for common runtimes
+        if [[ "$(uname -s)" == "Darwin" ]]; then
+            if command -v colima &>/dev/null; then
+                die "Docker daemon not reachable. Try:  colima start"
+            fi
+            die "Docker daemon not reachable. Start Docker Desktop or run:  colima start"
+        else
+            die "Docker daemon not reachable. Ensure the Docker service is running:
+  sudo systemctl start docker"
+        fi
+    fi
+
+    local runtime
+    runtime=$(docker info --format '{{.Name}}' 2>/dev/null || echo "unknown")
+    ok "Docker runtime detected: $runtime"
 }
 
 # ---- Build -----------------------------------------------------------------
@@ -64,8 +84,8 @@ print(Path(s.__file__).resolve().parent)
 # ---- Main -----------------------------------------------------------------
 
 main() {
-    info "pyfuse Docker sandbox setup"
-    info "============================"
+    info "pyfuse sandbox setup"
+    info "===================="
     echo
 
     check_docker
@@ -73,11 +93,11 @@ main() {
 
     echo
     ok "Setup complete! Start a sandboxed worker with:"
-    ok "  pyfuse worker --backend redis://localhost:6379 --sandbox docker"
+    ok "  pyfuse worker --backend redis://localhost:6379 --sandbox"
     echo
     ok "Management commands:"
-    ok "  pyfuse sandbox status              — check sandbox status"
-    ok "  pyfuse sandbox teardown --docker   — remove the Docker sandbox"
+    ok "  pyfuse sandbox status     — check sandbox status"
+    ok "  pyfuse sandbox teardown   — remove the Docker sandbox"
 }
 
 main "$@"

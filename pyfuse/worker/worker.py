@@ -12,9 +12,7 @@ from pyfuse.core.models import FunctionNode
 from pyfuse.core.task import Task, resolve_args
 from pyfuse.graph.store import Store
 from pyfuse.worker.deps import ensure_dependencies
-from pyfuse.worker.sandbox import SandboxExecutor, create_executor
-from pyfuse.worker.sandbox.config import SandboxConfig
-from pyfuse.worker.sandbox.noop import NoopExecutor
+from pyfuse.worker.sandbox import DockerSandbox
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +85,8 @@ class Worker:
     import_to_package
         Extra import-name -> pip-package-name mappings (merged with defaults).
     sandbox
-        Optional :class:`~pyfuse.worker.sandbox.SandboxExecutor` (or a
-        :class:`~pyfuse.worker.sandbox.SandboxConfig`).  When provided,
+        Optional :class:`~pyfuse.worker.sandbox.DockerSandbox` or
+        ``True`` to create one with default settings.  When provided,
         function execution is delegated to the sandbox instead of
         running ``exec`` in the host process.
     """
@@ -97,19 +95,19 @@ class Worker:
         self,
         auto_install: bool = True,
         import_to_package: dict[str, str] | None = None,
-        sandbox: SandboxExecutor | SandboxConfig | None = None,
+        sandbox: DockerSandbox | bool | None = None,
     ) -> None:
         self._import_to_package = import_to_package
         self._auto_install = auto_install
         self._cache: dict[str, _CachedFunction] = {}
         self._last_build_info: BuildInfo | None = None
 
-        if isinstance(sandbox, SandboxConfig):
-            self._sandbox: SandboxExecutor = create_executor(sandbox)
-        elif sandbox is not None:
+        if sandbox is True:
+            self._sandbox: DockerSandbox | None = DockerSandbox()
+        elif isinstance(sandbox, DockerSandbox):
             self._sandbox = sandbox
         else:
-            self._sandbox = NoopExecutor()
+            self._sandbox = None
 
     async def _get_cached(self, json_str: str, function_name: str) -> _CachedFunction:
         """Return the cached (or freshly built) function for *function_name*."""
@@ -123,8 +121,8 @@ class Worker:
 
     @property
     def sandboxed(self) -> bool:
-        """Whether execution is delegated to a sandbox."""
-        return not isinstance(self._sandbox, NoopExecutor)
+        """Whether execution is delegated to a Docker sandbox."""
+        return self._sandbox is not None
 
     async def run(self, task: Task) -> Any:
         """Execute a :class:`Task`, resolving serialized object arguments.

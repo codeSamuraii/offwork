@@ -1,34 +1,33 @@
-"""Docker-based sandbox executor.
+"""Docker-based sandbox for isolated function execution.
 
-Runs the :mod:`~pyfuse.worker.sandbox.guest_agent` inside a Docker
-container, communicating over the same TCP + length-prefixed JSON
-protocol used by the VM executor.
+Runs the guest agent (:mod:`~pyfuse.worker.sandbox.guest_agent`) inside
+a Docker container, communicating over TCP with a length-prefixed JSON
+protocol.
 
 Requirements
 ~~~~~~~~~~~~
-* Docker Engine installed and the ``docker`` CLI available on ``PATH``
+* Docker (or a compatible runtime such as colima / Podman) installed
+  and the ``docker`` CLI available on ``PATH``
 * The current user must be able to run ``docker`` commands (i.e. be in
   the ``docker`` group or use rootless Docker)
 
 The image is built automatically from the bundled ``Dockerfile`` on
-first use, so ``pyfuse sandbox setup --docker`` is optional (but
-recommended in CI to avoid a cold-start build).
+first use, so ``pyfuse sandbox setup`` is optional (but recommended in
+CI to avoid a cold-start build).
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from pyfuse.core.errors import WorkerError
 from pyfuse.worker.sandbox._protocol import async_recv, async_send
-from pyfuse.worker.sandbox.base import SandboxExecutor
-from pyfuse.worker.sandbox.config import SandboxConfig
 
 logger = logging.getLogger(__name__)
 
@@ -37,28 +36,58 @@ _DEFAULT_IMAGE = "pyfuse-sandbox"
 _DEFAULT_CONTAINER = "pyfuse-sandbox"
 
 
-class DockerExecutor(SandboxExecutor):
+class DockerSandbox:
     """Execute functions inside a Docker container.
 
-    The executor lazily starts a container on first use and keeps it
+    The sandbox lazily starts a container on first use and keeps it
     running for the lifetime of the worker so that subsequent task
     executions reuse the same guest agent connection.
 
     Parameters
     ----------
-    config
-        Sandbox configuration (image name, ports, resources …).
+    image
+        Docker image name.  Built automatically from the bundled
+        ``Dockerfile`` if it doesn't exist locally.
+    container_name
+        Name assigned to the running container.
+    guest_port
+        TCP port the guest agent listens on inside the container.
+    cpus
+        Number of vCPUs allocated to the container.
+    memory_gb
+        Gigabytes of RAM allocated to the container.
+    timeout
+        Maximum seconds for a single function execution.
+    boot_timeout
+        Maximum seconds to wait for the container to become reachable.
     """
 
-    def __init__(self, config: SandboxConfig | None = None) -> None:
-        self._cfg = config or SandboxConfig(enabled=True, backend="docker")
+    def __init__(
+        self,
+        *,
+        image: str = _DEFAULT_IMAGE,
+        container_name: str = _DEFAULT_CONTAINER,
+        guest_port: int = 9749,
+        cpus: int = 2,
+        memory_gb: int = 2,
+        timeout: float = 60.0,
+        boot_timeout: float = 30.0,
+    ) -> None:
+        self.image = image
+        self.container_name = container_name
+        self.guest_port = guest_port
+        self.cpus = cpus
+        self.memory_gb = memory_gb
+        self.timeout = timeout
+        self.boot_timeout = boot_timeout
+
         self._host_port: int | None = None
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._lock = asyncio.Lock()
         self._started = False
 
-    # -- SandboxExecutor interface -------------------------------------------
+    # -- public API ----------------------------------------------------------
 
     async def execute(
         self,
@@ -69,6 +98,7 @@ class DockerExecutor(SandboxExecutor):
         *,
         owner_class: str | None = None,
     ) -> Any:
+        """Send *source* + *function_name* to the guest agent and return the result."""
         if not self._started:
             await self.start()
 
@@ -81,15 +111,20 @@ class DockerExecutor(SandboxExecutor):
         if owner_class is not None:
             request["owner_class"] = owner_class
 
+        # Pick up the host-side progress callback (set by _handle_task)
+        # so we can forward progress messages from the container.
+        from pyfuse.core.progress import _progress_callback
+        progress_cb = _progress_callback.get(None)
+
         try:
             response = await asyncio.wait_for(
-                self._send_request(request),
-                timeout=self._cfg.timeout,
+                self._send_request(request, progress_cb=progress_cb),
+                timeout=self.timeout,
             )
         except asyncio.TimeoutError:
             raise WorkerError(
-                f"Docker sandbox execution of '{function_name}' timed out "
-                f"after {self._cfg.timeout}s"
+                f"Sandbox execution of '{function_name}' timed out "
+                f"after {self.timeout}s"
             ) from None
 
         if response["status"] == "error":
@@ -103,34 +138,25 @@ class DockerExecutor(SandboxExecutor):
         """Build the image (if needed), start the container, connect."""
         _check_docker_available()
 
-        # Build the image if it doesn't exist.
-        if not await _image_exists(self._cfg.docker_image):
-            logger.info("Building Docker image '%s' …", self._cfg.docker_image)
-            await _build_image(self._cfg.docker_image)
+        if not await _image_exists(self.image):
+            logger.info("Building Docker image '%s' …", self.image)
+            await _build_image(self.image)
 
-        # Start the container if it's not running.
-        container = self._cfg.docker_container_name
+        container = self.container_name
         if not await _container_running(container):
-            # Remove a stopped container with the same name, if any.
             if await _container_exists(container):
                 await _docker_wait("rm", "-f", container)
-
             logger.info("Starting container '%s' …", container)
             await self._run_container()
 
-        # Determine the host port mapped to the guest agent.
-        self._host_port = await _mapped_port(container, self._cfg.guest_port)
-
-        # Wait for the agent to be reachable.
+        self._host_port = await _mapped_port(container, self.guest_port)
         await self._wait_for_agent()
-
-        # Connect.
         await self._connect()
         self._started = True
         logger.info(
             "Docker sandbox ready (localhost:%d → container:%d)",
             self._host_port,
-            self._cfg.guest_port,
+            self.guest_port,
         )
 
     async def stop(self) -> None:
@@ -138,37 +164,40 @@ class DockerExecutor(SandboxExecutor):
         if self._writer is not None:
             self._writer.close()
             self._reader = self._writer = None
-        container = self._cfg.docker_container_name
+        container = self.container_name
         if await _container_running(container):
             logger.info("Stopping container '%s' …", container)
             await _docker_wait("stop", container)
         self._started = False
 
+    async def __aenter__(self) -> "DockerSandbox":
+        await self.start()
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.stop()
+
     # -- internals -----------------------------------------------------------
 
     async def _run_container(self) -> None:
-        """Start a new container from the sandbox image."""
         cmd = [
             "docker", "run", "-d",
-            "--name", self._cfg.docker_container_name,
-            "-p", f"0:{self._cfg.guest_port}",  # random host port
+            "--name", self.container_name,
+            "-p", f"0:{self.guest_port}",
         ]
-        if self._cfg.cpus:
-            cmd += ["--cpus", str(self._cfg.cpus)]
-        if self._cfg.memory_gb:
-            cmd += ["--memory", f"{self._cfg.memory_gb}g"]
-        cmd.append(self._cfg.docker_image)
+        if self.cpus:
+            cmd += ["--cpus", str(self.cpus)]
+        if self.memory_gb:
+            cmd += ["--memory", f"{self.memory_gb}g"]
+        cmd.append(self.image)
 
-        rc, stdout, stderr = await _docker_wait(*cmd[1:])  # _docker_wait prepends "docker"
+        rc, _stdout, stderr = await _docker_wait(*cmd[1:])
         if rc != 0:
-            raise WorkerError(
-                f"Failed to start Docker container: {stderr.strip()}"
-            )
+            raise WorkerError(f"Failed to start Docker container: {stderr.strip()}")
 
     async def _wait_for_agent(self) -> None:
-        """Poll the guest agent port until it is reachable."""
         assert self._host_port is not None
-        for _ in range(int(self._cfg.boot_timeout)):
+        for _ in range(int(self.boot_timeout)):
             try:
                 _r, _w = await asyncio.wait_for(
                     asyncio.open_connection("127.0.0.1", self._host_port),
@@ -179,8 +208,7 @@ class DockerExecutor(SandboxExecutor):
             except (OSError, asyncio.TimeoutError):
                 await asyncio.sleep(1)
         raise WorkerError(
-            f"Docker guest agent did not become reachable within "
-            f"{self._cfg.boot_timeout}s"
+            f"Docker guest agent did not become reachable within {self.boot_timeout}s"
         )
 
     async def _connect(self) -> None:
@@ -189,21 +217,48 @@ class DockerExecutor(SandboxExecutor):
             "127.0.0.1", self._host_port,
         )
 
-    async def _send_request(self, request: dict[str, Any]) -> dict[str, Any]:
+    async def _send_request(
+        self,
+        request: dict[str, Any],
+        *,
+        progress_cb: Callable[..., Any] | None = None,
+    ) -> dict[str, Any]:
         async with self._lock:
             if self._reader is None or self._writer is None:
                 await self._connect()
             assert self._reader is not None and self._writer is not None
             try:
                 await async_send(self._writer, request)
-                return await async_recv(self._reader)
+                return await self._read_response(progress_cb)
             except (asyncio.IncompleteReadError, ConnectionError, OSError):
-                # Reconnect on failure.
                 self._reader = self._writer = None
                 await self._connect()
                 assert self._reader is not None and self._writer is not None
                 await async_send(self._writer, request)
-                return await async_recv(self._reader)
+                return await self._read_response(progress_cb)
+
+    async def _read_response(
+        self,
+        progress_cb: Callable[..., Any] | None = None,
+    ) -> dict[str, Any]:
+        """Read messages until a terminal (ok/error) response arrives.
+
+        Intermediate ``{"status": "progress", ...}`` frames are forwarded
+        to *progress_cb* so that ``pyfuse.progress()`` calls inside the
+        container surface on the host in real time.
+        """
+        assert self._reader is not None
+        while True:
+            msg = await async_recv(self._reader)
+            if msg.get("status") == "progress":
+                if progress_cb is not None:
+                    progress_cb(
+                        msg.get("current", 0),
+                        msg.get("total"),
+                        msg.get("message"),
+                    )
+                continue
+            return msg
 
 
 # ---------------------------------------------------------------------------
@@ -235,31 +290,25 @@ async def _docker_wait(*args: str) -> tuple[int, str, str]:
 
 
 async def _image_exists(image: str) -> bool:
-    """Check whether a Docker image exists locally."""
     rc, _, _ = await _docker_wait("image", "inspect", image)
     return rc == 0
 
 
 async def _build_image(image: str) -> None:
-    """Build the sandbox Docker image from the bundled Dockerfile."""
-    rc, stdout, stderr = await _docker_wait(
+    rc, _stdout, stderr = await _docker_wait(
         "build", "-t", image, str(_DOCKERFILE_DIR),
     )
     if rc != 0:
-        raise WorkerError(
-            f"Failed to build Docker image '{image}':\n{stderr.strip()}"
-        )
+        raise WorkerError(f"Failed to build Docker image '{image}':\n{stderr.strip()}")
     logger.info("Docker image '%s' built successfully.", image)
 
 
 async def _container_exists(name: str) -> bool:
-    """Check whether a Docker container (running or stopped) exists."""
     rc, _, _ = await _docker_wait("container", "inspect", name)
     return rc == 0
 
 
 async def _container_running(name: str) -> bool:
-    """Check whether a Docker container is currently running."""
     rc, stdout, _ = await _docker_wait(
         "inspect", "-f", "{{.State.Running}}", name,
     )
@@ -267,16 +316,12 @@ async def _container_running(name: str) -> bool:
 
 
 async def _mapped_port(container: str, guest_port: int) -> int:
-    """Return the host port mapped to *guest_port* in *container*."""
-    rc, stdout, stderr = await _docker_wait(
-        "port", container, str(guest_port),
-    )
+    rc, stdout, stderr = await _docker_wait("port", container, str(guest_port))
     if rc != 0:
         raise WorkerError(
             f"Could not determine mapped port for {container}:{guest_port}: "
             f"{stderr.strip()}"
         )
-    # Output looks like "0.0.0.0:12345\n" or ":::12345\n"
     for line in stdout.strip().splitlines():
         parts = line.rsplit(":", 1)
         if len(parts) == 2:
@@ -288,27 +333,3 @@ async def _mapped_port(container: str, guest_port: int) -> int:
         f"Unexpected 'docker port' output for {container}:{guest_port}: "
         f"{stdout.strip()!r}"
     )
-
-
-# ---------------------------------------------------------------------------
-# Factory
-# ---------------------------------------------------------------------------
-
-
-def create_docker_executor(config: SandboxConfig | None = None) -> DockerExecutor:
-    """Create a :class:`DockerExecutor` with sensible defaults.
-
-    Reads ``PYFUSE_SANDBOX_DOCKER_IMAGE`` from the environment when
-    *config* is not provided.
-    """
-    if config is not None:
-        return DockerExecutor(config)
-
-    image = os.environ.get("PYFUSE_SANDBOX_DOCKER_IMAGE", _DEFAULT_IMAGE)
-    container = os.environ.get("PYFUSE_SANDBOX_DOCKER_CONTAINER", _DEFAULT_CONTAINER)
-    return DockerExecutor(SandboxConfig(
-        enabled=True,
-        backend="docker",
-        docker_image=image,
-        docker_container_name=container,
-    ))

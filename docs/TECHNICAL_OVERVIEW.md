@@ -44,6 +44,11 @@ pyfuse/
             base.py          Backend ABC: async pluggable transport interface
             redis.py         RedisBackend: redis.asyncio with RPUSH/BLPOP pattern
             local.py         LocalBackend: async-native TCP for same-machine IPC
+        sandbox/
+            docker.py        DockerSandbox: Docker container isolation
+            guest_agent.py   Stdlib-only agent deployed inside container
+            _protocol.py     Length-prefixed JSON wire protocol
+            Dockerfile       Container image for the guest agent
 ```
 
 ## Remote execution flow
@@ -487,6 +492,74 @@ When a module contains `from X import *`:
 2. Create individual `ImportInfo` entries per exported name.
 3. Filter to only names the function actually uses.
 
+## Sandbox execution
+
+Workers can optionally execute tasks inside an isolated Docker container instead of the host process. This is controlled by the `--sandbox` CLI flag or by passing `sandbox=True` (or a `DockerSandbox` instance) programmatically.
+
+### How it works
+
+When sandboxing is enabled, only the `exec → call` step moves into the container. The worker's own control logic — caching, dependency resolution, retry — stays on the host.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Worker as Worker (host)
+    participant Container as Docker Container
+    participant Agent as Guest Agent
+
+    Client->>Worker: Task (graph JSON + args)
+    Worker->>Worker: Deserialize graph, install deps, reconstruct source
+
+    alt --sandbox enabled
+        Worker->>Container: TCP connect (first use boots container)
+        Worker->>Agent: {source, function_name, args, kwargs}
+        Agent->>Agent: compile() → exec() → call function
+        Agent->>Worker: {status: "ok", result: value}
+    else default (no sandbox)
+        Worker->>Worker: compile() → exec() → call function
+    end
+
+    Worker->>Client: Result
+```
+
+A lightweight **guest agent** (`guest_agent.py`) runs inside the container. It is stdlib-only (no pyfuse install required) and communicates with the worker over TCP using a **length-prefixed JSON protocol** (4-byte big-endian header + UTF-8 JSON payload).
+
+### Container lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> ImageCheck: worker starts with --sandbox
+    ImageCheck --> BuildImage: image missing
+    ImageCheck --> StartContainer: image exists
+    BuildImage --> StartContainer: docker build
+    StartContainer --> WaitForAgent: docker run -d
+    WaitForAgent --> Connected: TCP handshake
+    Connected --> Execute: task arrives
+    Execute --> Connected: result returned
+    Connected --> Stopped: worker shutdown
+    Stopped --> [*]
+```
+
+1. **Start** — `DockerSandbox.start()` builds the image (if absent), starts the container, waits for the guest agent to become reachable, then opens a persistent TCP connection.
+2. **Execute** — Each task is sent as a JSON request. The guest agent `exec`s the source, calls the function, and returns the result. The connection is reused across tasks.
+3. **Stop** — On worker shutdown, the connection is closed and the container is stopped.
+
+### Configuration
+
+`DockerSandbox` accepts the following keyword arguments:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `image` | `"pyfuse-sandbox"` | Docker image name |
+| `container_name` | `"pyfuse-sandbox"` | Container name |
+| `guest_port` | `9749` | TCP port for the guest agent |
+| `cpus` | `2` | vCPUs allocated to the container |
+| `memory_gb` | `2` | RAM (GB) allocated to the container |
+| `timeout` | `60.0` | Max seconds per function execution |
+| `boot_timeout` | `30.0` | Max seconds to wait for container to start |
+
+Environment variables `PYFUSE_SANDBOX_DOCKER_IMAGE` and `PYFUSE_SANDBOX_DOCKER_CONTAINER` override the image and container names.
+
 ## Limitations
 
 ### Source requirements
@@ -517,6 +590,12 @@ pyfuse worker --backend redis://localhost:6379
 pyfuse worker --backend redis://localhost:6379 -c 4
 pyfuse worker --backend redis://localhost:6379 --no-auto-install
 pyfuse worker --backend redis://localhost:6379 --tmp   # isolated temp venv
+pyfuse worker --backend redis://localhost:6379 --sandbox   # Docker sandbox
+
+# Sandbox management
+pyfuse sandbox setup       # build Docker sandbox image
+pyfuse sandbox status      # show Docker sandbox status
+pyfuse sandbox teardown    # remove Docker sandbox
 
 # Run a script in a temporary venv (auto-detects and installs dependencies)
 pyfuse run examples/script.py

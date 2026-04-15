@@ -460,7 +460,7 @@ async def serve(
     concurrency: int = 1,
     auto_install: bool = True,
     import_to_package: dict[str, str] | None = None,
-    sandbox: "SandboxConfig | SandboxExecutor | None" = None,
+    sandbox: "DockerSandbox | bool | None" = None,
 ) -> None:
     """Start a worker loop that pops tasks from the backend and executes them.
 
@@ -476,25 +476,14 @@ async def serve(
     import_to_package
         Extra import-name to pip-package-name mappings.
     sandbox
-        Optional sandbox configuration or executor.  When a
-        :class:`~pyfuse.worker.sandbox.SandboxConfig` with
-        ``enabled=True`` is passed, function execution runs inside
-        an isolated micro-VM.
+        ``True`` or a :class:`~pyfuse.worker.sandbox.DockerSandbox`
+        instance to execute tasks inside a Docker container.
     """
-    from pyfuse.worker.sandbox import SandboxExecutor
-    from pyfuse.worker.sandbox.config import SandboxConfig
-    from pyfuse.worker.sandbox.noop import NoopExecutor as _Noop
+    from pyfuse.worker.sandbox import DockerSandbox
 
     resolved = _resolve_url(url)
     auto_tag = "on" if auto_install else "off"
-    if isinstance(sandbox, SandboxConfig) and sandbox.enabled:
-        sandbox_tag = sandbox.backend
-    elif isinstance(sandbox, SandboxExecutor) and not isinstance(sandbox, _Noop):
-        # Infer from concrete type
-        from pyfuse.worker.sandbox.docker import DockerExecutor as _Docker
-        sandbox_tag = "docker" if isinstance(sandbox, _Docker) else "vm"
-    else:
-        sandbox_tag = "off"
+    sandbox_tag = "docker" if sandbox else "off"
     logger.info(
         "pyfuse worker v%s  \u2502  %s  \u2502  concurrency=%d  \u2502  "
         "auto_install=%s  \u2502  sandbox=%s",
@@ -512,10 +501,18 @@ async def serve(
         import_to_package=import_to_package,
         sandbox=sandbox,
     )
+
+    # Boot the sandbox container before accepting tasks so the first
+    # execution doesn't pay the startup cost.
+    if worker.sandboxed:
+        await worker._sandbox.start()
+
     logger.info("Listening for tasks \u2014 Ctrl+C to stop.")
 
     try:
         await _worker_loop(worker, backend, concurrency)
     finally:
+        if worker.sandboxed:
+            await worker._sandbox.stop()
         await disconnect()
         logger.info("Worker stopped.")
