@@ -33,6 +33,7 @@ pyfuse = "pyfuse.__main__:main"
 [project.optional-dependencies]
 redis = ["redis>=5.0"]
 rabbitmq = ["aio-pika>=9.0"]
+signing = ["cryptography>=44.0.0"]
 
 [dependency-groups]
 dev = [

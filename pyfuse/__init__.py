@@ -2,7 +2,7 @@ import inspect
 from collections.abc import Callable
 from typing import Any
 
-from pyfuse.core.errors import DependencyError, Error, RemoteError, TaskCancelled, TaskStalled, WorkerError
+from pyfuse.core.errors import DependencyError, Error, RemoteError, TaskCancelled, TaskStalled, TrustError, WorkerError
 from pyfuse.core.version import _VERSION
 from pyfuse.core.models import FunctionNode, ImportInfo
 from pyfuse.core.progress import ProgressInfo
@@ -91,6 +91,7 @@ __all__ = [
     "RemoteError",
     "TaskStalled",
     "TaskCancelled",
+    "TrustError",
     # Graph
     "get_graph",
     "Graph",

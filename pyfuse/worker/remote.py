@@ -9,7 +9,7 @@ import signal
 import sys
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pyfuse.core.progress import _progress_callback
 from pyfuse.core.task import Task
@@ -17,6 +17,9 @@ from pyfuse.core.version import _VERSION
 from pyfuse.worker.backends.base import Backend
 from pyfuse.worker.result import Result, ResultEnvelope
 from pyfuse.worker.worker import Worker
+
+if TYPE_CHECKING:
+    from pyfuse.core.signing import KeyPair, TrustStore
 
 logger = logging.getLogger(__name__)
 
@@ -136,11 +139,18 @@ async def submit_remote(
     wrapper: Callable[..., object],
     *args: Any,
     _backend: str | Backend | None = None,
+    _keypair: "KeyPair | None" = None,
     **kwargs: Any,
 ) -> Result:
     """Pack and submit a function to the remote backend.
 
     Called internally by ``traced_func.run(...)``.
+
+    Parameters
+    ----------
+    _keypair
+        Optional :class:`~pyfuse.core.signing.KeyPair`.  When provided,
+        the task is cryptographically signed before submission.
     """
     from pyfuse.graph.graph import Graph
 
@@ -165,6 +175,9 @@ async def submit_remote(
         retries=opts.get("retries", 0),
         retry_delay=opts.get("retry_delay", 1.0),
     )
+
+    if _keypair is not None:
+        task = task.sign(_keypair)
 
     await backend.submit(task.to_json())
     logger.info("Submitted task %s for %s", task.task_id, function_name)
@@ -461,6 +474,7 @@ async def serve(
     auto_install: bool = True,
     import_to_package: dict[str, str] | None = None,
     sandbox: "DockerSandbox | bool | None" = None,
+    trust_store: "TrustStore | None" = None,
 ) -> None:
     """Start a worker loop that pops tasks from the backend and executes them.
 
@@ -478,16 +492,21 @@ async def serve(
     sandbox
         ``True`` or a :class:`~pyfuse.worker.sandbox.DockerSandbox`
         instance to execute tasks inside a Docker container.
+    trust_store
+        Optional :class:`~pyfuse.core.signing.TrustStore`.  When
+        provided, the worker rejects tasks that are unsigned or signed
+        by an unknown client.
     """
     from pyfuse.worker.sandbox import DockerSandbox
 
     resolved = _resolve_url(url)
     auto_tag = "on" if auto_install else "off"
     sandbox_tag = "docker" if sandbox else "off"
+    trust_tag = f"{len(trust_store)} key(s)" if trust_store else "off"
     logger.info(
         "pyfuse worker v%s  \u2502  %s  \u2502  concurrency=%d  \u2502  "
-        "auto_install=%s  \u2502  sandbox=%s",
-        _VERSION, resolved, concurrency, auto_tag, sandbox_tag,
+        "auto_install=%s  \u2502  sandbox=%s  \u2502  signing=%s",
+        _VERSION, resolved, concurrency, auto_tag, sandbox_tag, trust_tag,
     )
 
     try:
@@ -500,6 +519,7 @@ async def serve(
         auto_install=auto_install,
         import_to_package=import_to_package,
         sandbox=sandbox,
+        trust_store=trust_store,
     )
 
     # Boot the sandbox container before accepting tasks so the first

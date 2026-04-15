@@ -5,14 +5,17 @@ import hashlib
 import inspect
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from pyfuse.core.errors import WorkerError
+from pyfuse.core.errors import TrustError, WorkerError
 from pyfuse.core.models import FunctionNode
 from pyfuse.core.task import Task, resolve_args
 from pyfuse.graph.store import Store
 from pyfuse.worker.deps import ensure_dependencies
 from pyfuse.worker.sandbox import DockerSandbox
+
+if TYPE_CHECKING:
+    from pyfuse.core.signing import TrustStore
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +92,11 @@ class Worker:
         ``True`` to create one with default settings.  When provided,
         function execution is delegated to the sandbox instead of
         running ``exec`` in the host process.
+    trust_store
+        Optional :class:`~pyfuse.core.signing.TrustStore`.  When
+        provided, every incoming task **must** carry a valid signature
+        from a trusted client.  Unsigned or untrusted tasks are
+        rejected with :class:`~pyfuse.core.errors.TrustError`.
     """
 
     def __init__(
@@ -96,11 +104,13 @@ class Worker:
         auto_install: bool = True,
         import_to_package: dict[str, str] | None = None,
         sandbox: DockerSandbox | bool | None = None,
+        trust_store: "TrustStore | None" = None,
     ) -> None:
         self._import_to_package = import_to_package
         self._auto_install = auto_install
         self._cache: dict[str, _CachedFunction] = {}
         self._last_build_info: BuildInfo | None = None
+        self._trust_store = trust_store
 
         if sandbox is True:
             self._sandbox: DockerSandbox | None = DockerSandbox()
@@ -127,10 +137,16 @@ class Worker:
     async def run(self, task: Task) -> Any:
         """Execute a :class:`Task`, resolving serialized object arguments.
 
+        When a trust store is configured, the task's cryptographic
+        signature is verified before execution.  Unsigned or untrusted
+        tasks raise :class:`~pyfuse.core.errors.TrustError`.
+
         When a sandbox is configured, the full source + args are sent to
         the sandbox executor.  Otherwise async functions are awaited
         directly and sync functions run in a thread executor.
         """
+        self._verify_trust(task)
+
         cached = await self._get_cached(task.graph_json, task.function_name)
         logger.debug("Executing %s (cache key: %s)", task.function_name, cached.subgraph_key)
 
@@ -192,6 +208,26 @@ class Worker:
         self._cache.clear()
 
     # -- internals -------------------------------------------------------------
+
+    def _verify_trust(self, task: Task) -> None:
+        """Reject *task* if a trust store is configured and verification fails."""
+        if self._trust_store is None:
+            return
+        if not task.is_signed:
+            raise TrustError(
+                f"Task {task.task_id} is unsigned but the worker requires signed tasks."
+            )
+        if not task.verify(self._trust_store):
+            raise TrustError(
+                f"Task {task.task_id} has an invalid signature or is "
+                f"signed by an untrusted client "
+                f"(fingerprint: {task.signer_fingerprint})."
+            )
+        logger.debug(
+            "Task %s verified (signer: %s)",
+            task.task_id,
+            task.signer_fingerprint,
+        )
 
     def last_build_info(self) -> BuildInfo | None:
         """Return metadata about the most recent execution's build phase."""

@@ -87,11 +87,22 @@ def _cmd_worker(args: argparse.Namespace) -> None:
 
     _configure_logging(_resolve_log_level(args))
 
+    trust_store = None
+    trusted_keys = getattr(args, "trusted_keys", None) or os.environ.get("PYFUSE_TRUSTED_KEYS")
+    if trusted_keys:
+        from pyfuse.core.signing import TrustStore
+
+        trust_store = TrustStore.from_directory(trusted_keys)
+        logging.getLogger("pyfuse").info(
+            "Loaded %d trusted key(s) from %s", len(trust_store), trusted_keys,
+        )
+
     asyncio.run(serve(
         args.backend,
         concurrency=args.concurrency,
         auto_install=not args.no_auto_install,
         sandbox=bool(args.sandbox),
+        trust_store=trust_store,
     ))
 
 
@@ -340,6 +351,9 @@ def _add_worker_parser(sub: "argparse._SubParsersAction[argparse.ArgumentParser]
                     help="Run the worker in a temporary virtual environment (deleted on exit)")
     p.add_argument("--sandbox", action="store_true", default=False,
                     help="Run function execution inside an isolated Docker sandbox.")
+    p.add_argument("--trusted-keys", default=None, metavar="DIR",
+                    help="Directory of trusted .pub key files (enables signature verification). "
+                         "Also settable via PYFUSE_TRUSTED_KEYS env var.")
     p.add_argument("-v", "--verbose", action="store_true",
                     help="Enable debug logging")
     p.add_argument("--log-level", default=None, metavar="LEVEL",
@@ -465,6 +479,61 @@ def _add_sandbox_parser(sub: "argparse._SubParsersAction[argparse.ArgumentParser
     sandbox_sub.add_parser("teardown", help="Stop and remove the Docker sandbox")
 
 
+# ---------------------------------------------------------------------------
+# keypair command
+# ---------------------------------------------------------------------------
+
+
+def _cmd_keypair(args: argparse.Namespace) -> None:
+    """Handle ``pyfuse keypair generate|fingerprint`` subcommands."""
+    action = getattr(args, "keypair_action", None)
+    if action is None:
+        print("Usage: pyfuse keypair {generate|fingerprint}", file=sys.stderr)
+        sys.exit(1)
+
+    from pyfuse.core.signing import KeyPair
+
+    if action == "generate":
+        out = Path(args.output) if args.output else Path("pyfuse_key.pem")
+        pub_out = out.with_suffix(".pub")
+        kp = KeyPair.generate()
+        kp.save(out)
+        kp.save_public(pub_out)
+        print(f"Private key: {out}")
+        print(f"Public key:  {pub_out}")
+        print(f"Fingerprint: {kp.fingerprint}")
+        print()
+        print(f"Share {pub_out.name} with workers (copy to their --trusted-keys directory).")
+
+    elif action == "fingerprint":
+        path = Path(args.key_file)
+        if not path.exists():
+            print(f"Error: file not found: {path}", file=sys.stderr)
+            sys.exit(1)
+        try:
+            kp = KeyPair.from_file(path)
+            print(kp.fingerprint)
+        except Exception:
+            from pyfuse.core.signing import _load_public_key_bytes, _fingerprint
+
+            raw = _load_public_key_bytes(path)
+            print(_fingerprint(raw))
+
+
+def _add_keypair_parser(sub: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+    p = sub.add_parser("keypair", help="Manage Ed25519 signing key pairs")
+    kp_sub = p.add_subparsers(dest="keypair_action")
+
+    gen = kp_sub.add_parser("generate", help="Generate a new Ed25519 key pair")
+    gen.add_argument(
+        "-o", "--output", default=None,
+        help="Output path for private key (default: pyfuse_key.pem)",
+    )
+
+    fp = kp_sub.add_parser("fingerprint", help="Print the fingerprint of a key file")
+    fp.add_argument("key_file", help="Path to a .pem or .pub key file")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pyfuse", description="pyfuse - distributed task execution",
@@ -476,6 +545,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_serialize_parser(sub)
     _add_reconstruct_parser(sub)
     _add_sandbox_parser(sub)
+    _add_keypair_parser(sub)
     return parser
 
 
@@ -486,6 +556,7 @@ _COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "serialize": _cmd_serialize,
     "reconstruct": _cmd_reconstruct,
     "sandbox": _cmd_sandbox,
+    "keypair": _cmd_keypair,
 }
 
 

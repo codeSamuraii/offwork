@@ -36,6 +36,14 @@ class TaskCancelled(Error):
     """Raised when a task is cancelled before or during execution."""
 
 
+class TrustError(Error):
+    """Raised when a task fails signature verification.
+
+    This indicates that the task was either unsigned, signed by an
+    unknown client, or the signature is invalid.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Custom excepthook: suppress client traceback for RemoteError
 # ---------------------------------------------------------------------------

@@ -1,7 +1,11 @@
+import dataclasses
 import json
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
+
+if TYPE_CHECKING:
+    from pyfuse.core.signing import KeyPair, TrustStore
 
 _OBJECT_SENTINEL = "__pyfuse_obj__"
 
@@ -93,6 +97,91 @@ class Task:
     timeout: float | None = None
     retries: int = 0
     retry_delay: float = 1.0
+    # -- signing (optional) ------------------------------------------------
+    signature: str | None = None
+    """Hex-encoded Ed25519 signature over the canonical payload."""
+    signer: str | None = None
+    """Hex-encoded raw public key of the signer."""
+
+    # -- canonical payload -------------------------------------------------
+
+    def _canonical_payload(self) -> bytes:
+        """Deterministic byte representation used for signing/verification."""
+        d: dict[str, Any] = {
+            "args": list(self.args),
+            "function": self.function_name,
+            "graph": self.graph_json,
+            "id": self.task_id,
+            "kwargs": self.kwargs,
+        }
+        if self.timeout is not None:
+            d["timeout"] = self.timeout
+        if self.retries:
+            d["retries"] = self.retries
+        if self.retry_delay != 1.0:
+            d["retry_delay"] = self.retry_delay
+        return json.dumps(d, cls=_TaskEncoder, sort_keys=True, separators=(",", ":")).encode()
+
+    # -- signing -----------------------------------------------------------
+
+    def sign(self, keypair: "KeyPair") -> Self:
+        """Return a new :class:`Task` with a cryptographic signature.
+
+        The signature covers the canonical payload (graph, function,
+        args, kwargs, id, and execution policy) so any tampering is
+        detectable.
+        """
+        payload = self._canonical_payload()
+        sig = keypair.sign(payload)
+        return dataclasses.replace(
+            self,
+            signature=sig.hex(),
+            signer=keypair.public_bytes.hex(),
+        )
+
+    def verify(self, trust: "TrustStore | None" = None) -> bool:
+        """Verify the signature against the canonical payload.
+
+        Parameters
+        ----------
+        trust
+            Optional :class:`~pyfuse.core.signing.TrustStore`.  When
+            provided, also checks that the signer's fingerprint is in
+            the trust store.  When *None*, only the cryptographic
+            validity of the signature is checked.
+
+        Returns ``False`` if the task is unsigned, the signature is
+        invalid, or the signer is not trusted.
+        """
+        if self.signature is None or self.signer is None:
+            return False
+
+        signer_bytes = bytes.fromhex(self.signer)
+        sig_bytes = bytes.fromhex(self.signature)
+        payload = self._canonical_payload()
+
+        if trust is not None:
+            return trust.verify(payload, sig_bytes, signer_bytes)
+
+        from pyfuse.core.signing import _verify
+
+        return _verify(signer_bytes, payload, sig_bytes)
+
+    @property
+    def signer_fingerprint(self) -> str | None:
+        """SHA-256 fingerprint of the signer's public key, or *None*."""
+        if self.signer is None:
+            return None
+        from pyfuse.core.signing import _fingerprint
+
+        return _fingerprint(bytes.fromhex(self.signer))
+
+    @property
+    def is_signed(self) -> bool:
+        """Whether this task carries a signature."""
+        return self.signature is not None and self.signer is not None
+
+    # -- serialization -----------------------------------------------------
 
     def to_json(self) -> str:
         """Serialize the task envelope to a JSON string."""
@@ -109,6 +198,10 @@ class Task:
             d["retries"] = self.retries
         if self.retry_delay != 1.0:
             d["retry_delay"] = self.retry_delay
+        if self.signature is not None:
+            d["signature"] = self.signature
+        if self.signer is not None:
+            d["signer"] = self.signer
         return json.dumps(d, cls=_TaskEncoder)
 
     @classmethod
@@ -124,4 +217,6 @@ class Task:
             timeout=data.get("timeout"),
             retries=data.get("retries", 0),
             retry_delay=data.get("retry_delay", 1.0),
+            signature=data.get("signature"),
+            signer=data.get("signer"),
         )
