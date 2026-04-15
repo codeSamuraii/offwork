@@ -534,6 +534,149 @@ def _add_keypair_parser(sub: "argparse._SubParsersAction[argparse.ArgumentParser
     fp.add_argument("key_file", help="Path to a .pem or .pub key file")
 
 
+def _cmd_pair(args: argparse.Namespace) -> None:
+    """Handle ``pyfuse pair accept|request`` subcommands."""
+    action = getattr(args, "pair_action", None)
+    if action is None:
+        print("Usage: pyfuse pair {accept|request}", file=sys.stderr)
+        sys.exit(1)
+
+    if action == "accept":
+        asyncio.run(_pair_accept(args))
+    elif action == "request":
+        asyncio.run(_pair_request(args))
+
+
+async def _pair_accept(args: argparse.Namespace) -> None:
+    """Worker-side pairing: generate code, wait for client."""
+    from pyfuse.core.pairing import (
+        RedisPairingTransport,
+        accept_pairing,
+        generate_pairing_code,
+    )
+
+    backend_url = args.backend or os.environ.get("PYFUSE_BACKEND")
+    if not backend_url:
+        print(
+            "Error: --backend is required (or set PYFUSE_BACKEND).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    code = args.code or generate_pairing_code()
+    timeout = args.timeout
+
+    transport = RedisPairingTransport(backend_url)
+    print(f"Pairing code: {code}")
+    print(f"Waiting for client... (expires in {timeout}s)")
+
+    try:
+        result = await accept_pairing(
+            transport,
+            code,
+            trusted_keys_dir=args.trusted_keys,
+            timeout=timeout,
+        )
+        print(f"\u2713  Paired! Fingerprint: {result.fingerprint}")
+        if args.trusted_keys:
+            print(f"   Key saved to {args.trusted_keys}/")
+    except TimeoutError:
+        print("\u2717  Pairing timed out — no client connected.", file=sys.stderr)
+        sys.exit(1)
+    except ValueError as exc:
+        print(f"\u2717  Pairing failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+    finally:
+        await transport.close()
+
+
+async def _pair_request(args: argparse.Namespace) -> None:
+    """Client-side pairing: connect to worker with code."""
+    from pyfuse.core.pairing import RedisPairingTransport, request_pairing
+
+    backend_url = args.backend or os.environ.get("PYFUSE_BACKEND")
+    if not backend_url:
+        print(
+            "Error: --backend is required (or set PYFUSE_BACKEND).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if not args.code:
+        print("Error: --code is required.", file=sys.stderr)
+        sys.exit(1)
+
+    transport = RedisPairingTransport(backend_url)
+
+    try:
+        result = await request_pairing(
+            transport,
+            args.code,
+            save_path=args.output,
+            timeout=args.timeout,
+        )
+        print(f"\u2713  Paired with worker! Fingerprint: {result.fingerprint}")
+        if args.output:
+            print(f"   Private key: {args.output}")
+            print(f"   Public key:  {Path(args.output).with_suffix('.pub')}")
+    except TimeoutError:
+        print("\u2717  Pairing timed out — no worker responded.", file=sys.stderr)
+        sys.exit(1)
+    except ValueError as exc:
+        print(f"\u2717  Pairing failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+    finally:
+        await transport.close()
+
+
+def _add_pair_parser(sub: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+    p = sub.add_parser(
+        "pair",
+        help="Automated SPAKE2-based client-worker pairing",
+    )
+    pair_sub = p.add_subparsers(dest="pair_action")
+
+    accept = pair_sub.add_parser(
+        "accept", help="Worker side: generate a pairing code and wait for a client",
+    )
+    accept.add_argument(
+        "--backend", default=None,
+        help="Backend URL (default: $PYFUSE_BACKEND)",
+    )
+    accept.add_argument(
+        "--code", default=None,
+        help="Use a specific pairing code instead of generating one",
+    )
+    accept.add_argument(
+        "--trusted-keys", default=None, metavar="DIR",
+        help="Directory to save the client's .pub key file",
+    )
+    accept.add_argument(
+        "--timeout", type=float, default=60.0,
+        help="Seconds to wait for a client (default: 60)",
+    )
+
+    request = pair_sub.add_parser(
+        "request", help="Client side: pair with a worker using a pairing code",
+    )
+    request.add_argument(
+        "--backend", default=None,
+        help="Backend URL (default: $PYFUSE_BACKEND)",
+    )
+    request.add_argument(
+        "--code", default=None,
+        help="Pairing code displayed by the worker",
+    )
+    request.add_argument(
+        "-o", "--output", default=None,
+        help="Path to save the generated keypair (default: pyfuse_key.pem)",
+    )
+    request.add_argument(
+        "--timeout", type=float, default=60.0,
+        help="Seconds to wait for the worker (default: 60)",
+    )
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pyfuse", description="pyfuse - distributed task execution",
@@ -546,6 +689,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_reconstruct_parser(sub)
     _add_sandbox_parser(sub)
     _add_keypair_parser(sub)
+    _add_pair_parser(sub)
     return parser
 
 
@@ -557,6 +701,7 @@ _COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "reconstruct": _cmd_reconstruct,
     "sandbox": _cmd_sandbox,
     "keypair": _cmd_keypair,
+    "pair": _cmd_pair,
 }
 
 
