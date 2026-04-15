@@ -87,7 +87,12 @@ def _cmd_worker(args: argparse.Namespace) -> None:
 
     _configure_logging(_resolve_log_level(args))
 
-    asyncio.run(serve(args.backend, concurrency=args.concurrency, auto_install=not args.no_auto_install))
+    asyncio.run(serve(
+        args.backend,
+        concurrency=args.concurrency,
+        auto_install=not args.no_auto_install,
+        sandbox=bool(args.sandbox),
+    ))
 
 
 def _cmd_info(_args: argparse.Namespace) -> None:
@@ -333,6 +338,8 @@ def _add_worker_parser(sub: "argparse._SubParsersAction[argparse.ArgumentParser]
                     help="Disable automatic pip dependency installation")
     p.add_argument("--tmp", action="store_true",
                     help="Run the worker in a temporary virtual environment (deleted on exit)")
+    p.add_argument("--sandbox", action="store_true", default=False,
+                    help="Run function execution inside an isolated Docker sandbox.")
     p.add_argument("-v", "--verbose", action="store_true",
                     help="Enable debug logging")
     p.add_argument("--log-level", default=None, metavar="LEVEL",
@@ -361,6 +368,103 @@ def _add_reconstruct_parser(sub: "argparse._SubParsersAction[argparse.ArgumentPa
     p.add_argument("function", help="Function name to reconstruct")
 
 
+def _cmd_sandbox(args: argparse.Namespace) -> None:
+    """Handle ``pyfuse sandbox setup|status|teardown`` subcommands."""
+    action = getattr(args, "sandbox_action", None)
+    if action is None:
+        print("Usage: pyfuse sandbox {setup|status|teardown}", file=sys.stderr)
+        sys.exit(1)
+
+    if action == "setup":
+        asyncio.run(_docker_setup())
+    elif action == "status":
+        asyncio.run(_sandbox_status())
+    elif action == "teardown":
+        asyncio.run(_docker_teardown())
+
+
+async def _sandbox_status() -> None:
+    """Print the current Docker sandbox status."""
+    import shutil
+
+    if shutil.which("docker") is not None:
+        from pyfuse.worker.sandbox.docker import (
+            _container_exists, _container_running, _image_exists,
+        )
+        image = os.environ.get("PYFUSE_SANDBOX_DOCKER_IMAGE", "pyfuse-sandbox")
+        container = os.environ.get("PYFUSE_SANDBOX_DOCKER_CONTAINER", "pyfuse-sandbox")
+        img_ok = await _image_exists(image)
+        print("Docker:")
+        print(f"  docker: installed")
+        print(f"  Image '{image}': {'exists' if img_ok else 'not found'}")
+        if await _container_exists(container):
+            running = await _container_running(container)
+            print(f"  Container '{container}': {'running' if running else 'stopped'}")
+        else:
+            print(f"  Container '{container}': not found")
+        if not img_ok:
+            print("  Hint: run 'pyfuse sandbox setup' to build the image")
+    else:
+        print("Docker: not installed")
+
+
+async def _docker_setup() -> None:
+    """Build the Docker sandbox image."""
+    import shutil
+    if shutil.which("docker") is None:
+        print(
+            "Error: 'docker' command not found.\n"
+            "Install Docker from https://docs.docker.com/get-docker/",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from pyfuse.worker.sandbox.docker import _build_image, _image_exists
+    image = os.environ.get("PYFUSE_SANDBOX_DOCKER_IMAGE", "pyfuse-sandbox")
+    if await _image_exists(image):
+        print(f"Image '{image}' already exists. Rebuilding...")
+    else:
+        print(f"Building image '{image}'...")
+    await _build_image(image)
+    print(f"Done. Start a sandboxed worker with:")
+    print(f"  pyfuse worker --backend redis://localhost:6379 --sandbox")
+
+
+async def _docker_teardown() -> None:
+    """Stop and remove the Docker sandbox container and image."""
+    import shutil
+    if shutil.which("docker") is None:
+        print("Docker is not installed, nothing to tear down.", file=sys.stderr)
+        return
+
+    from pyfuse.worker.sandbox.docker import (
+        _container_exists, _container_running, _docker_wait, _image_exists,
+    )
+    container = os.environ.get("PYFUSE_SANDBOX_DOCKER_CONTAINER", "pyfuse-sandbox")
+    image = os.environ.get("PYFUSE_SANDBOX_DOCKER_IMAGE", "pyfuse-sandbox")
+
+    if await _container_exists(container):
+        if await _container_running(container):
+            print(f"Stopping container '{container}'...")
+            await _docker_wait("stop", container)
+        print(f"Removing container '{container}'...")
+        await _docker_wait("rm", container)
+
+    if await _image_exists(image):
+        print(f"Removing image '{image}'...")
+        await _docker_wait("rmi", image)
+
+    print("Done.")
+
+
+def _add_sandbox_parser(sub: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+    p = sub.add_parser("sandbox", help="Manage the Docker sandbox")
+    sandbox_sub = p.add_subparsers(dest="sandbox_action")
+    sandbox_sub.add_parser("setup", help="Build the Docker sandbox image")
+    sandbox_sub.add_parser("status", help="Show Docker sandbox status")
+    sandbox_sub.add_parser("teardown", help="Stop and remove the Docker sandbox")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pyfuse", description="pyfuse - distributed task execution",
@@ -371,6 +475,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("info", help="Show pyfuse configuration")
     _add_serialize_parser(sub)
     _add_reconstruct_parser(sub)
+    _add_sandbox_parser(sub)
     return parser
 
 
@@ -380,6 +485,7 @@ _COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "info": _cmd_info,
     "serialize": _cmd_serialize,
     "reconstruct": _cmd_reconstruct,
+    "sandbox": _cmd_sandbox,
 }
 
 

@@ -12,6 +12,7 @@ from pyfuse.core.models import FunctionNode
 from pyfuse.core.task import Task, resolve_args
 from pyfuse.graph.store import Store
 from pyfuse.worker.deps import ensure_dependencies
+from pyfuse.worker.sandbox import DockerSandbox
 
 logger = logging.getLogger(__name__)
 
@@ -83,17 +84,30 @@ class Worker:
         Automatically install missing third-party dependencies via pip.
     import_to_package
         Extra import-name -> pip-package-name mappings (merged with defaults).
+    sandbox
+        Optional :class:`~pyfuse.worker.sandbox.DockerSandbox` or
+        ``True`` to create one with default settings.  When provided,
+        function execution is delegated to the sandbox instead of
+        running ``exec`` in the host process.
     """
 
     def __init__(
         self,
         auto_install: bool = True,
         import_to_package: dict[str, str] | None = None,
+        sandbox: DockerSandbox | bool | None = None,
     ) -> None:
         self._import_to_package = import_to_package
         self._auto_install = auto_install
         self._cache: dict[str, _CachedFunction] = {}
         self._last_build_info: BuildInfo | None = None
+
+        if sandbox is True:
+            self._sandbox: DockerSandbox | None = DockerSandbox()
+        elif isinstance(sandbox, DockerSandbox):
+            self._sandbox = sandbox
+        else:
+            self._sandbox = None
 
     async def _get_cached(self, json_str: str, function_name: str) -> _CachedFunction:
         """Return the cached (or freshly built) function for *function_name*."""
@@ -105,15 +119,35 @@ class Worker:
             self._last_build_info = BuildInfo(cache_hit=True)
         return self._cache[key]
 
+    @property
+    def sandboxed(self) -> bool:
+        """Whether execution is delegated to a Docker sandbox."""
+        return self._sandbox is not None
+
     async def run(self, task: Task) -> Any:
         """Execute a :class:`Task`, resolving serialized object arguments.
 
-        Async functions are awaited directly. Sync functions run in an
-        executor to avoid blocking the event loop.
+        When a sandbox is configured, the full source + args are sent to
+        the sandbox executor.  Otherwise async functions are awaited
+        directly and sync functions run in a thread executor.
         """
         cached = await self._get_cached(task.graph_json, task.function_name)
-        args, kwargs = resolve_args(task.args, task.kwargs, cached.namespace)
         logger.debug("Executing %s (cache key: %s)", task.function_name, cached.subgraph_key)
+
+        if self.sandboxed:
+            # Determine owner_class for method dispatch inside the sandbox
+            store = Store.from_json(task.graph_json)
+            target_qname, nodes = store.collect(task.function_name)
+            target_node = nodes[target_qname]
+            return await self._sandbox.execute(
+                cached.source,
+                target_node.name,
+                task.args,
+                task.kwargs,
+                owner_class=target_node.owner_class,
+            )
+
+        args, kwargs = resolve_args(task.args, task.kwargs, cached.namespace)
 
         if inspect.iscoroutinefunction(cached.func):
             return await cached.func(*args, **kwargs)

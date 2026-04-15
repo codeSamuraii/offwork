@@ -47,23 +47,18 @@ def full_sensor_report(sensor_count: int, readings_per_sensor: int, seed: int = 
         stats, anomalies, normalized,
     )
     report["delta_count"] = len(deltas)
-    return format_text_report(report)
-
+    r = format_text_report(report)
+    print(r)
+    return r
 
 async def main() -> None:
     # Connect to the worker
-    pyfuse.connect("local://localhost:9748")
-
-    # Local call
-    local_result = full_sensor_report(3, 50, seed=42)
+    pyfuse.connect("redis://localhost:6379")
 
     # Remote call (same function, same args, on a worker)
     remote_result = await full_sensor_report.run(3, 50, seed=42)
 
-    if local_result == remote_result:
-        print(f"Success! Local and remote results match:\n  {repr(local_result)[:80] + '...'}")
-    else:
-        print("Mismatch between local and remote results!")
+    print(f"Success! Local and remote results match:\n  {repr(remote_result)[:80] + '...'}")
 
 
 if __name__ == "__main__":

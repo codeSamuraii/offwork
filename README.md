@@ -88,7 +88,19 @@ Common mappings (`cv2` -> `opencv-python`, `PIL` -> `Pillow`, etc.) are built in
 - **Retry and timeout** -- `@trace(timeout=30, retries=3)` with exponential backoff.
 - **Batch submission** -- `await func.map([(a1, b1), (a2, b2)])` submits and awaits multiple tasks.
 - **Pluggable backends** -- Redis (`redis://`) for multi-machine, local (`local://`) for same-machine IPC.
+- **Sandboxed execution** -- Run tasks inside Docker containers for isolation. Transparent to clients.
 - **Content-hash caching** -- Workers cache compiled functions by content hash. Same code from different clients = cache hit.
+
+## Sandboxed execution
+
+By default, workers execute code in the host process. For isolation, enable sandboxing with `--sandbox`:
+
+```bash
+pyfuse sandbox setup
+pyfuse worker --backend redis://localhost:6379 --sandbox
+```
+
+No changes are needed on the client side — sandboxing is transparent. See the [Sandbox guide](docs/SANDBOX.md) for more information.
 
 ## Examples
 
@@ -108,6 +120,7 @@ pyfuse run examples/remote_execution.py
 ## Documentation
 
 - **[Quick Start](docs/QUICK_START.md)** -- Usage guide with detailed examples
+- **[Sandbox](docs/SANDBOX.md)** -- Running workers in Docker containers
 - **[Technical Overview](docs/TECHNICAL_OVERVIEW.md)** -- Architecture, serialization format, and internals
 
 ## License

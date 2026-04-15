@@ -31,10 +31,16 @@ pyfuse/
     ├── remote.py            # connect(), disconnect(), serve(), submit_remote() (async)
     ├── result.py            # Result (awaitable future), ResultEnvelope
     ├── deps.py              # Third-party dependency extraction and pip installation (async)
-    └── backends/
-        ├── base.py          # Backend ABC: async transport interface
-        ├── redis.py         # RedisBackend: redis.asyncio with RPUSH/BLPOP pattern
-        └── local.py         # LocalBackend: async-native TCP for same-machine IPC
+    ├── backends/
+    │   ├── base.py          # Backend ABC: async transport interface
+    │   ├── redis.py         # RedisBackend: redis.asyncio with RPUSH/BLPOP pattern
+    │   └── local.py         # LocalBackend: async-native TCP for same-machine IPC
+    └── sandbox/
+        ├── __init__.py      # re-exports DockerSandbox
+        ├── docker.py        # DockerSandbox: Docker container isolation
+        ├── guest_agent.py   # Stdlib-only agent deployed inside container
+        ├── _protocol.py     # Length-prefixed JSON wire protocol
+        └── Dockerfile       # Docker image for the guest agent
 ```
 
 ## Architecture overview
@@ -60,6 +66,7 @@ Handles remote execution. Built entirely on `asyncio`:
 - **`result.py`**: `Result` is an awaitable future returned by `.start()`. Simple async polling loop for stall detection. Supports `cancel()` and `progress()` methods.
 - **`deps.py`**: Package installation via `asyncio.create_subprocess_exec`.
 - **`backends/`**: All backend methods are `async def`. `listen()` and `subscribe_results()` are async generators.
+- **`sandbox/`**: Optional Docker-based execution isolation. `DockerSandbox` boots a container, connects to a stdlib-only `guest_agent.py` over TCP (length-prefixed JSON), and delegates code execution. When `--sandbox` is off, the worker runs code directly in the host process.
 
 ## Data flow
 
@@ -203,3 +210,6 @@ pytest                          # test suite
 - `_capture_closure()` in `graph.py` uses a multi-tier strategy: repr validation → traced functions → lambdas (source extraction) → non-traced user functions (auto-registration) → constructor expressions (defaultdict/Counter/deque) → pickle fallback → warning. Returns function objects for auto-registration.
 - `_set_class_metadata()` in `graph.py` captures class-level attributes and decorators from the class source AST. Called from both `_auto_register_class` and `_discover_self_call_deps` to handle both constructor-discovered and directly-traced method classes.
 - `_resolve_class_bases()` now also extracts class definition keywords (e.g., `metaclass=ABCMeta`) and adds necessary imports for keyword values.
+- `guest_agent.py` is intentionally stdlib-only so it can be deployed into containers without installing pyfuse. It duplicates `_protocol.py` wire helpers for this reason.
+- `DockerSandbox` is an async context manager (`__aenter__`/`__aexit__`). The `Worker` calls `start()`/`stop()` at lifecycle boundaries.
+- `DockerSandbox` auto-builds the Docker image from the bundled `Dockerfile` on first use.

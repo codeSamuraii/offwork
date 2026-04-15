@@ -257,6 +257,12 @@ pyfuse worker --backend redis://localhost:6379 --no-auto-install
 
 # Run in an isolated temporary venv (auto-cleaned on exit)
 pyfuse worker --backend redis://localhost:6379 --tmp
+
+# Run tasks inside a Docker sandbox
+pyfuse worker --backend redis://localhost:6379 --sandbox docker
+
+# Run tasks inside a tart micro-VM (macOS Apple Silicon)
+pyfuse worker --backend redis://localhost:6379 --sandbox vm
 ```
 
 Or start a worker programmatically:
@@ -267,6 +273,24 @@ import pyfuse
 
 asyncio.run(pyfuse.serve("redis://localhost:6379", concurrency=4))
 ```
+
+## Sandboxed execution
+
+By default, workers run tasks in the host process. For security or isolation, you can run tasks inside Docker containers or tart micro-VMs. Sandboxing is fully transparent to clients.
+
+### Quick setup
+
+```bash
+# Docker (any platform)
+pyfuse sandbox setup --docker
+pyfuse worker --backend redis://localhost:6379 --sandbox docker
+
+# tart VM (macOS Apple Silicon only)
+pyfuse sandbox setup
+pyfuse worker --backend redis://localhost:6379 --sandbox vm
+```
+
+See the [Sandbox guide](SANDBOX.md) for full setup and management instructions.
 
 ## Running scripts in a temporary venv
 
