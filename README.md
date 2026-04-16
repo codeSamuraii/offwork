@@ -89,6 +89,7 @@ Common mappings (`cv2` -> `opencv-python`, `PIL` -> `Pillow`, etc.) are built in
 - **Batch submission** -- `await func.map([(a1, b1), (a2, b2)])` submits and awaits multiple tasks.
 - **Pluggable backends** -- Redis (`redis://`) for multi-machine, local (`local://`) for same-machine IPC.
 - **Sandboxed execution** -- Run tasks inside Docker containers for isolation. Transparent to clients.
+- **Signed execution** -- PIN-based pairing + HMAC-SHA256 task signing. Workers reject unsigned or tampered tasks.
 - **Content-hash caching** -- Workers cache compiled functions by content hash. Same code from different clients = cache hit.
 
 ## Sandboxed execution
@@ -101,6 +102,20 @@ pyfuse worker --backend redis://localhost:6379 --sandbox
 ```
 
 No changes are needed on the client side — sandboxing is transparent. See the [Sandbox guide](docs/SANDBOX.md) for more information.
+
+## Signed execution
+
+Cryptographically sign tasks so workers only execute code from trusted clients:
+
+```bash
+# Worker — generates a PIN and starts serving once paired
+pyfuse worker --backend redis://localhost:6379 --pair
+
+# Client — enter the PIN shown by the worker
+pyfuse pair --backend redis://localhost:6379
+```
+
+No client-side code changes needed — tasks are signed automatically after pairing. See the [Signing guide](docs/SIGNING.md) for details.
 
 ## Examples
 
@@ -120,6 +135,7 @@ pyfuse run examples/remote_execution.py
 ## Documentation
 
 - **[Quick Start](docs/QUICK_START.md)** -- Usage guide with detailed examples
+- **[Signing & Pairing](docs/SIGNING.md)** -- PIN-based pairing and cryptographic task signing
 - **[Sandbox](docs/SANDBOX.md)** -- Running workers in Docker containers
 - **[Technical Overview](docs/TECHNICAL_OVERVIEW.md)** -- Architecture, serialization format, and internals
 

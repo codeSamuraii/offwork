@@ -29,7 +29,7 @@ def _make_start_method(
 ) -> Callable[..., object]:
     """Create the ``.start()`` async method that submits and returns a Result."""
 
-    async def start(*args: object, backend: str | Backend | None = None, **kwargs: object) -> object:
+    async def start(*args: Any, backend: str | Backend | None = None, **kwargs: Any) -> object:
         from pyfuse.worker.remote import submit_remote
 
         return await submit_remote(func, wrapper, *args, _backend=backend, **kwargs)
