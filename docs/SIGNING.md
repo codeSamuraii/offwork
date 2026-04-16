@@ -15,27 +15,33 @@ Tasks with missing or invalid signatures are rejected.
 
 ## Quick start
 
-### 1. Pair the worker and client
+### 1. Start a worker with pairing
 
 On the **worker** machine:
 
 ```bash
-pyfuse pair --backend redis://localhost:6379 --role worker
+pyfuse worker --backend redis://localhost:6379 --pair
 ```
 
-This generates a 6-digit PIN and waits:
+This generates a 6-digit PIN and waits for a client:
 
 ```
   Pairing PIN:  482913
 
-  Enter this PIN on the client side.
+  Enter this PIN on the client with:
+    pyfuse pair --backend redis://localhost:6379
+
   Waiting for client...
 ```
+
+Once paired, the worker starts automatically with signing enabled.
+
+### 2. Pair the client
 
 On the **client** machine (within 60 seconds):
 
 ```bash
-pyfuse pair --backend redis://localhost:6379 --role client
+pyfuse pair --backend redis://localhost:6379
 ```
 
 ```
@@ -49,14 +55,6 @@ pyfuse pair --backend redis://localhost:6379 --role client
 
 Both machines now share a cryptographic key stored in `~/.pyfuse/`.
 
-### 2. Start the worker with signing enabled
-
-```bash
-pyfuse worker --backend redis://localhost:6379 --require-signing
-```
-
-The worker loads `~/.pyfuse/worker.key` and rejects unsigned tasks.
-
 ### 3. Run tasks (no changes needed)
 
 ```bash
@@ -64,6 +62,21 @@ python examples/remote_execution.py
 ```
 
 The client automatically loads `~/.pyfuse/client.key` and signs tasks before submission. No code changes are needed.
+
+### Alternative: manual pairing and worker start
+
+If you need more control, you can pair and start the worker separately:
+
+```bash
+# Pair the worker
+pyfuse pair --backend redis://localhost:6379 --role worker
+
+# Pair the client (same PIN)
+pyfuse pair --backend redis://localhost:6379
+
+# Start the worker with signing enforcement
+pyfuse worker --backend redis://localhost:6379 --require-signing
+```
 
 ## How it works
 
@@ -131,20 +144,28 @@ The signature covers the entire task payload — graph JSON, function name, argu
 
 ## CLI reference
 
+### `pyfuse worker --pair`
+
+```bash
+pyfuse worker --backend URL --pair
+```
+
+Generates a PIN, pairs with a client, then starts serving with signing automatically enabled. This is the recommended way to set up a signed worker.
+
 ### `pyfuse pair`
 
 ```bash
-pyfuse pair --backend URL --role {client|worker} [--pin PIN] [--timeout SECS] [--force] [--clear]
+pyfuse pair --backend URL [--pin PIN] [--timeout SECS] [--force] [--clear]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--backend` | Backend URL for the pairing channel |
-| `--role` | `client` or `worker` |
-| `--pin` | Specify a PIN (auto-generated for worker, prompted for client) |
+| `--pin` | Specify a PIN (prompted interactively if omitted) |
 | `--timeout` | Seconds to wait for the peer (default: 60) |
 | `--force` | Overwrite an existing shared key |
 | `--clear` | Remove the shared key for this role |
+| `--role` | `client` (default) or `worker` — use `pyfuse worker --pair` instead of `--role worker` |
 
 ### `pyfuse worker --require-signing`
 
@@ -219,23 +240,24 @@ Both files are created with `0600` permissions (owner-only read/write).
 To re-pair, use `--force`:
 
 ```bash
-pyfuse pair --backend redis://localhost:6379 --role worker --force
+pyfuse worker --backend redis://localhost:6379 --pair  # (or --force on 'pyfuse pair')
+pyfuse pair --backend redis://localhost:6379 --force
 ```
 
 To remove keys:
 
 ```bash
-pyfuse pair --role client --backend redis://localhost:6379 --clear
-pyfuse pair --role worker --backend redis://localhost:6379 --clear
+pyfuse pair --clear
+pyfuse pair --role worker --clear
 ```
 
 ## Troubleshooting
 
 **"Signing is enabled but no shared key found"**
-- Run `pyfuse pair` first to establish a shared key.
+- Run `pyfuse worker --pair` or `pyfuse pair --role worker` first to establish a shared key.
 
 **"Task is unsigned but signing is enabled"**
-- The client is not signing tasks. Ensure `~/.pyfuse/client.key` exists.
+- The client is not signing tasks. Ensure `~/.pyfuse/client.key` exists (run `pyfuse pair`).
 
 **"Task signature verification failed"**
 - The client and worker have different keys. Re-pair both sides.
@@ -244,4 +266,4 @@ pyfuse pair --role worker --backend redis://localhost:6379 --clear
 - The PINs entered on client and worker don't match. Try again.
 
 **"Pairing timed out"**
-- Both sides must run `pyfuse pair` within the timeout window (default: 60s).
+- Both sides must run pairing within the timeout window (default: 60s).

@@ -105,17 +105,14 @@ No changes are needed on the client side — sandboxing is transparent. See the 
 
 ## Signed execution
 
-Cryptographically sign tasks so workers only execute code from trusted clients. Pair once with a PIN, then signing is automatic:
+Cryptographically sign tasks so workers only execute code from trusted clients:
 
 ```bash
-# On the worker — generates a PIN
-pyfuse pair --backend redis://localhost:6379 --role worker
+# Worker — generates a PIN and starts serving once paired
+pyfuse worker --backend redis://localhost:6379 --pair
 
-# On the client — enter the same PIN
-pyfuse pair --backend redis://localhost:6379 --role client
-
-# Start the worker with signing enforcement
-pyfuse worker --backend redis://localhost:6379 --require-signing
+# Client — enter the PIN shown by the worker
+pyfuse pair --backend redis://localhost:6379
 ```
 
 No client-side code changes needed — tasks are signed automatically after pairing. See the [Signing guide](docs/SIGNING.md) for details.
