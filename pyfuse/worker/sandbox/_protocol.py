@@ -23,7 +23,7 @@ def encode(obj: dict[str, Any]) -> bytes:
 
 def decode_header(data: bytes) -> int:
     """Return the payload length from a 4-byte header."""
-    (length,) = _HEADER.unpack(data)
+    length: int = _HEADER.unpack(data)[0]
     return length
 
 

@@ -16,8 +16,6 @@ first use, so ``pyfuse sandbox setup`` is optional (but recommended in
 CI to avoid a cold-start build).
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import os
@@ -27,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from pyfuse.core.errors import WorkerError
+from pyfuse.core.progress import _progress_callback
 from pyfuse.worker.sandbox._protocol import async_recv, async_send
 
 logger = logging.getLogger(__name__)
@@ -113,7 +112,6 @@ class DockerSandbox:
 
         # Pick up the host-side progress callback (set by _handle_task)
         # so we can forward progress messages from the container.
-        from pyfuse.core.progress import _progress_callback
         progress_cb = _progress_callback.get(None)
 
         try:

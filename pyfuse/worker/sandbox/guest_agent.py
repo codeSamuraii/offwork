@@ -38,8 +38,6 @@ Usage::
     python guest_agent.py [--host 0.0.0.0] [--port 9749]
 """
 
-from __future__ import annotations
-
 import argparse
 import asyncio
 import contextvars

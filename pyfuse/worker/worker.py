@@ -151,6 +151,7 @@ class Worker:
         logger.debug("Executing %s (cache key: %s)", task.function_name, cached.subgraph_key)
 
         if self.sandboxed:
+            assert self._sandbox is not None
             # Determine owner_class for method dispatch inside the sandbox
             store = Store.from_json(task.graph_json)
             target_qname, nodes = store.collect(task.function_name)

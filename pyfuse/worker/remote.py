@@ -20,6 +20,7 @@ from pyfuse.worker.worker import Worker
 
 if TYPE_CHECKING:
     from pyfuse.core.signing import KeyPair, TrustStore
+    from pyfuse.worker.sandbox import DockerSandbox
 
 logger = logging.getLogger(__name__)
 
@@ -525,6 +526,7 @@ async def serve(
     # Boot the sandbox container before accepting tasks so the first
     # execution doesn't pay the startup cost.
     if worker.sandboxed:
+        assert worker._sandbox is not None
         await worker._sandbox.start()
 
     logger.info("Listening for tasks \u2014 Ctrl+C to stop.")
@@ -533,6 +535,7 @@ async def serve(
         await _worker_loop(worker, backend, concurrency)
     finally:
         if worker.sandboxed:
+            assert worker._sandbox is not None
             await worker._sandbox.stop()
         await disconnect()
         logger.info("Worker stopped.")
