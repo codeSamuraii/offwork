@@ -256,12 +256,13 @@ By default, any client can submit tasks to a worker. Enable Ed25519 signing to r
 # Install signing dependencies
 pip install pyfuse[pairing]
 
-# Generate a key pair
+# Generate a key pair on the client
 pyfuse keypair generate -o ~/.pyfuse/my_key.pem
 
-# Pair with the worker (automated, no file copying)
+# Pair with the worker — the worker waits for the client to connect
+# (run these two commands at the same time in separate terminals)
 pyfuse pair accept --backend redis://localhost:6379 --trusted-keys /etc/pyfuse/keys  # worker
-pyfuse pair request --backend redis://localhost:6379 --code 847291 -o ~/.pyfuse/my_key.pem  # client
+pyfuse pair request --backend redis://localhost:6379 --code 847291                   # client (uses the key generated above)
 
 # Start the worker with signature verification
 pyfuse worker --backend redis://localhost:6379 --trusted-keys /etc/pyfuse/keys

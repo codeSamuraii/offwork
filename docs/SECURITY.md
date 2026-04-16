@@ -108,7 +108,7 @@ def process(data: str) -> str:
     return data.upper()
 
 async def main() -> None:
-    result = await process.run(data, _keypair=keypair)
+    result = await process.run("hello", _keypair=keypair)
     print(result)
 
 asyncio.run(main())
