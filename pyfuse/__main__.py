@@ -15,6 +15,7 @@ import asyncio
 import importlib
 import logging
 import os
+import shutil
 import signal
 import sys
 from collections.abc import Callable
@@ -385,8 +386,6 @@ def _cmd_sandbox(args: argparse.Namespace) -> None:
 
 async def _sandbox_status() -> None:
     """Print the current Docker sandbox status."""
-    import shutil
-
     if shutil.which("docker") is not None:
         from pyfuse.worker.sandbox.docker import (
             _container_exists, _container_running, _image_exists,
@@ -410,7 +409,6 @@ async def _sandbox_status() -> None:
 
 async def _docker_setup() -> None:
     """Build the Docker sandbox image."""
-    import shutil
     if shutil.which("docker") is None:
         print(
             "Error: 'docker' command not found.\n"
@@ -432,7 +430,6 @@ async def _docker_setup() -> None:
 
 async def _docker_teardown() -> None:
     """Stop and remove the Docker sandbox container and image."""
-    import shutil
     if shutil.which("docker") is None:
         print("Docker is not installed, nothing to tear down.", file=sys.stderr)
         return

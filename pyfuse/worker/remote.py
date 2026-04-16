@@ -9,7 +9,7 @@ import signal
 import sys
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pyfuse.core.progress import _progress_callback
 from pyfuse.core.task import Task
@@ -17,6 +17,9 @@ from pyfuse.core.version import _VERSION
 from pyfuse.worker.backends.base import Backend
 from pyfuse.worker.result import Result, ResultEnvelope
 from pyfuse.worker.worker import Worker
+
+if TYPE_CHECKING:
+    from pyfuse.worker.sandbox import DockerSandbox
 
 logger = logging.getLogger(__name__)
 
@@ -505,6 +508,7 @@ async def serve(
     # Boot the sandbox container before accepting tasks so the first
     # execution doesn't pay the startup cost.
     if worker.sandboxed:
+        assert worker._sandbox is not None
         await worker._sandbox.start()
 
     logger.info("Listening for tasks \u2014 Ctrl+C to stop.")
@@ -513,6 +517,7 @@ async def serve(
         await _worker_loop(worker, backend, concurrency)
     finally:
         if worker.sandboxed:
+            assert worker._sandbox is not None
             await worker._sandbox.stop()
         await disconnect()
         logger.info("Worker stopped.")

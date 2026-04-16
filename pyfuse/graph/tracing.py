@@ -1,3 +1,4 @@
+import asyncio
 import builtins
 import contextvars
 import functools
@@ -7,7 +8,7 @@ import os
 import sys
 import sysconfig
 import threading
-from collections.abc import AsyncGenerator, Callable, Generator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from pathlib import Path
 from typing import Any, ParamSpec, TypeVar, cast
 
@@ -54,8 +55,15 @@ def _make_map_method(
     """Create the ``.map()`` async method for batch submission and collection."""
 
     async def map(args_list: list[tuple[object, ...]], **kwargs: object) -> list[object]:
-        results = [await start_method(*args, **kwargs) for args in args_list]  # type: ignore[misc]
-        return [await r for r in results]
+        coros: list[Awaitable[object]] = [
+            cast(Awaitable[object], start_method(*args, **kwargs))
+            for args in args_list
+        ]
+        results = await asyncio.gather(*coros)
+        awaitables: list[Awaitable[object]] = [
+            cast(Awaitable[object], r) for r in results
+        ]
+        return list(await asyncio.gather(*awaitables))
 
     return map
 
