@@ -583,7 +583,7 @@ def _add_pair_parser(sub: "argparse._SubParsersAction[argparse.ArgumentParser]")
     )
     p.add_argument(
         "--clear", action="store_true",
-        help="Remove the shared key for this role",
+        help="Remove the shared key for this role and exit (skips pairing)",
     )
     p.add_argument("-v", "--verbose", action="store_true",
                     help="Enable debug logging")
