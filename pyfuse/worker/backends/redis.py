@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 try:
-    import redis.asyncio as _redis  # type: ignore[import-not-found]
+    import redis.asyncio as _redis
 except ImportError:
     raise ImportError(
         "redis package is required for RedisBackend. "

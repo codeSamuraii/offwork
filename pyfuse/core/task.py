@@ -3,6 +3,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Self
 
+from pyfuse.core.errors import SignatureError
 from pyfuse.core.signing import compute_signature, verify_signature
 
 _OBJECT_SENTINEL = "__pyfuse_obj__"
@@ -159,8 +160,6 @@ class Task:
             If the signature is present but invalid, or if *signing_key*
             is provided but the envelope has no signature.
         """
-        from pyfuse.core.errors import SignatureError
-
         data = json.loads(json_str)
         sig = data.pop("signature", None)
 

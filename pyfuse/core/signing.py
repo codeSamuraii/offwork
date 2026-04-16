@@ -14,6 +14,8 @@ import json
 import logging
 from typing import Any
 
+from pyfuse.core.errors import SignatureError
+
 logger = logging.getLogger(__name__)
 
 
@@ -62,8 +64,6 @@ def verify_and_load_json(envelope_json: str, key: bytes) -> dict[str, Any]:
     SignatureError
         If the signature is missing or invalid.
     """
-    from pyfuse.core.errors import SignatureError
-
     try:
         envelope = json.loads(envelope_json)
     except (json.JSONDecodeError, TypeError) as exc:

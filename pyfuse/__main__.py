@@ -90,6 +90,10 @@ def _cmd_worker(args: argparse.Namespace) -> None:
 
     _configure_logging(_resolve_log_level(args))
 
+    if args.pair:
+        asyncio.run(_pair_then_serve(args))
+        return
+
     asyncio.run(serve(
         args.backend,
         concurrency=args.concurrency,
@@ -97,6 +101,40 @@ def _cmd_worker(args: argparse.Namespace) -> None:
         sandbox=bool(args.sandbox),
         require_signing=bool(args.require_signing),
     ))
+
+
+async def _pair_then_serve(args: argparse.Namespace) -> None:
+    """Generate a PIN, pair with a client, then start serving with signing."""
+    from pyfuse.core.pairing import generate_pin, initiate_pairing, save_shared_key
+    from pyfuse.worker.remote import connect, disconnect
+
+    backend = connect(args.backend)
+
+    pin = generate_pin()
+    print(f"\n  Pairing PIN:  {pin}\n")
+    print("  Enter this PIN on the client with:")
+    print(f"    pyfuse pair --backend {args.backend}")
+    print("\n  Waiting for client...\n")
+
+    try:
+        result = await initiate_pairing(backend, pin, timeout=60.0)
+    except Exception as exc:
+        print(f"  ✗ Pairing failed: {exc}", file=sys.stderr)
+        await disconnect()
+        sys.exit(1)
+
+    save_shared_key(result.shared_key, "worker")
+    print(f"  ✓ Paired successfully. Key saved to ~/.pyfuse/worker.key")
+    print(f"  Starting worker with signing enabled...\n")
+    await disconnect()
+
+    await serve(
+        args.backend,
+        concurrency=args.concurrency,
+        auto_install=not args.no_auto_install,
+        sandbox=bool(args.sandbox),
+        require_signing=True,
+    )
 
 
 def _cmd_info(_args: argparse.Namespace) -> None:
@@ -346,6 +384,9 @@ def _add_worker_parser(sub: "argparse._SubParsersAction[argparse.ArgumentParser]
                     help="Run function execution inside an isolated Docker sandbox.")
     p.add_argument("--require-signing", action="store_true", default=False,
                     help="Only accept tasks with valid HMAC signatures from paired clients.")
+    p.add_argument("--pair", action="store_true", default=False,
+                    help="Generate a pairing PIN, wait for a client to pair, then start "
+                         "serving with signing enabled.")
     p.add_argument("-v", "--verbose", action="store_true",
                     help="Enable debug logging")
     p.add_argument("--log-level", default=None, metavar="LEVEL",
@@ -471,23 +512,14 @@ def _add_sandbox_parser(sub: "argparse._SubParsersAction[argparse.ArgumentParser
 
 
 def _cmd_pair(args: argparse.Namespace) -> None:
-    """Handle ``pyfuse pair`` — PIN-based key exchange."""
-    from pyfuse.core.pairing import (
-        generate_pin,
-        initiate_pairing,
-        load_shared_key,
-        respond_to_pairing,
-        save_shared_key,
-    )
+    """Handle ``pyfuse pair`` — client-side PIN-based key exchange."""
+    from pyfuse.core.pairing import load_shared_key
 
     if not args.backend:
         print("Error: --backend is required (or set PYFUSE_BACKEND).", file=sys.stderr)
         sys.exit(1)
 
     role = args.role
-    if role not in ("client", "worker"):
-        print(f"Error: --role must be 'client' or 'worker', got {role!r}", file=sys.stderr)
-        sys.exit(1)
 
     # Check for existing key
     existing = load_shared_key(role)
@@ -509,9 +541,6 @@ def _cmd_pair_clear(args: argparse.Namespace) -> None:
     from pyfuse.core.pairing import clear_shared_key
 
     role = args.role
-    if role not in ("client", "worker"):
-        print(f"Error: --role must be 'client' or 'worker', got {role!r}", file=sys.stderr)
-        sys.exit(1)
 
     if clear_shared_key(role):
         print(f"Shared key for '{role}' removed.")
@@ -548,7 +577,7 @@ async def _pair_async(args: argparse.Namespace, role: str) -> None:
             result = await respond_to_pairing(backend, pin, timeout=args.timeout)
 
         save_shared_key(result.shared_key, role)
-        print(f"  ✓ Paired successfully as '{role}'.")
+        print(f"  \u2713 Paired successfully as '{role}'.")
         print(f"    Peer role: {result.peer_role}")
         print(f"    Key saved to ~/.pyfuse/{role}.key\n")
     finally:
@@ -558,7 +587,7 @@ async def _pair_async(args: argparse.Namespace, role: str) -> None:
 def _add_pair_parser(sub: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
     p = sub.add_parser(
         "pair",
-        help="Pair this machine with a client or worker using a PIN code",
+        help="Pair this machine with a worker using a PIN code (client-side)",
     )
     p.add_argument(
         "--backend",
@@ -566,12 +595,13 @@ def _add_pair_parser(sub: "argparse._SubParsersAction[argparse.ArgumentParser]")
         help="Backend URL for the pairing channel (default: $PYFUSE_BACKEND)",
     )
     p.add_argument(
-        "--role", required=True, choices=("client", "worker"),
-        help="Role of this machine in the pairing",
+        "--role", default="client", choices=("client", "worker"),
+        help="Role of this machine in the pairing (default: client). "
+             "Use 'pyfuse worker --pair' instead of '--role worker'.",
     )
     p.add_argument(
         "--pin", default=None,
-        help="PIN code (auto-generated for worker, prompted for client if omitted)",
+        help="PIN code (prompted interactively if omitted)",
     )
     p.add_argument(
         "--timeout", type=float, default=60.0,

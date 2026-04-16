@@ -24,6 +24,7 @@ cannot recover the PIN or the shared secret.
 All primitives are stdlib-only.
 """
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -34,6 +35,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from pyfuse.core.errors import PairingError
 
 logger = logging.getLogger(__name__)
 
@@ -287,8 +290,6 @@ async def initiate_pairing(
     PairingError
         On timeout or verification failure.
     """
-    from pyfuse.core.errors import PairingError
-
     intermediate = _derive_intermediate(pin)
     challenge = generate_challenge()
 
@@ -305,7 +306,7 @@ async def initiate_pairing(
             try:
                 response = parse_response_message(raw)
             except (ValueError, json.JSONDecodeError):
-                await _async_sleep(0.5)
+                await asyncio.sleep(0.5)
                 continue
 
             if not verify_response(intermediate, challenge, response):
@@ -318,7 +319,7 @@ async def initiate_pairing(
             logger.info("Pairing successful (initiator)")
             return PairingResult(shared_key=shared, peer_role="client")
 
-        await _async_sleep(0.5)
+        await asyncio.sleep(0.5)
 
     raise PairingError(f"Pairing timed out after {timeout}s — no response from peer")
 
@@ -347,8 +348,6 @@ async def respond_to_pairing(
     PairingError
         On timeout or if the initiator rejects the response.
     """
-    from pyfuse.core.errors import PairingError
-
     intermediate = _derive_intermediate(pin)
 
     # Wait for challenge
@@ -362,7 +361,7 @@ async def respond_to_pairing(
                 break
             except (ValueError, json.JSONDecodeError):
                 pass
-        await _async_sleep(0.5)
+        await asyncio.sleep(0.5)
 
     if challenge is None:
         raise PairingError(f"Pairing timed out after {timeout}s — no challenge from peer")
@@ -384,12 +383,7 @@ async def respond_to_pairing(
                 return PairingResult(shared_key=shared, peer_role="worker")
             except (ValueError, json.JSONDecodeError):
                 pass
-        await _async_sleep(0.5)
+        await asyncio.sleep(0.5)
 
     raise PairingError("Pairing failed — initiator did not confirm")
 
-
-async def _async_sleep(seconds: float) -> None:
-    """Async sleep helper (avoids importing asyncio at module level)."""
-    import asyncio
-    await asyncio.sleep(seconds)
