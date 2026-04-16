@@ -3,6 +3,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Self
 
+from pyfuse.core.signing import compute_signature, verify_signature
+
 _OBJECT_SENTINEL = "__pyfuse_obj__"
 
 
@@ -83,6 +85,10 @@ class Task:
     Bundles the serialized dependency graph with the target function
     name and its arguments, so the consumer side needs zero knowledge
     of pyfuse internals to dispatch work.
+
+    When a shared key is provided (via :meth:`to_signed_json`), the
+    serialized payload carries an HMAC-SHA256 signature that the worker
+    can verify before execution.
     """
 
     graph_json: str
@@ -93,9 +99,12 @@ class Task:
     timeout: float | None = None
     retries: int = 0
     retry_delay: float = 1.0
+    signature: str | None = None
 
-    def to_json(self) -> str:
-        """Serialize the task envelope to a JSON string."""
+    # -- Serialization -------------------------------------------------------
+
+    def _to_dict(self) -> dict[str, Any]:
+        """Build the core payload dict (without signature)."""
         d: dict[str, Any] = {
             "id": self.task_id,
             "graph": self.graph_json,
@@ -109,12 +118,63 @@ class Task:
             d["retries"] = self.retries
         if self.retry_delay != 1.0:
             d["retry_delay"] = self.retry_delay
+        return d
+
+    def to_json(self, *, signing_key: bytes | None = None) -> str:
+        """Serialize the task envelope to a JSON string.
+
+        Parameters
+        ----------
+        signing_key
+            When provided, the payload is HMAC-SHA256 signed and the
+            signature is included in the envelope.  Workers that hold
+            the same key can verify it with :meth:`from_signed_json`.
+        """
+        d = self._to_dict()
+        if signing_key is not None:
+            payload = json.dumps(d, cls=_TaskEncoder, separators=(",", ":"), sort_keys=True)
+            d["signature"] = compute_signature(payload, signing_key)
         return json.dumps(d, cls=_TaskEncoder)
 
     @classmethod
-    def from_json(cls, json_str: str | bytes) -> Self:
-        """Deserialize a task envelope from a JSON string."""
+    def from_json(
+        cls,
+        json_str: str | bytes,
+        *,
+        signing_key: bytes | None = None,
+    ) -> Self:
+        """Deserialize a task envelope from a JSON string.
+
+        Parameters
+        ----------
+        signing_key
+            When provided **and** the envelope contains a ``signature``
+            field, the signature is verified.  If verification fails,
+            :class:`~pyfuse.core.errors.SignatureError` is raised.
+            Unsigned tasks are accepted when *signing_key* is ``None``.
+
+        Raises
+        ------
+        SignatureError
+            If the signature is present but invalid, or if *signing_key*
+            is provided but the envelope has no signature.
+        """
+        from pyfuse.core.errors import SignatureError
+
         data = json.loads(json_str)
+        sig = data.pop("signature", None)
+
+        if signing_key is not None:
+            if sig is None:
+                raise SignatureError(
+                    "Task is unsigned but signing is enabled — "
+                    "rejecting unauthenticated task"
+                )
+            # Re-serialize without signature for verification
+            payload = json.dumps(data, cls=_TaskEncoder, separators=(",", ":"), sort_keys=True)
+            if not verify_signature(payload, sig, signing_key):
+                raise SignatureError("Task signature verification failed")
+
         return cls(
             graph_json=data["graph"],
             function_name=data["function"],
@@ -124,4 +184,5 @@ class Task:
             timeout=data.get("timeout"),
             retries=data.get("retries", 0),
             retry_delay=data.get("retry_delay", 1.0),
+            signature=sig,
         )

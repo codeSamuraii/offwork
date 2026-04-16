@@ -11,7 +11,9 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from pyfuse.core.pairing import load_shared_key
 from pyfuse.core.progress import _progress_callback
+from pyfuse.core.signing import derive_key
 from pyfuse.core.task import Task
 from pyfuse.core.version import _VERSION
 from pyfuse.worker.backends.base import Backend
@@ -139,11 +141,18 @@ async def submit_remote(
     wrapper: Callable[..., object],
     *args: Any,
     _backend: str | Backend | None = None,
+    _signing_key: bytes | None = None,
     **kwargs: Any,
 ) -> Result:
     """Pack and submit a function to the remote backend.
 
     Called internally by ``traced_func.run(...)``.
+
+    Parameters
+    ----------
+    _signing_key
+        When provided, the task JSON is HMAC-signed so the worker can
+        verify the origin.  Typically loaded from disk after pairing.
     """
     from pyfuse.graph.graph import Graph
 
@@ -153,6 +162,12 @@ async def submit_remote(
         backend = _backend
     else:
         backend = get_backend()
+
+    # Auto-load client signing key if not explicitly provided
+    if _signing_key is None:
+        raw_key = load_shared_key("client")
+        if raw_key is not None:
+            _signing_key = derive_key(raw_key)
 
     unwrapped = inspect.unwrap(func)
     function_name = f"{unwrapped.__module__}.{unwrapped.__qualname__}"
@@ -169,7 +184,7 @@ async def submit_remote(
         retry_delay=opts.get("retry_delay", 1.0),
     )
 
-    await backend.submit(task.to_json())
+    await backend.submit(task.to_json(signing_key=_signing_key))
     logger.info("Submitted task %s for %s", task.task_id, function_name)
     return Result(task.task_id, backend)
 
@@ -323,9 +338,33 @@ async def _handle_task(
     worker: Worker,
     backend: Backend,
     task_json: str,
+    signing_key: bytes | None = None,
 ) -> None:
-    """Process a single task: deserialize, execute with policy, send result."""
-    task = Task.from_json(task_json)
+    """Process a single task: deserialize, execute with policy, send result.
+
+    Parameters
+    ----------
+    signing_key
+        When provided, the task must carry a valid HMAC-SHA256 signature.
+        Unsigned or mis-signed tasks are rejected with an error result.
+    """
+    try:
+        task = Task.from_json(task_json, signing_key=signing_key)
+    except Exception as exc:
+        # If we can extract a task_id, send an error envelope so the
+        # client gets feedback instead of hanging forever.
+        logger.warning("Task rejected: %s", exc)
+        try:
+            data = json.loads(task_json)
+            task_id = data.get("id", "unknown")
+        except Exception:
+            task_id = "unknown"
+        if task_id != "unknown":
+            envelope = ResultEnvelope.failure(task_id, exc)
+            await backend.send_result(task_id, envelope.to_json())
+            await backend.notify_result(task_id)
+        return
+
     logger.debug("Received task %s: %s", task.task_id, task.function_name)
 
     # Check cancellation before execution
@@ -379,12 +418,18 @@ async def _worker_loop(
     worker: Worker,
     backend: Backend,
     concurrency: int,
+    signing_key: bytes | None = None,
 ) -> None:
     """Consume tasks from *backend* and dispatch to *worker*.
 
     Supports graceful shutdown: on the first SIGINT/SIGTERM, stops
     accepting new tasks and waits for in-progress tasks to complete.
     On the second signal, cancels all in-progress tasks immediately.
+
+    Parameters
+    ----------
+    signing_key
+        When provided, every incoming task must carry a valid signature.
     """
     shutdown = asyncio.Event()
     pending: set[asyncio.Task[None]] = set()
@@ -414,7 +459,7 @@ async def _worker_loop(
 
     async def bounded_handle(task_json: str) -> None:
         async with sem:
-            await _handle_task(worker, backend, task_json)
+            await _handle_task(worker, backend, task_json, signing_key=signing_key)
 
     async def _listen() -> None:
         async for task_json in backend.listen():
@@ -464,6 +509,7 @@ async def serve(
     auto_install: bool = True,
     import_to_package: dict[str, str] | None = None,
     sandbox: "DockerSandbox | bool | None" = None,
+    require_signing: bool = False,
 ) -> None:
     """Start a worker loop that pops tasks from the backend and executes them.
 
@@ -481,17 +527,35 @@ async def serve(
     sandbox
         ``True`` or a :class:`~pyfuse.worker.sandbox.DockerSandbox`
         instance to execute tasks inside a Docker container.
+    require_signing
+        When ``True``, only execute tasks that carry a valid HMAC
+        signature from a paired client.  The shared key is loaded from
+        ``~/.pyfuse/worker.key`` (written by ``pyfuse pair``).
     """
     from pyfuse.worker.sandbox import DockerSandbox
 
     resolved = _resolve_url(url)
     auto_tag = "on" if auto_install else "off"
     sandbox_tag = "docker" if sandbox else "off"
+    signing_tag = "on" if require_signing else "off"
     logger.info(
         "pyfuse worker v%s  \u2502  %s  \u2502  concurrency=%d  \u2502  "
-        "auto_install=%s  \u2502  sandbox=%s",
-        _VERSION, resolved, concurrency, auto_tag, sandbox_tag,
+        "auto_install=%s  \u2502  sandbox=%s  \u2502  signing=%s",
+        _VERSION, resolved, concurrency, auto_tag, sandbox_tag, signing_tag,
     )
+
+    # Load signing key if required
+    signing_key: bytes | None = None
+    if require_signing:
+        raw_key = load_shared_key("worker")
+        if raw_key is None:
+            logger.error(
+                "Signing is enabled but no shared key found. "
+                "Run 'pyfuse pair' first to pair with a client."
+            )
+            sys.exit(1)
+        signing_key = derive_key(raw_key)
+        logger.info("Task signing enabled — only signed tasks will be executed")
 
     try:
         backend = connect(resolved)
@@ -514,7 +578,7 @@ async def serve(
     logger.info("Listening for tasks \u2014 Ctrl+C to stop.")
 
     try:
-        await _worker_loop(worker, backend, concurrency)
+        await _worker_loop(worker, backend, concurrency, signing_key=signing_key)
     finally:
         if worker.sandboxed:
             assert worker._sandbox is not None

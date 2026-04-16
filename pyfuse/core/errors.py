@@ -36,6 +36,14 @@ class TaskCancelled(Error):
     """Raised when a task is cancelled before or during execution."""
 
 
+class SignatureError(Error):
+    """Raised when HMAC signature verification of a task fails."""
+
+
+class PairingError(Error):
+    """Raised when the PIN-based pairing protocol fails."""
+
+
 # ---------------------------------------------------------------------------
 # Custom excepthook: suppress client traceback for RemoteError
 # ---------------------------------------------------------------------------

@@ -2,12 +2,37 @@ import inspect
 from collections.abc import Callable
 from typing import Any
 
-from pyfuse.core.errors import DependencyError, Error, RemoteError, TaskCancelled, TaskStalled, WorkerError
-from pyfuse.core.version import _VERSION
-from pyfuse.core.models import FunctionNode, ImportInfo
+from pyfuse.core.errors import (
+    DependencyError,
+    Error,
+    PairingError,
+    RemoteError,
+    SignatureError,
+    TaskCancelled,
+    TaskStalled,
+    WorkerError,
+)
+from pyfuse.core.pairing import (
+    PairingResult,
+    clear_shared_key,
+    generate_pin,
+    initiate_pairing,
+    load_shared_key,
+    respond_to_pairing,
+    save_shared_key,
+)
 from pyfuse.core.progress import ProgressInfo
 from pyfuse.core.progress import progress as progress
+from pyfuse.core.signing import (
+    compute_signature,
+    derive_key,
+    sign_json,
+    verify_and_load_json,
+    verify_signature,
+)
 from pyfuse.core.task import Task
+from pyfuse.core.version import _VERSION
+from pyfuse.core.models import FunctionNode, ImportInfo
 from pyfuse.graph.decorator import trace
 from pyfuse.graph.graph import Graph
 from pyfuse.graph.store import MergeResult, Store
@@ -91,9 +116,25 @@ __all__ = [
     "RemoteError",
     "TaskStalled",
     "TaskCancelled",
+    "SignatureError",
+    "PairingError",
     # Graph
     "get_graph",
     "Graph",
+    # Signing
+    "compute_signature",
+    "verify_signature",
+    "sign_json",
+    "verify_and_load_json",
+    "derive_key",
+    # Pairing
+    "generate_pin",
+    "save_shared_key",
+    "load_shared_key",
+    "clear_shared_key",
+    "initiate_pairing",
+    "respond_to_pairing",
+    "PairingResult",
     # Power-user
     "Task",
     "Worker",
