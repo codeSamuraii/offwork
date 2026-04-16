@@ -246,6 +246,41 @@ async def fetch_and_process(url: str) -> str:
 result = await fetch_and_process.run("https://example.com")
 ```
 
+## Task signing and trusted workers
+
+By default, any client can submit tasks to a worker. Enable Ed25519 signing to restrict access to trusted clients.
+
+### Setup
+
+```bash
+# Install signing dependencies
+pip install pyfuse[pairing]
+
+# Generate a key pair
+pyfuse keypair generate -o ~/.pyfuse/my_key.pem
+
+# Pair with the worker (automated, no file copying)
+pyfuse pair accept --backend redis://localhost:6379 --trusted-keys /etc/pyfuse/keys  # worker
+pyfuse pair request --backend redis://localhost:6379 --code 847291 -o ~/.pyfuse/my_key.pem  # client
+
+# Start the worker with signature verification
+pyfuse worker --backend redis://localhost:6379 --trusted-keys /etc/pyfuse/keys
+```
+
+### Sign tasks from the client
+
+```python
+from pyfuse.core.signing import KeyPair
+
+keypair = KeyPair.from_file("~/.pyfuse/my_key.pem")
+
+result = await my_function.run(..., _keypair=keypair)
+```
+
+Workers reject tasks that are unsigned or signed by an untrusted key with `TrustError`.
+
+See the [Security guide](SECURITY.md) for full details, including the pairing protocol, programmatic API, and error handling.
+
 ## Worker options
 
 ```bash

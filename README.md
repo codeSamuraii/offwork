@@ -55,7 +55,9 @@ The worker reconstructs the function from source, installs missing packages, exe
 
 ```bash
 pip install pyfuse
-pip install pyfuse[redis]  # for Redis backend
+pip install pyfuse[redis]     # for Redis backend
+pip install pyfuse[signing]   # for Ed25519 task signing
+pip install pyfuse[pairing]   # for automated SPAKE2 pairing (includes signing)
 ```
 
 ## Third-party packages
@@ -90,6 +92,69 @@ Common mappings (`cv2` -> `opencv-python`, `PIL` -> `Pillow`, etc.) are built in
 - **Pluggable backends** -- Redis (`redis://`) for multi-machine, local (`local://`) for same-machine IPC.
 - **Sandboxed execution** -- Run tasks inside Docker containers for isolation. Transparent to clients.
 - **Content-hash caching** -- Workers cache compiled functions by content hash. Same code from different clients = cache hit.
+- **Ed25519 task signing** -- Clients sign tasks with their private key; workers verify signatures against a trusted-keys directory. Only trusted clients can submit work.
+- **Automated pairing** -- SPAKE2-based zero-knowledge key exchange lets clients register their public key with a worker using only a short PIN — no manual file copying.
+
+## Security
+
+By default, any client can submit tasks to a worker. Enable Ed25519 task signing to restrict access to trusted clients only.
+
+### 1. Generate a key pair (client)
+
+```bash
+pyfuse keypair generate -o ~/.pyfuse/my_key.pem
+# Private key: ~/.pyfuse/my_key.pem
+# Public key:  ~/.pyfuse/my_key.pub
+# Fingerprint: a1b2c3d4...
+```
+
+### 2. Register the client with the worker (automated pairing)
+
+Pairing uses a short numeric PIN and SPAKE2 zero-knowledge key exchange — the PIN is never transmitted.
+
+```bash
+# Worker: display pairing code, wait for client (Terminal 1)
+pyfuse pair accept --backend redis://localhost:6379 --trusted-keys /etc/pyfuse/keys
+# Pairing code: 847291
+# Waiting for client...
+
+# Client: enter the code shown by the worker (Terminal 2)
+pyfuse pair request --backend redis://localhost:6379 --code 847291 -o ~/.pyfuse/my_key.pem
+# ✓ Paired! Fingerprint: a1b2c3d4...
+```
+
+After pairing, the worker saves the client's `.pub` file to its trusted-keys directory automatically.
+
+### 3. Start a trusted worker
+
+```bash
+pyfuse worker --backend redis://localhost:6379 --trusted-keys /etc/pyfuse/keys
+```
+
+The worker now rejects tasks that are unsigned or signed by an untrusted client with `TrustError`.
+
+### 4. Sign tasks on the client
+
+```python
+from pyfuse.core.signing import KeyPair
+
+keypair = KeyPair.from_file("~/.pyfuse/my_key.pem")
+
+result = await my_function.run(..., _keypair=keypair)
+```
+
+### Manual key registration (alternative to pairing)
+
+Instead of automated pairing, you can copy the `.pub` file manually:
+
+```bash
+# Generate key pair
+pyfuse keypair generate -o client.pem
+# Copy client.pub to the worker's trusted-keys directory
+scp client.pub worker-host:/etc/pyfuse/keys/
+```
+
+See the [Security guide](docs/SECURITY.md) for full details.
 
 ## Sandboxed execution
 
@@ -120,6 +185,7 @@ pyfuse run examples/remote_execution.py
 ## Documentation
 
 - **[Quick Start](docs/QUICK_START.md)** -- Usage guide with detailed examples
+- **[Security](docs/SECURITY.md)** -- Ed25519 task signing and automated SPAKE2 pairing
 - **[Sandbox](docs/SANDBOX.md)** -- Running workers in Docker containers
 - **[Technical Overview](docs/TECHNICAL_OVERVIEW.md)** -- Architecture, serialization format, and internals
 
