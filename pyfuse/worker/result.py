@@ -1,6 +1,5 @@
 """Result future and result envelope for remote task execution."""
 
-import json
 import time
 import asyncio
 import logging
@@ -9,6 +8,7 @@ from typing import Any, Self
 from dataclasses import dataclass
 from collections.abc import Generator
 
+from pyfuse._json import dumps as _dumps, loads as _loads
 from pyfuse.core.errors import RemoteError, TaskStalled, TaskCancelled
 from pyfuse.core.progress import ProgressInfo
 from pyfuse.worker.backends.base import Backend
@@ -64,12 +64,12 @@ class ResultEnvelope:
             d["error_type"] = self.error_type
             d["error_message"] = self.error_message
             d["error_traceback"] = self.error_traceback
-        return json.dumps(d)
+        return _dumps(d)
 
     @classmethod
     def from_json(cls, raw: str | bytes) -> Self:
         """Deserialize from a JSON string or bytes."""
-        data = json.loads(raw)
+        data = _loads(raw)
         return cls(
             task_id=data["task_id"],
             status=data["status"],

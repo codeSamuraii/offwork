@@ -2,7 +2,6 @@
 
 import os
 import sys
-import json
 import time
 import atexit
 import signal
@@ -13,6 +12,7 @@ import contextlib
 from typing import TYPE_CHECKING, Any
 from collections.abc import Callable, Awaitable
 
+from pyfuse._json import dumps as _dumps, loads as _loads
 from pyfuse.core.task import Task
 from pyfuse.core.pairing import load_shared_key
 from pyfuse.core.signing import derive_key
@@ -285,7 +285,7 @@ def _make_progress_callback(
 
         now = time.monotonic()
         if now - state["last_sent"] >= _PROGRESS_MIN_INTERVAL:
-            data_json = json.dumps(d, separators=(",", ":"))
+            data_json = _dumps(d)
             state["last_sent"] = now
             try:
                 asyncio.get_running_loop()
@@ -303,7 +303,7 @@ def _make_progress_callback(
                 await t
         # Always send the authoritative final state
         if state["latest"] is not None:
-            data_json = json.dumps(state["latest"], separators=(",", ":"))
+            data_json = _dumps(state["latest"])
             await backend.send_progress(task_id, data_json)
 
     return _on_progress, _flush
@@ -357,7 +357,7 @@ async def _handle_task(
         # client gets feedback instead of hanging forever.
         logger.warning("Task rejected: %s", exc)
         try:
-            data = json.loads(task_json)
+            data = _loads(task_json)
             task_id = data.get("id", "unknown")
         except Exception:
             task_id = "unknown"

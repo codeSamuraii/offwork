@@ -8,7 +8,6 @@ URL scheme: ``local://host:port``  (default ``local://127.0.0.1:9748``)
 """
 
 import sys
-import json
 import time
 import atexit
 import socket
@@ -21,6 +20,7 @@ from typing import Any
 from urllib.parse import urlparse
 from collections.abc import AsyncIterator
 
+from pyfuse._json import dumps as _dumps, loads as _loads
 from pyfuse.worker.backends.base import Backend
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ _DEFAULT_PORT = 9748
 
 async def _send_msg(writer: asyncio.StreamWriter, obj: dict[str, Any]) -> None:
     """Send a length-prefixed JSON message."""
-    payload = json.dumps(obj, separators=(",", ":")).encode()
+    payload = _dumps(obj).encode()
     writer.write(_HEADER.pack(len(payload)) + payload)
     await writer.drain()
 
@@ -50,7 +50,7 @@ async def _recv_msg(reader: asyncio.StreamReader) -> dict[str, Any]:
     raw = await reader.readexactly(_HEADER.size)
     (length,) = _HEADER.unpack(raw)
     data = await reader.readexactly(length)
-    result: dict[str, Any] = json.loads(data)
+    result: dict[str, Any] = _loads(data)
     return result
 
 
@@ -194,7 +194,8 @@ async def run_broker(host: str, port: int) -> None:
 
 def _broker_main(host: str, port: int) -> None:
     """Entry point for the broker subprocess."""
-    asyncio.run(run_broker(host, port))
+    from pyfuse._loop import run
+    run(run_broker(host, port))
 
 
 # ---------------------------------------------------------------------------

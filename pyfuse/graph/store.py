@@ -6,6 +6,7 @@ from typing import Any, Self
 from graphlib import TopologicalSorter
 from dataclasses import field, dataclass
 
+from pyfuse._json import loads as _loads
 from pyfuse.core.models import ImportInfo, FunctionNode
 from pyfuse.core.version import _VERSION
 from pyfuse.graph.analyzer import hoist_closure_vars, hoist_closure_func_refs
@@ -438,7 +439,7 @@ class Store:
     @classmethod
     def from_json(cls, json_str: str) -> Self:
         """Deserialize a store from a JSON string."""
-        return cls.from_dict(json.loads(json_str))
+        return cls.from_dict(_loads(json_str))
 
     # -- Private helpers -----------------------------------------------------
 

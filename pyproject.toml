@@ -33,6 +33,10 @@ pyfuse = "pyfuse.__main__:main"
 [project.optional-dependencies]
 redis = ["redis>=5.0"]
 rabbitmq = ["aio-pika>=9.0"]
+fast = [
+    "uvloop>=0.21; sys_platform != 'win32'",
+    "orjson>=3.11.6",
+]
 
 [dependency-groups]
 dev = [

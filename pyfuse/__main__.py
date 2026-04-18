@@ -25,6 +25,7 @@ from collections.abc import Callable
 from importlib.metadata import version as pkg_version
 
 from pyfuse import serialize, reconstruct
+from pyfuse._loop import run as _run
 from pyfuse._venv import temp_venv
 from pyfuse.worker.deps import DEFAULT_IMPORT_TO_PACKAGE
 from pyfuse.worker.remote import serve
@@ -86,16 +87,16 @@ def _cmd_worker(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     if args.tmp:
-        asyncio.run(_run_in_tmp_venv(args))
+        _run(_run_in_tmp_venv(args))
         return
 
     _configure_logging(_resolve_log_level(args))
 
     if args.pair:
-        asyncio.run(_pair_then_serve(args))
+        _run(_pair_then_serve(args))
         return
 
-    asyncio.run(serve(
+    _run(serve(
         args.backend,
         concurrency=args.concurrency,
         auto_install=not args.no_auto_install,
@@ -346,7 +347,7 @@ async def _cmd_run_async(args: argparse.Namespace) -> None:
 
 
 def _cmd_run(args: argparse.Namespace) -> None:
-    asyncio.run(_cmd_run_async(args))
+    _run(_cmd_run_async(args))
 
 
 def _add_worker_parser(sub: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
@@ -407,11 +408,11 @@ def _cmd_sandbox(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     if action == "setup":
-        asyncio.run(_docker_setup())
+        _run(_docker_setup())
     elif action == "status":
-        asyncio.run(_sandbox_status())
+        _run(_sandbox_status())
     elif action == "teardown":
-        asyncio.run(_docker_teardown())
+        _run(_docker_teardown())
 
 
 async def _sandbox_status() -> None:
@@ -522,7 +523,7 @@ def _cmd_pair(args: argparse.Namespace) -> None:
 
     _configure_logging(logging.INFO if not args.verbose else logging.DEBUG)
 
-    asyncio.run(_pair_async(args, role))
+    _run(_pair_async(args, role))
 
 
 def _cmd_pair_clear(args: argparse.Namespace) -> None:

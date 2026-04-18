@@ -297,7 +297,8 @@ def main() -> None:
         flush=True,
     )
     try:
-        asyncio.run(serve(args.host, args.port))
+        from pyfuse._loop import run
+        run(serve(args.host, args.port))
     except KeyboardInterrupt:
         print("[guest-agent] shutting down", flush=True)
 
