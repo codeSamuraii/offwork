@@ -100,31 +100,37 @@ class TestPyfuseMiddleware:
 
         inner_app.assert_awaited_once_with(scope, receive, send)
 
-    async def test_lifecycle_startup_shutdown(self) -> None:
+    async def test_lifespan_startup_shutdown(self) -> None:
         """Middleware connects on startup and disconnects on shutdown."""
         inner_app = AsyncMock()
         mw = PyfuseMiddleware(inner_app, url="local://localhost:9999")
 
-        # Simulate lifespan.startup
-        startup_receive = AsyncMock(
-            return_value={"type": "lifespan.startup"}
-        )
-        send = AsyncMock()
+        # Build a mock receive that returns startup then shutdown
+        messages = iter([
+            {"type": "lifespan.startup"},
+            {"type": "lifespan.shutdown"},
+        ])
+        receive = AsyncMock(side_effect=lambda: next(messages))
+        sent: list[dict[str, str]] = []
+        send = AsyncMock(side_effect=lambda msg: sent.append(msg))
 
-        with patch("pyfuse.connect") as mock_connect:
-            await mw({"type": "lifespan"}, startup_receive, send)
+        # Inner app simulates sending startup.complete then shutdown.complete
+        async def fake_inner_app(scope: dict[str, object], recv: object, snd: object) -> None:
+            await snd({"type": "lifespan.startup.complete"})  # type: ignore[misc]
+            await recv()  # type: ignore[misc]  # consume shutdown
+            await snd({"type": "lifespan.shutdown.complete"})  # type: ignore[misc]
+
+        mw.app = fake_inner_app  # type: ignore[assignment]
+
+        with patch("pyfuse.connect") as mock_connect, \
+             patch("pyfuse.disconnect", new_callable=AsyncMock) as mock_disconnect:
+            await mw({"type": "lifespan"}, receive, send)
             mock_connect.assert_called_once_with("local://localhost:9999")
-
-        # Simulate lifespan.shutdown
-        shutdown_receive = AsyncMock(
-            return_value={"type": "lifespan.shutdown"}
-        )
-        send2 = AsyncMock()
-
-        with patch("pyfuse.disconnect", new_callable=AsyncMock) as mock_disconnect:
-            await mw({"type": "lifespan"}, shutdown_receive, send2)
             mock_disconnect.assert_awaited_once()
-            send2.assert_awaited_once_with({"type": "lifespan.shutdown.complete"})
+
+        # Verify the lifecycle messages were forwarded
+        assert {"type": "lifespan.startup.complete"} in sent
+        assert {"type": "lifespan.shutdown.complete"} in sent
 
     async def test_stores_url_and_kwargs(self) -> None:
         inner_app = AsyncMock()

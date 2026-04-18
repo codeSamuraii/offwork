@@ -198,25 +198,27 @@ class PyfuseMiddleware:
         receive: _Receive,
         send: _Send,
     ) -> None:
-        """Intercept lifespan events to manage pyfuse connect/disconnect."""
+        """Wrap the inner app's lifespan with pyfuse connect/disconnect."""
         import pyfuse
 
-        while True:
+        async def wrapped_receive() -> dict[str, Any]:
             message = await receive()
             if message["type"] == "lifespan.startup":
                 try:
                     pyfuse.connect(self._url, **self._backend_kwargs)
                     logger.info("pyfuse backend connected (middleware startup)")
-                    # Forward startup to the wrapped app
-                    await self.app(scope, receive, send)
                 except Exception:
                     await send({"type": "lifespan.startup.failed", "message": ""})
                     raise
-                return
-            if message["type"] == "lifespan.shutdown":
+            return message
+
+        async def wrapped_send(message: dict[str, Any]) -> None:
+            if message["type"] == "lifespan.shutdown.complete":
                 try:
                     await pyfuse.disconnect()
                     logger.info("pyfuse backend disconnected (middleware shutdown)")
-                finally:
-                    await send({"type": "lifespan.shutdown.complete"})
-                return
+                except Exception:
+                    logger.warning("pyfuse disconnect failed during shutdown", exc_info=True)
+            await send(message)
+
+        await self.app(scope, wrapped_receive, wrapped_send)
