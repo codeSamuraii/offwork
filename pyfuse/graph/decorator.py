@@ -1,3 +1,5 @@
+"""The ``@trace`` decorator for marking functions for remote execution."""
+
 import logging
 from collections.abc import Callable
 from typing import ParamSpec, TypeVar, overload

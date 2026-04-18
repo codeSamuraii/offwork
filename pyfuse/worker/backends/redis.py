@@ -1,3 +1,5 @@
+"""Redis-backed transport using ``RPUSH``/``BLPOP`` for tasks and results."""
+
 import asyncio
 import time
 from collections.abc import AsyncIterator
@@ -53,6 +55,7 @@ class RedisBackend(Backend):
         await self._redis.rpush(self._queue_key, task_json)
 
     async def listen(self) -> AsyncIterator[str]:
+        """Block on ``BLPOP`` and yield task JSON strings as they arrive."""
         while True:
             result = await self._redis.blpop(self._queue_key)
             if result is None:
@@ -77,6 +80,7 @@ class RedisBackend(Backend):
         return raw.decode() if isinstance(raw, bytes) else raw
 
     async def try_get_result(self, task_id: str) -> str | None:
+        """Non-blocking ``LPOP``; returns ``None`` if not yet available."""
         key = f"{self.RESULT_PREFIX}{task_id}"
         raw = await self._redis.lpop(key)
         if raw is None:
@@ -95,6 +99,7 @@ class RedisBackend(Backend):
         return float(raw)
 
     async def get_heartbeats(self, task_ids: list[str]) -> dict[str, float | None]:
+        """Batch fetch via ``MGET`` for efficiency."""
         if not task_ids:
             return {}
         keys = [f"{self.HEARTBEAT_PREFIX}{tid}" for tid in task_ids]
@@ -124,9 +129,11 @@ class RedisBackend(Backend):
         return raw.decode() if isinstance(raw, bytes) else raw
 
     async def notify_result(self, task_id: str) -> None:
+        """Publish task_id on the Pub/Sub notification channel."""
         await self._redis.publish(self.NOTIFY_CHANNEL, task_id)
 
     async def subscribe_results(self) -> AsyncIterator[str]:
+        """Subscribe to the Pub/Sub channel and yield task IDs on result arrival."""
         pubsub = self._redis.pubsub()
         await pubsub.subscribe(self.NOTIFY_CHANNEL)
         try:

@@ -1,3 +1,5 @@
+"""Exception hierarchy for pyfuse."""
+
 import sys
 import types
 

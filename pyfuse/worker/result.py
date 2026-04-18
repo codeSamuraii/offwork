@@ -1,3 +1,5 @@
+"""Result future and result envelope for remote task execution."""
+
 import asyncio
 import json
 import logging
@@ -31,14 +33,17 @@ class ResultEnvelope:
 
     @classmethod
     def success(cls, task_id: str, result: Any) -> Self:
+        """Create an envelope for a successful result."""
         return cls(task_id=task_id, status="ok", result=result)
 
     @classmethod
     def cancelled(cls, task_id: str) -> Self:
+        """Create an envelope for a cancelled task."""
         return cls(task_id=task_id, status="cancelled")
 
     @classmethod
     def failure(cls, task_id: str, exc: BaseException) -> Self:
+        """Create an envelope from an exception, capturing its traceback."""
         return cls(
             task_id=task_id,
             status="error",
@@ -48,6 +53,7 @@ class ResultEnvelope:
         )
 
     def to_json(self) -> str:
+        """Serialize to JSON string."""
         d: dict[str, Any] = {
             "task_id": self.task_id,
             "status": self.status,
@@ -62,6 +68,7 @@ class ResultEnvelope:
 
     @classmethod
     def from_json(cls, raw: str | bytes) -> Self:
+        """Deserialize from a JSON string or bytes."""
         data = json.loads(raw)
         return cls(
             task_id=data["task_id"],

@@ -1,3 +1,5 @@
+"""Third-party dependency extraction and pip installation."""
+
 import ast
 import asyncio
 import contextlib

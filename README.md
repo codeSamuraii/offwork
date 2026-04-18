@@ -1,23 +1,32 @@
 # pyfuse
 
-**Run any Python function on a remote worker — with zero setup.**
+**Run any Python function on a remote worker — zero setup, zero deployment.**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-green)](LICENSE)
 [![Typed](https://img.shields.io/badge/typing-strict%20mypy-blue)](https://mypy-lang.org/)
+[![Zero Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)]()
 
-`pyfuse` captures a function's source code, dependencies, and imports via a single `@trace` decorator.<br/>Workers reconstruct and execute the function from scratch – no deployment, no shared filesystem. Packages are installed automatically.
+Add `@trace` to a function. pyfuse captures its source code, dependencies, and imports automatically. Workers reconstruct and execute everything from scratch — no shared filesystem, no Docker image to build, no deployment pipeline. Missing packages are installed on the fly.
+
+## Quick start
+
+**Install:**
+
+```bash
+pip install pyfuse
+```
+
+**Write your code** — only the entry point needs `@trace`:
 
 ```python
-import asyncio
-import math
-
-import pyfuse
+# my_script.py
+import asyncio, math, pyfuse
 from pyfuse import trace
 
-pyfuse.connect("redis://localhost:6379")
+pyfuse.connect("local://localhost:9748")
 
-def add(a: int, b: int) -> int:
+def add(a, b):
     return a + b
 
 @trace
@@ -31,113 +40,93 @@ async def main():
 asyncio.run(main())
 ```
 
-Only the entry point needs `@trace`. Everything it calls -- `add()`, imports, class methods -- is captured automatically.
-
-## Getting started
-
-Start an isolated worker (temporary venv with `--tmp`, cleaned up on exit):
+**Start a worker and run:**
 
 ```bash
-pyfuse worker --tmp --backend local://localhost:9748   # Same machine (async TCP)
-pyfuse worker --tmp --backend redis://localhost:6379   # Remote using Redis
+pyfuse worker --backend local://localhost:9748 --tmp   # Terminal 1
+python my_script.py                                    # Terminal 2 → 5.0
 ```
 
-Run a script:
+`--tmp` creates an isolated venv that's cleaned up on exit. For multi-machine setups, swap `local://` for `redis://`:
 
 ```bash
-python examples/remote_execution.py
-# 5.0
+pyfuse worker --backend redis://localhost:6379 --tmp
 ```
 
-The worker reconstructs the function from source, installs missing packages, executes it, and returns the result. Identical code is cached and never rebuilt twice.
+That's it. See the **[Quick Start guide](docs/QUICK_START.md)** for the full tutorial.
 
-## Installation
+## How it works
 
-```bash
-pip install pyfuse
-pip install pyfuse[redis]  # for Redis backend
-```
+`@trace` uses AST analysis to capture everything the function touches — helper functions, class hierarchies, module constants, closures, third-party imports. The client serializes it all into a self-contained JSON payload. The worker reconstructs and executes a runnable Python script from it — no shared filesystem or prior deployment needed.
 
-## Third-party packages
-
-Workers auto-install missing packages. When the import name doesn't match the pip package, use `install_package_as`:
-
-```python
-from pyfuse import install_package_as
-
-with install_package_as("PyYAML"):
-    import yaml
-
-@trace
-def to_yaml(data: object) -> str:
-    return yaml.dump(data, default_flow_style=False)
-```
-
-Common mappings (`cv2` -> `opencv-python`, `PIL` -> `Pillow`, etc.) are built in.
+See the [Technical Overview](docs/TECHNICAL_OVERVIEW.md) for the full execution flow and architecture.
 
 ## Features
 
-- **Automatic dependency detection** -- AST-based, recursive. Untraced helpers, class methods, module-level constants, class-level attributes, and class decorators are all captured.
-- **Third-party package auto-install** -- Workers install missing packages via pip before execution.
-- **Async-native** -- The entire I/O layer is built on `asyncio`. `.run()`, `.start()`, `.map()`, `await result`, and `asyncio.gather` all work out of the box.
-- **Heartbeat & stall detection** -- Workers send periodic heartbeats. Clients raise `TaskStalled` when a worker stops responding.
-- **Task cancellation** -- `await future.cancel()` cancels pending or in-progress tasks.
-- **Progress reporting** -- Call `pyfuse.progress(75.0)` or `pyfuse.progress(3, 10)` inside tasks; query with `await future.progress()`.
-- **Graceful shutdown** -- Workers finish in-progress tasks before stopping. Second Ctrl+C force-quits.
-- **Class methods** -- `self.method()` and `cls.method()` dependencies are detected. Entire class hierarchies (including `super()`), class-level attributes, decorators (`@dataclass`, etc.), and metaclass keywords are reconstructed.
-- **Retry and timeout** -- `@trace(timeout=30, retries=3)` with exponential backoff.
-- **Batch submission** -- `await func.map([(a1, b1), (a2, b2)])` submits and awaits multiple tasks.
-- **Pluggable backends** -- Redis (`redis://`) for multi-machine, local (`local://`) for same-machine IPC.
-- **Sandboxed execution** -- Run tasks inside Docker containers for isolation. Transparent to clients.
-- **Signed execution** -- PIN-based pairing + HMAC-SHA256 task signing. Workers reject unsigned or tampered tasks.
-- **Content-hash caching** -- Workers cache compiled functions by content hash. Same code from different clients = cache hit.
+| Feature | Description |
+|---------|-------------|
+| **Automatic dependency capture** | Helpers, classes, constants, closures — all detected recursively via AST |
+| **Package auto-install** | Workers `pip install` missing packages before execution |
+| **Async-native** | `.run()`, `.start()`, `.map()`, `asyncio.gather` — all built on `asyncio` |
+| **Retry & timeout** | `@trace(timeout=30, retries=3)` with exponential backoff |
+| **Progress reporting** | `pyfuse.progress(3, 10)` inside tasks, `await future.progress()` on client |
+| **Task cancellation** | `await future.cancel()` — cooperative, raises `TaskCancelled` |
+| **Heartbeat & stall detection** | Workers send heartbeats; clients raise `TaskStalled` on silence |
+| **Content-hash caching** | Same code = cache hit, regardless of which client sent it |
+| **Pluggable backends** | `redis://` for multi-machine, `local://` for same-machine IPC |
+| **Docker sandbox** | Isolate execution in containers — transparent to clients |
+| **Signed execution** | PIN-based pairing + HMAC-SHA256 — workers reject untrusted tasks |
+| **Graceful shutdown** | Ctrl+C waits for in-flight tasks; second Ctrl+C force-quits |
 
-## Sandboxed execution
+## Security
 
-By default, workers execute code in the host process. For isolation, enable sandboxing with `--sandbox`:
+### Sandboxed execution
+
+Run tasks inside Docker containers for isolation. No client-side changes needed:
 
 ```bash
-pyfuse sandbox setup
-pyfuse worker --backend redis://localhost:6379 --sandbox
+pyfuse sandbox setup                                      # build the sandbox image (once)
+pyfuse worker --backend redis://localhost:6379 --sandbox  # run with isolation
 ```
 
-No changes are needed on the client side — sandboxing is transparent. See the [Sandbox guide](docs/SANDBOX.md) for more information.
+### Signed execution
 
-## Signed execution
-
-Cryptographically sign tasks so workers only execute code from trusted clients:
+PIN-based pairing ensures workers only execute code from trusted clients:
 
 ```bash
-# Worker — generates a PIN and starts serving once paired
+# Worker — displays a 6-digit PIN, then starts serving once paired
 pyfuse worker --backend redis://localhost:6379 --pair
 
 # Client — enter the PIN shown by the worker
 pyfuse pair --backend redis://localhost:6379
 ```
 
-No client-side code changes needed — tasks are signed automatically after pairing. See the [Signing guide](docs/SIGNING.md) for details.
+After pairing, tasks are signed automatically. See [Signing & Pairing](docs/SIGNING.md) for details.
 
 ## Examples
 
 ```bash
-# Start a worker, then run an example:
-pyfuse worker --backend redis://localhost:6379 --tmp
-pyfuse run examples/remote_execution.py
+pyfuse worker --backend local://localhost:9748 --tmp     # start a worker
+pyfuse run examples/remote_execution.py                  # run an example
 ```
 
-- **[`examples/remote_execution.py`](examples/remote_execution.py)** -- Remote execution with auto-discovered dependencies
-- **[`examples/async_execution.py`](examples/async_execution.py)** -- Async: `.run()`, `.start()`, `.map()`, `asyncio.gather`
-- **[`examples/package_installation.py`](examples/package_installation.py)** -- Auto-installing third-party packages on workers
-- **[`examples/progress_reporting.py`](examples/progress_reporting.py)** -- Real-time progress tracking from long-running tasks
-- **[`examples/cancellation.py`](examples/cancellation.py)** -- Cancelling pending or in-progress tasks
-- **[`examples/large_module.py`](examples/large_module.py)** -- Stress test: 47 functions across 7 files, one `@trace`
+| Example | What it shows |
+|---------|--------------|
+| [`remote_execution.py`](examples/remote_execution.py) | Basic remote execution with auto-discovered dependencies |
+| [`async_execution.py`](examples/async_execution.py) | `.run()`, `.start()`, `.map()`, `asyncio.gather` |
+| [`package_installation.py`](examples/package_installation.py) | Third-party package auto-install on workers |
+| [`progress_reporting.py`](examples/progress_reporting.py) | Real-time progress tracking |
+| [`cancellation.py`](examples/cancellation.py) | Cancelling pending or in-progress tasks |
+| [`large_module.py`](examples/large_module.py) | Stress test — 47 functions across 7 files, one `@trace` |
 
 ## Documentation
 
-- **[Quick Start](docs/QUICK_START.md)** -- Usage guide with detailed examples
-- **[Signing & Pairing](docs/SIGNING.md)** -- PIN-based pairing and cryptographic task signing
-- **[Sandbox](docs/SANDBOX.md)** -- Running workers in Docker containers
-- **[Technical Overview](docs/TECHNICAL_OVERVIEW.md)** -- Architecture, serialization format, and internals
+| Doc | Content |
+|-----|---------|
+| **[Quick Start](docs/QUICK_START.md)** | Tutorial — installation, usage, API walkthrough |
+| **[Technical Overview](docs/TECHNICAL_OVERVIEW.md)** | Architecture, internals, serialization format |
+| **[Signing & Pairing](docs/SIGNING.md)** | Cryptographic task signing protocol |
+| **[Sandbox](docs/SANDBOX.md)** | Docker container isolation |
 
 ## License
 

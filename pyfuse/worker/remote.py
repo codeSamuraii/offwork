@@ -1,3 +1,5 @@
+"""Remote execution orchestration: connect, serve, and submit tasks."""
+
 import asyncio
 import atexit
 import contextlib

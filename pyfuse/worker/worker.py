@@ -1,9 +1,12 @@
+"""Worker: reconstruct functions from serialized stores, cache, and execute."""
+
 import asyncio
 import contextvars
 import functools
 import hashlib
 import inspect
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -27,8 +30,10 @@ class BuildInfo:
 
 @dataclass(frozen=True)
 class _CachedFunction:
+    """A cached compiled function with its namespace and metadata."""
+
     namespace: dict[str, Any]
-    func: Any  # callable
+    func: Callable[..., Any]
     subgraph_key: str
     source: str
 

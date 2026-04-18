@@ -1,3 +1,5 @@
+"""Data models for function nodes and import bindings."""
+
 import hashlib
 import json
 from dataclasses import dataclass, field
@@ -13,6 +15,7 @@ class ImportInfo:
     package: str | None = None
 
     def to_dict(self) -> dict[str, str]:
+        """Serialize to a plain dict."""
         d = {"statement": self.statement, "bound_name": self.bound_name}
         if self.package is not None:
             d["package"] = self.package
@@ -20,6 +23,7 @@ class ImportInfo:
 
     @classmethod
     def from_dict(cls, data: dict[str, str]) -> Self:
+        """Deserialize from a plain dict."""
         return cls(
             statement=data["statement"],
             bound_name=data["bound_name"],
@@ -47,6 +51,7 @@ class FunctionNode:
     class_decorators: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize to a plain dict including all fields."""
         d: dict[str, Any] = {
             "qualified_name": self.qualified_name,
             "name": self.name,
@@ -129,6 +134,7 @@ class FunctionNode:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Self:
+        """Deserialize from a plain dict."""
         return cls(
             qualified_name=data["qualified_name"],
             name=data["name"],

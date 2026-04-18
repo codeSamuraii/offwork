@@ -1,3 +1,5 @@
+"""Protocol types for ``@trace``-decorated functions."""
+
 from collections.abc import Callable
 from typing import Any, ParamSpec, Protocol, TypeVar
 
@@ -8,6 +10,8 @@ R = TypeVar("R")
 
 
 class TracedFunction(Protocol[P, R]):
+    """A function decorated with ``@trace``, with remote execution methods."""
+
     __pyfuse_traced__: bool
     __wrapped__: Callable[P, R]
 
@@ -21,4 +25,6 @@ class TracedFunction(Protocol[P, R]):
 
 
 class TraceDecorator(Protocol):
+    """The ``@trace`` decorator when called with keyword arguments."""
+
     def __call__(self, func: Callable[P, R]) -> TracedFunction[P, R]: ...

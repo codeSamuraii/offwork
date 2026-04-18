@@ -1,3 +1,5 @@
+"""Content-addressable store for serializing and reconstructing functions."""
+
 import json
 import logging
 from dataclasses import dataclass, field
@@ -167,36 +169,44 @@ class Store:
         return self._objects.get(h)
 
     def has(self, h: str) -> bool:
+        """Check whether a content hash exists in the store."""
         return h in self._objects
 
     @property
     def object_hashes(self) -> set[str]:
+        """Set of all content hashes currently in the store."""
         return set(self._objects)
 
     # -- Dep operations ------------------------------------------------------
 
     def set_deps(self, h: str, dep_hashes: list[str]) -> None:
+        """Set dependency edges for a content hash."""
         if dep_hashes:
             self._deps[h] = list(dep_hashes)
         else:
             self._deps.pop(h, None)
 
     def get_deps(self, h: str) -> list[str]:
+        """Get dependency hashes for a content hash."""
         return list(self._deps.get(h, []))
 
     # -- Ref operations ------------------------------------------------------
 
     def set_ref(self, name: str, h: str) -> None:
+        """Map a qualified name to a content hash."""
         self._refs[name] = h
 
     def get_ref(self, name: str) -> str | None:
+        """Look up a content hash by qualified name."""
         return self._refs.get(name)
 
     def del_ref(self, name: str) -> None:
+        """Remove a named reference."""
         self._refs.pop(name, None)
 
     @property
     def refs(self) -> dict[str, str]:
+        """Snapshot of all named references (qualified name -> hash)."""
         return dict(self._refs)
 
     # -- Graph operations ----------------------------------------------------
@@ -397,11 +407,12 @@ class Store:
         }
 
     def to_json(self) -> str:
+        """Serialize the store to a JSON string."""
         return json.dumps(self.to_dict(), indent=2)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Self:
-        """Import from dict."""
+        """Deserialize a store from a dict (as produced by :meth:`to_dict`)."""
         store = cls()
         refs = data.get("refs", {})
         hash_to_qname = {h: qn for qn, h in refs.items()}
@@ -426,6 +437,7 @@ class Store:
 
     @classmethod
     def from_json(cls, json_str: str) -> Self:
+        """Deserialize a store from a JSON string."""
         return cls.from_dict(json.loads(json_str))
 
     # -- Private helpers -----------------------------------------------------

@@ -1,5 +1,7 @@
 # Technical Overview
 
+This document covers pyfuse's internal architecture, execution flow, serialization format, and transport backends. For a usage-oriented guide, see the [Quick Start](QUICK_START.md).
+
 ## How it works
 
 pyfuse enables remote execution of Python functions without deploying code to workers. The client serializes a function's source code, its entire dependency tree, and its arguments into a self-contained JSON payload. The worker reconstructs the function from source, installs missing packages, and executes it.
@@ -49,6 +51,42 @@ pyfuse/
             guest_agent.py   Stdlib-only agent deployed inside container
             _protocol.py     Length-prefixed JSON wire protocol
             Dockerfile       Container image for the guest agent
+```
+
+## Public API reference
+
+```python
+# Decorator
+@trace                                    # capture function for remote execution
+@trace(timeout=30, retries=3)             # with execution options
+
+# Remote execution (all async)
+pyfuse.connect("redis://localhost:6379")  # configure backend (sync)
+await pyfuse.serve("redis://...", concurrency=4)  # start worker loop
+await func.run(*args)                     # submit + await result
+future = await func.start(*args)          # submit, returns Result handle
+results = await func.map([(a1, b1), ...]) # batch submit + await all
+
+# Result handling
+result = await future                     # await result value
+result = await future.result(timeout=10)  # with timeout and stall detection
+await future.done()                       # non-blocking check
+await future.status()                     # "pending" | "success" | "error" | "cancelled"
+await future.cancel()                     # cancel task
+p = await future.progress()               # get ProgressInfo or None
+
+# Progress (inside tasks)
+pyfuse.progress(75.0)                     # report percentage
+pyfuse.progress(3, 10, message="step 3")  # report current/total
+
+# Serialization (sync)
+pyfuse.serialize(func)                    # -> JSON string
+pyfuse.reconstruct(json_str, "name")      # -> Python source string
+pyfuse.pack(func, *args)                  # -> Task
+await pyfuse.execute(task)                # -> return value
+
+# Inspection
+pyfuse.get_graph().to_mermaid(func)       # -> Mermaid diagram string
 ```
 
 ## Remote execution flow

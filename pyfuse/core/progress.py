@@ -1,3 +1,5 @@
+"""Progress reporting for remote task execution."""
+
 import contextvars
 import json
 from collections.abc import Callable
@@ -24,6 +26,7 @@ class ProgressInfo:
         return None
 
     def to_json(self) -> str:
+        """Serialize to a JSON string."""
         d: dict[str, Any] = {"current": self.current}
         if self.total is not None:
             d["total"] = self.total
@@ -33,6 +36,7 @@ class ProgressInfo:
 
     @classmethod
     def from_json(cls, raw: str | bytes) -> Self:
+        """Deserialize from a JSON string or bytes."""
         data = json.loads(raw)
         return cls(
             current=data["current"],

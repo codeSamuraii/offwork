@@ -1,3 +1,5 @@
+"""AST-based source capture, import extraction, and dependency detection."""
+
 import ast
 import importlib
 import inspect

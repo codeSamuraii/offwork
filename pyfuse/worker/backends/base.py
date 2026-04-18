@@ -1,3 +1,5 @@
+"""Abstract base class for transport backends."""
+
 import abc
 from collections.abc import AsyncIterator
 

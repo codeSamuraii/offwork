@@ -26,6 +26,7 @@ from pathlib import Path
 
 from pyfuse import reconstruct, serialize
 from pyfuse._venv import temp_venv
+from pyfuse.graph.analyzer import _parse_install_package_as
 from pyfuse.worker.deps import DEFAULT_IMPORT_TO_PACKAGE
 from pyfuse.worker.remote import serve
 
@@ -202,23 +203,6 @@ def _is_local_package(module_name: str, script_dir: str) -> bool:
         if (base / f"{module_name}.py").is_file():
             return True
     return False
-
-
-def _parse_install_package_as(node: ast.With) -> str | None:
-    """Return the package name if *node* is ``with install_package_as(...)``."""
-    if len(node.items) != 1:
-        return None
-    ctx = node.items[0].context_expr
-    if not (
-        isinstance(ctx, ast.Call)
-        and isinstance(ctx.func, ast.Name)
-        and ctx.func.id == "install_package_as"
-        and len(ctx.args) == 1
-        and isinstance(ctx.args[0], ast.Constant)
-        and isinstance(ctx.args[0].value, str)
-    ):
-        return None
-    return ctx.args[0].value
 
 
 def _extract_top_modules(node: ast.AST) -> list[str]:

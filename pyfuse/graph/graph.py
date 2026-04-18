@@ -1,3 +1,5 @@
+"""Dependency graph: function registration, auto-discovery, and serialization."""
+
 import ast
 import base64
 import collections
@@ -264,16 +266,19 @@ class Graph(TracingMixin):
 
     @classmethod
     def default(cls) -> "Graph":
+        """Return the singleton default graph used by ``@trace``."""
         if cls._default is None:
             cls._default = Graph()
         return cls._default
 
     @classmethod
     def reset_default(cls) -> None:
+        """Reset the default graph, clearing all registered functions."""
         cls._default = None
 
     @property
     def nodes(self) -> dict[str, FunctionNode]:
+        """Snapshot of all registered function nodes, keyed by qualified name."""
         return dict(self._nodes)
 
     # -- Registration ----------------------------------------------------------
@@ -714,10 +719,12 @@ class Graph(TracingMixin):
         return store
 
     def serialize(self, *funcs: Callable[..., object] | str) -> str:
+        """Serialize the graph (or a subgraph) to a JSON string."""
         return self.to_store(*funcs).to_json()
 
     @classmethod
     def deserialize_graph(cls, json_str: str) -> Self:
+        """Reconstruct a Graph from a serialized JSON string."""
         store = Store.from_json(json_str)
         graph = cls()
         hash_to_qname = {h: qn for qn, h in store.refs.items()}
@@ -754,6 +761,7 @@ class Graph(TracingMixin):
 
     @staticmethod
     def reconstruct(json_str: str, function_name: str) -> str:
+        """Reconstruct executable Python source from serialized JSON."""
         store = Store.from_json(json_str)
         return store.reconstruct(function_name)
 

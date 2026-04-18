@@ -1,3 +1,5 @@
+"""Task dataclass: serializable envelope bundling a graph with arguments."""
+
 import json
 import uuid
 from dataclasses import dataclass, field

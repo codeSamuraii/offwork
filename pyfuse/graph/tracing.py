@@ -1,3 +1,5 @@
+"""Runtime call-stack tracing for dependency edge recording via contextvars."""
+
 import asyncio
 import builtins
 import contextvars

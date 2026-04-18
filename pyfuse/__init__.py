@@ -1,3 +1,5 @@
+"""Public API for pyfuse — remote Python function execution."""
+
 import inspect
 from collections.abc import Callable
 from typing import Any
@@ -53,8 +55,6 @@ def get_graph() -> Graph:
 
         print(pyfuse.get_graph().to_mermaid())           # full graph
         print(pyfuse.get_graph().to_mermaid(my_func))    # subgraph of my_func
-
-    Also accessible as ``pyfuse.graph``.
     """
     return Graph.default()
 
@@ -113,6 +113,8 @@ __all__ = [
     "ProgressInfo",
     # Errors
     "Error",
+    "WorkerError",
+    "DependencyError",
     "RemoteError",
     "TaskStalled",
     "TaskCancelled",
