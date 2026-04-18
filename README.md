@@ -58,14 +58,20 @@ See [Sandbox](docs/SANDBOX.md) for configuration and management.
 
 ## Signing
 
-PIN-based pairing + HMAC-SHA256 — workers reject untrusted or tampered tasks:
+Pre-shared token or PIN-based pairing + HMAC-SHA256 — workers reject untrusted or tampered tasks:
 
 ```bash
-pyfuse worker --backend redis://localhost:6379 --pair    # displays a 6-digit PIN
-pyfuse pair --backend redis://localhost:6379             # on client: enter the PIN
+# Token-based (recommended for CI/CD)
+pyfuse token generate                                       # generate once
+export PYFUSE_SIGNING_TOKEN=<token>                         # set on client & worker
+pyfuse worker --backend redis://localhost:6379 --require-signing
+
+# PIN-based pairing (interactive)
+pyfuse worker --backend redis://localhost:6379 --pair       # displays a 6-digit PIN
+pyfuse pair --backend redis://localhost:6379                # on client: enter the PIN
 ```
 
-After pairing, tasks are signed automatically. No client-side code changes. See [Signing & Pairing](docs/SIGNING.md) for details.
+After setup, tasks are signed automatically. No client-side code changes. See [Signing & Pairing](docs/SIGNING.md) for details.
 
 ## Features
 
@@ -80,7 +86,7 @@ After pairing, tasks are signed automatically. No client-side code changes. See 
 | **Content-hash caching** | Same code = cache hit, regardless of client |
 | **Pluggable backends** | `redis://` (multi-machine) or `local://` (same-machine TCP) |
 | **Docker sandbox** | Container isolation, transparent to clients |
-| **Signed execution** | PIN-based pairing + HMAC-SHA256 task authentication |
+| **Signed execution** | Pre-shared token or PIN pairing + HMAC-SHA256 task authentication |
 | **Graceful shutdown** | Ctrl+C drains in-flight tasks; second Ctrl+C force-quits |
 
 ## Documentation

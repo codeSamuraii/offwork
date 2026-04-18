@@ -1,19 +1,67 @@
 # Signing & Pairing
 
-Cryptographically sign serialized tasks so that workers only execute code from trusted clients. The signing system uses a PIN-based pairing protocol — no manual key management required.
+Cryptographically sign serialized tasks so that workers only execute code from trusted clients. Two key distribution methods are available:
+
+- **Token-based** (recommended for automation): Generate a shared token offline, distribute via environment variables or secrets management. No real-time coordination needed.
+- **PIN-based pairing** (recommended for interactive use): A client and worker exchange keys via a 6-digit PIN displayed on one side and entered on the other.
+
+Both methods use the same underlying HMAC-SHA256 signing — they differ only in how the shared secret is established.
 
 ## Overview
 
 By default, pyfuse workers execute any task they receive from the backend. When signing is enabled:
 
-1. A client and worker **pair** once using a short PIN code.
-2. Both sides derive a shared HMAC key from the PIN.
-3. The client **signs** every task with HMAC-SHA256 before submitting it.
-4. The worker **verifies** the signature before executing the task.
+1. A client and worker share a cryptographic key (via **token** or **pairing**).
+2. The client **signs** every task with HMAC-SHA256 before submitting it.
+3. The worker **verifies** the signature before executing the task.
 
 Tasks with missing or invalid signatures are rejected.
 
-## Quick start
+## Quick start — Token (recommended for CI/CD)
+
+### 1. Generate a token
+
+```bash
+pyfuse token generate
+```
+
+```
+  Token generated and saved to ~/.pyfuse/token
+
+  Token: a1b2c3d4e5f6...
+
+  Set this on both client and worker:
+    export PYFUSE_SIGNING_TOKEN=a1b2c3d4e5f6...
+```
+
+### 2. Distribute the token
+
+Copy the token to both the client and worker machines. The recommended method is an environment variable:
+
+```bash
+# On both client and worker
+export PYFUSE_SIGNING_TOKEN=a1b2c3d4e5f6...
+```
+
+For CI/CD, store the token as a secret in your CI provider (GitHub Actions secrets, GitLab CI variables, etc.) and inject it as `PYFUSE_SIGNING_TOKEN`.
+
+Alternatively, copy the `~/.pyfuse/token` file to both machines.
+
+### 3. Start the worker with signing
+
+```bash
+pyfuse worker --backend redis://localhost:6379 --require-signing
+```
+
+### 4. Run tasks (no changes needed)
+
+```bash
+python examples/remote_execution.py
+```
+
+The client automatically loads the token and signs tasks before submission. No code changes are needed.
+
+## Quick start — PIN-based pairing
 
 ### 1. Start a worker with pairing
 
@@ -80,6 +128,41 @@ pyfuse worker --backend redis://localhost:6379 --require-signing
 
 ## How it works
 
+### Key resolution
+
+When signing is enabled, both client and worker resolve the signing key using the following precedence order:
+
+1. **`PYFUSE_SIGNING_TOKEN` environment variable** — hex-encoded token (highest priority)
+2. **`~/.pyfuse/token` file** — hex-encoded token written by `pyfuse token generate`
+3. **`~/.pyfuse/{client,worker}.key` file** — raw bytes from PIN-based pairing
+
+This means you can migrate from pairing to tokens without disruption: set the environment variable and it takes precedence over any existing pairing key.
+
+### Token signing
+
+```
+Generate (once)                       Distribute
+──────────────                        ──────────
+pyfuse token generate                 Copy token to CI secrets,
+    │                                 env vars, or config
+    └─→ random 32-byte token          │
+        saved to ~/.pyfuse/token       │
+                                       ▼
+Client                                Worker
+──────                                ──────
+Load token                            Load token
+    │                                     │
+    ├── HMAC-SHA256(key, task_json)       │
+    ├── attach signature                  │
+    ├── submit to backend ──────────────→ │
+    │                                     ├── extract signature
+    │                                     ├── HMAC-SHA256(key, task_json)
+    │                                     ├── constant-time compare
+    │                                     │
+    │                                     ├── match? → execute
+    │                                     └── mismatch? → reject
+```
+
 ### Pairing protocol
 
 The pairing protocol is inspired by SPAKE2 and SAS-based verification:
@@ -123,7 +206,7 @@ Enter PIN: 482913                     Enter PIN: 482913
 
 ### Task signing
 
-Once paired, the client signs tasks with HMAC-SHA256:
+Once a shared key is established (via token or pairing), the client signs tasks with HMAC-SHA256:
 
 ```
 Client                                Worker
@@ -144,13 +227,41 @@ The signature covers the entire task payload — graph JSON, function name, argu
 
 ## CLI reference
 
+### `pyfuse token generate`
+
+```bash
+pyfuse token generate [--force]
+```
+
+Generates a random 32-byte signing token and saves it to `~/.pyfuse/token`. Prints the hex-encoded token and usage instructions.
+
+| Flag | Description |
+|------|-------------|
+| `--force` | Overwrite an existing token |
+
+### `pyfuse token show`
+
+```bash
+pyfuse token show
+```
+
+Displays the current token source (environment variable or file) and a truncated preview.
+
+### `pyfuse token clear`
+
+```bash
+pyfuse token clear
+```
+
+Removes the saved `~/.pyfuse/token` file.
+
 ### `pyfuse worker --pair`
 
 ```bash
 pyfuse worker --backend URL --pair
 ```
 
-Generates a PIN, pairs with a client, then starts serving with signing automatically enabled. This is the recommended way to set up a signed worker.
+Generates a PIN, pairs with a client, then starts serving with signing automatically enabled. This is the recommended way to set up a signed worker interactively.
 
 ### `pyfuse pair`
 
@@ -173,7 +284,7 @@ pyfuse pair --backend URL [--pin PIN] [--timeout SECS] [--force] [--clear]
 pyfuse worker --backend URL --require-signing
 ```
 
-When `--require-signing` is set, the worker loads `~/.pyfuse/worker.key` and rejects any task that is unsigned or has an invalid signature. If no key file is found, the worker exits with an error.
+When `--require-signing` is set, the worker loads signing key material using the standard resolution order (env var → token file → pairing key) and rejects any task that is unsigned or has an invalid signature. If no key material is found, the worker exits with an error.
 
 ## Programmatic usage
 
@@ -182,7 +293,7 @@ When `--require-signing` is set, the worker loads `~/.pyfuse/worker.key` and rej
 ```python
 from pyfuse.core.signing import derive_key, compute_signature, verify_signature
 
-# After pairing, both sides have the same shared_key
+# After pairing or with a token, both sides have the same shared_key
 signing_key = derive_key(shared_key)
 
 # Sign
@@ -206,6 +317,33 @@ signed_json = task.to_json(signing_key=key)
 
 # Worker: verify on deserialization
 task = Task.from_json(signed_json, signing_key=key)  # raises SignatureError on failure
+```
+
+### Resolving keys programmatically
+
+```python
+from pyfuse.core.token import resolve_signing_key
+
+# Resolves from env var → token file → pairing key
+key = resolve_signing_key("client")  # or "worker"
+if key is not None:
+    signed_json = task.to_json(signing_key=key)
+```
+
+### Token management
+
+```python
+from pyfuse.core.token import generate_token, save_token, load_token, clear_token
+
+# Generate and save
+token = generate_token()
+save_token(token)
+
+# Load (checks env var first, then file)
+token = load_token()
+
+# Clean up
+clear_token()
 ```
 
 ### Pairing programmatically
@@ -232,38 +370,64 @@ save_shared_key(result.shared_key, "client")
 
 | File | Purpose |
 |------|---------|
-| `~/.pyfuse/client.key` | Client's shared key (32 bytes) |
-| `~/.pyfuse/worker.key` | Worker's shared key (32 bytes) |
+| `~/.pyfuse/token` | Pre-shared signing token (hex-encoded, 64 chars) |
+| `~/.pyfuse/client.key` | Client's pairing key (32 bytes, from `pyfuse pair`) |
+| `~/.pyfuse/worker.key` | Worker's pairing key (32 bytes, from `pyfuse pair`) |
 
-Both files are created with `0600` permissions (owner-only read/write).
+All files are created with `0600` permissions (owner-only read/write).
 
-To re-pair, use `--force`:
+| Environment variable | Purpose |
+|---------------------|---------|
+| `PYFUSE_SIGNING_TOKEN` | Hex-encoded signing token (overrides file) |
 
-```bash
-pyfuse worker --backend redis://localhost:6379 --pair  # (or --force on 'pyfuse pair')
-pyfuse pair --backend redis://localhost:6379 --force
+### CI/CD example (GitHub Actions)
+
+```yaml
+# .github/workflows/deploy.yml
+jobs:
+  run-task:
+    runs-on: ubuntu-latest
+    env:
+      PYFUSE_SIGNING_TOKEN: ${{ secrets.PYFUSE_SIGNING_TOKEN }}
+      PYFUSE_BACKEND: redis://your-redis-host:6379
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install pyfuse[redis]
+      - run: python my_task.py
 ```
 
-To remove keys:
+### Regenerating tokens
 
 ```bash
+pyfuse token generate --force
+```
+
+Then update the `PYFUSE_SIGNING_TOKEN` secret in your CI provider and restart workers.
+
+### Clearing credentials
+
+```bash
+# Token
+pyfuse token clear
+
+# Pairing keys
 pyfuse pair --clear
 pyfuse pair --role worker --clear
 ```
 
 ## Troubleshooting
 
-**"Signing is enabled but no shared key found"**
-- Run `pyfuse worker --pair` or `pyfuse pair --role worker` first to establish a shared key.
+**"Signing is enabled but no key material found"**
+- Set `PYFUSE_SIGNING_TOKEN`, run `pyfuse token generate`, or run `pyfuse pair` to establish key material.
 
 **"Task is unsigned but signing is enabled"**
-- The client is not signing tasks. Ensure `~/.pyfuse/client.key` exists (run `pyfuse pair`).
+- The client is not signing tasks. Ensure the token is set via `PYFUSE_SIGNING_TOKEN` or `~/.pyfuse/token`, or that `~/.pyfuse/client.key` exists (from pairing).
 
 **"Task signature verification failed"**
-- The client and worker have different keys. Re-pair both sides.
+- The client and worker have different keys. Ensure both sides use the same token or re-pair.
 
 **"PIN mismatch — pairing failed"**
 - The PINs entered on client and worker don't match. Try again.
 
 **"Pairing timed out"**
-- Both sides must run pairing within the timeout window (default: 60s).
+- Both sides must run pairing within the timeout window (default: 60s). Consider using tokens instead for automated setups.
