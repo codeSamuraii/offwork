@@ -7,19 +7,19 @@ task dispatch, result routing, and heartbeats -- no threads, no
 URL scheme: ``local://host:port``  (default ``local://127.0.0.1:9748``)
 """
 
-import asyncio
-import atexit
-import contextlib
+import sys
 import json
-import logging
+import time
+import atexit
 import socket
 import struct
+import asyncio
+import logging
+import contextlib
 import subprocess
-import sys
-import time
-from collections.abc import AsyncIterator
 from typing import Any
 from urllib.parse import urlparse
+from collections.abc import AsyncIterator
 
 from pyfuse.worker.backends.base import Backend
 

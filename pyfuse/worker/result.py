@@ -1,15 +1,15 @@
 """Result future and result envelope for remote task execution."""
 
-import asyncio
 import json
-import logging
 import time
+import asyncio
+import logging
 import traceback as tb_mod
-from collections.abc import Generator
-from dataclasses import dataclass
 from typing import Any, Self
+from dataclasses import dataclass
+from collections.abc import Generator
 
-from pyfuse.core.errors import RemoteError, TaskCancelled, TaskStalled
+from pyfuse.core.errors import RemoteError, TaskStalled, TaskCancelled
 from pyfuse.core.progress import ProgressInfo
 from pyfuse.worker.backends.base import Backend
 

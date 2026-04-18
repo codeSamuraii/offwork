@@ -1,15 +1,15 @@
 """AST-based source capture, import extraction, and dependency detection."""
 
 import ast
-import importlib
 import inspect
 import logging
 import textwrap
 import warnings
+import importlib
 from pathlib import Path
 from collections.abc import Callable
 
-from pyfuse.core.models import FunctionNode, ImportInfo
+from pyfuse.core.models import ImportInfo, FunctionNode
 
 logger = logging.getLogger(__name__)
 

@@ -1,10 +1,10 @@
 """Progress reporting for remote task execution."""
 
-import contextvars
 import json
-from collections.abc import Callable
-from dataclasses import dataclass
+import contextvars
 from typing import Any, Self, overload
+from dataclasses import dataclass
+from collections.abc import Callable
 
 
 @dataclass(frozen=True)

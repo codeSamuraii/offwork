@@ -1,11 +1,11 @@
 """The ``@trace`` decorator for marking functions for remote execution."""
 
 import logging
+from typing import TypeVar, ParamSpec, overload
 from collections.abc import Callable
-from typing import ParamSpec, TypeVar, overload
 
-from pyfuse.graph.graph import Graph
 from pyfuse.typing import TraceDecorator, TracedFunction
+from pyfuse.graph.graph import Graph
 
 logger = logging.getLogger(__name__)
 

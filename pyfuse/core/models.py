@@ -1,9 +1,9 @@
 """Data models for function nodes and import bindings."""
 
-import hashlib
 import json
-from dataclasses import dataclass, field
+import hashlib
 from typing import Any, Self
+from dataclasses import field, dataclass
 
 
 @dataclass(frozen=True)

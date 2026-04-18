@@ -1,50 +1,50 @@
 """Public API for pyfuse — remote Python function execution."""
 
 import inspect
-from collections.abc import Callable
 from typing import Any
+from collections.abc import Callable
 
+from pyfuse.core.task import Task
 from pyfuse.core.errors import (
-    DependencyError,
     Error,
-    PairingError,
     RemoteError,
-    SignatureError,
-    TaskCancelled,
     TaskStalled,
     WorkerError,
+    PairingError,
+    TaskCancelled,
+    SignatureError,
+    DependencyError,
 )
+from pyfuse.core.models import ImportInfo, FunctionNode
+from pyfuse.graph.graph import Graph
+from pyfuse.graph.store import Store, MergeResult
+from pyfuse.worker.deps import install_package_as
 from pyfuse.core.pairing import (
     PairingResult,
-    clear_shared_key,
     generate_pin,
-    initiate_pairing,
     load_shared_key,
-    respond_to_pairing,
     save_shared_key,
+    clear_shared_key,
+    initiate_pairing,
+    respond_to_pairing,
 )
+from pyfuse.core.signing import (
+    sign_json,
+    derive_key,
+    verify_signature,
+    compute_signature,
+    verify_and_load_json,
+)
+from pyfuse.core.version import _VERSION
 from pyfuse.core.progress import ProgressInfo
 from pyfuse.core.progress import progress as progress
-from pyfuse.core.signing import (
-    compute_signature,
-    derive_key,
-    sign_json,
-    verify_and_load_json,
-    verify_signature,
-)
-from pyfuse.core.task import Task
-from pyfuse.core.version import _VERSION
-from pyfuse.core.models import FunctionNode, ImportInfo
-from pyfuse.graph.decorator import trace
-from pyfuse.graph.graph import Graph
-from pyfuse.graph.store import MergeResult, Store
-from pyfuse.worker.backends.base import Backend
-from pyfuse.worker.deps import install_package_as
-from pyfuse.worker.remote import connect, disconnect, serve
+from pyfuse.worker.remote import serve, connect, disconnect
 from pyfuse.worker.result import Result, ResultEnvelope
-from pyfuse.worker.sandbox import DockerSandbox
 from pyfuse.worker.worker import Worker
 from pyfuse.worker.worker import execute as execute
+from pyfuse.worker.sandbox import DockerSandbox
+from pyfuse.graph.decorator import trace
+from pyfuse.worker.backends.base import Backend
 
 
 def get_graph() -> Graph:

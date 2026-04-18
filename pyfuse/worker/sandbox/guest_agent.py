@@ -38,16 +38,16 @@ Usage::
     python guest_agent.py [--host 0.0.0.0] [--port 9749]
 """
 
-import argparse
-import asyncio
-import contextvars
-import functools
-import inspect
-import json
-import struct
 import sys
-import traceback as tb_mod
+import json
 import types
+import struct
+import asyncio
+import inspect
+import argparse
+import functools
+import traceback as tb_mod
+import contextvars
 from typing import Any
 
 # ---------------------------------------------------------------------------

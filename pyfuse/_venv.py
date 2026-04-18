@@ -1,20 +1,20 @@
 """Temporary virtual environment management for pyfuse."""
 
-import asyncio
-import atexit
-import logging
 import os
-import shutil
-import signal
 import sys
-import tempfile
 import time
 import venv
-from collections.abc import AsyncIterator, Sequence
+import atexit
+import shutil
+import signal
+import asyncio
+import logging
+import tempfile
+from types import FrameType
+from pathlib import Path
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from pathlib import Path
-from types import FrameType
+from collections.abc import Sequence, AsyncIterator
 
 logger = logging.getLogger(__name__)
 

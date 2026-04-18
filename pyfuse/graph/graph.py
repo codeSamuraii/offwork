@@ -1,37 +1,37 @@
 """Dependency graph: function registration, auto-discovery, and serialization."""
 
 import ast
+import sys
 import base64
-import collections
-import contextvars
+import pickle
 import inspect
 import logging
-import pickle
-import sys
-import threading
 import warnings
-from collections.abc import Callable
-from dataclasses import dataclass
+import threading
+import collections
+import contextvars
 from typing import Any, Self
+from dataclasses import dataclass
+from collections.abc import Callable
 
 from pyfuse.core.errors import Error
-from pyfuse.core.models import FunctionNode, ImportInfo
+from pyfuse.core.models import ImportInfo, FunctionNode
+from pyfuse.graph.store import Store
+from pyfuse.graph.tracing import _BUILTIN_NAMES, TracingMixin, _is_user_class, _is_user_function
 from pyfuse.graph.analyzer import (
-    _resolve_owner_class,
-    detect_traced_dependencies,
     filter_imports,
+    get_used_names,
+    has_super_call,
     find_bare_calls,
     find_self_calls,
     get_class_attrs,
-    get_class_bases_from_source,
-    get_function_source,
-    get_module_assignments,
     get_module_imports,
-    get_used_names,
-    has_super_call,
+    get_function_source,
+    _resolve_owner_class,
+    get_module_assignments,
+    detect_traced_dependencies,
+    get_class_bases_from_source,
 )
-from pyfuse.graph.store import Store
-from pyfuse.graph.tracing import TracingMixin, _BUILTIN_NAMES, _is_user_class, _is_user_function
 
 logger = logging.getLogger(__name__)
 

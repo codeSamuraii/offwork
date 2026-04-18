@@ -11,24 +11,24 @@ Usage::
     pyfuse serialize mymodule:csv_to_json
     pyfuse reconstruct graph.json csv_to_json
 """
-import argparse
-import ast
-import asyncio
-import importlib
-import logging
 import os
+import ast
+import sys
 import shutil
 import signal
-import sys
+import asyncio
+import logging
+import argparse
+import importlib
+from pathlib import Path
 from collections.abc import Callable
 from importlib.metadata import version as pkg_version
-from pathlib import Path
 
-from pyfuse import reconstruct, serialize
+from pyfuse import serialize, reconstruct
 from pyfuse._venv import temp_venv
-from pyfuse.graph.analyzer import _parse_install_package_as
 from pyfuse.worker.deps import DEFAULT_IMPORT_TO_PACKAGE
 from pyfuse.worker.remote import serve
+from pyfuse.graph.analyzer import _parse_install_package_as
 
 
 def _build_worker_cmd(python: str, args: argparse.Namespace) -> list[str]:
@@ -106,7 +106,7 @@ def _cmd_worker(args: argparse.Namespace) -> None:
 
 async def _pair_then_serve(args: argparse.Namespace) -> None:
     """Generate a PIN, pair with a client, then start serving with signing."""
-    from pyfuse.core.pairing import generate_pin, initiate_pairing, save_shared_key
+    from pyfuse.core.pairing import generate_pin, save_shared_key, initiate_pairing
     from pyfuse.worker.remote import connect, disconnect
 
     backend = connect(args.backend)
@@ -418,7 +418,9 @@ async def _sandbox_status() -> None:
     """Print the current Docker sandbox status."""
     if shutil.which("docker") is not None:
         from pyfuse.worker.sandbox.docker import (
-            _container_exists, _container_running, _image_exists,
+            _image_exists,
+            _container_exists,
+            _container_running,
         )
         image = os.environ.get("PYFUSE_SANDBOX_DOCKER_IMAGE", "pyfuse-sandbox")
         container = os.environ.get("PYFUSE_SANDBOX_DOCKER_CONTAINER", "pyfuse-sandbox")
@@ -465,7 +467,10 @@ async def _docker_teardown() -> None:
         return
 
     from pyfuse.worker.sandbox.docker import (
-        _container_exists, _container_running, _docker_wait, _image_exists,
+        _docker_wait,
+        _image_exists,
+        _container_exists,
+        _container_running,
     )
     container = os.environ.get("PYFUSE_SANDBOX_DOCKER_CONTAINER", "pyfuse-sandbox")
     image = os.environ.get("PYFUSE_SANDBOX_DOCKER_IMAGE", "pyfuse-sandbox")
@@ -536,9 +541,9 @@ async def _pair_async(args: argparse.Namespace, role: str) -> None:
     """Run the pairing protocol asynchronously."""
     from pyfuse.core.pairing import (
         generate_pin,
+        save_shared_key,
         initiate_pairing,
         respond_to_pairing,
-        save_shared_key,
     )
     from pyfuse.worker.remote import connect, disconnect
 

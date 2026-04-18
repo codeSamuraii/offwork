@@ -16,13 +16,13 @@ first use, so ``pyfuse sandbox setup`` is optional (but recommended in
 CI to avoid a cold-start build).
 """
 
-import asyncio
-import logging
 import os
 import shutil
-from collections.abc import Callable
-from pathlib import Path
+import asyncio
+import logging
 from typing import Any
+from pathlib import Path
+from collections.abc import Callable
 
 from pyfuse.core.errors import WorkerError
 from pyfuse.core.progress import _progress_callback

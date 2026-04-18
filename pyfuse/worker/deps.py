@@ -1,14 +1,14 @@
 """Third-party dependency extraction and pip installation."""
 
 import ast
+import sys
 import asyncio
+import logging
 import contextlib
 import importlib.util
-import logging
-import sys
-from collections.abc import Iterator
-from dataclasses import dataclass, field
 from typing import Any
+from dataclasses import field, dataclass
+from collections.abc import Iterator
 
 from pyfuse.core.errors import DependencyError
 from pyfuse.graph.store import Store

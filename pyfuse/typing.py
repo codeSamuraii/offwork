@@ -1,7 +1,7 @@
 """Protocol types for ``@trace``-decorated functions."""
 
+from typing import Any, TypeVar, Protocol, ParamSpec
 from collections.abc import Callable
-from typing import Any, ParamSpec, Protocol, TypeVar
 
 from pyfuse.worker.result import Result
 

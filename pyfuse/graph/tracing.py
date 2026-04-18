@@ -1,18 +1,18 @@
 """Runtime call-stack tracing for dependency edge recording via contextvars."""
 
-import asyncio
-import builtins
-import contextvars
-import functools
-import inspect
-import logging
 import os
 import sys
+import asyncio
+import inspect
+import logging
+import builtins
+import functools
 import sysconfig
 import threading
-from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
+import contextvars
+from typing import Any, TypeVar, ParamSpec, cast
 from pathlib import Path
-from typing import Any, ParamSpec, TypeVar, cast
+from collections.abc import Callable, Awaitable, Generator, AsyncGenerator
 
 from pyfuse.typing import TracedFunction
 from pyfuse.worker.backends.base import Backend

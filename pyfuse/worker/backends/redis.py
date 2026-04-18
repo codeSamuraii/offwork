@@ -1,9 +1,9 @@
 """Redis-backed transport using ``RPUSH``/``BLPOP`` for tasks and results."""
 
-import asyncio
 import time
-from collections.abc import AsyncIterator
+import asyncio
 from typing import Any
+from collections.abc import AsyncIterator
 
 try:
     import redis.asyncio as _redis

@@ -8,9 +8,9 @@ signature before executing the task.
 All primitives are stdlib-only (``hashlib``, ``hmac``, ``json``).
 """
 
-import hashlib
 import hmac
 import json
+import hashlib
 import logging
 from typing import Any
 

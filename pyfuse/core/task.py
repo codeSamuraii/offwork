@@ -2,11 +2,11 @@
 
 import json
 import uuid
-from dataclasses import dataclass, field
 from typing import Any, Self
+from dataclasses import field, dataclass
 
 from pyfuse.core.errors import SignatureError
-from pyfuse.core.signing import compute_signature, verify_signature
+from pyfuse.core.signing import verify_signature, compute_signature
 
 _OBJECT_SENTINEL = "__pyfuse_obj__"
 

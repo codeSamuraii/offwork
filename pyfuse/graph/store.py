@@ -2,13 +2,13 @@
 
 import json
 import logging
-from dataclasses import dataclass, field
-from graphlib import TopologicalSorter
 from typing import Any, Self
+from graphlib import TopologicalSorter
+from dataclasses import field, dataclass
 
-from pyfuse.core.models import FunctionNode, ImportInfo
+from pyfuse.core.models import ImportInfo, FunctionNode
 from pyfuse.core.version import _VERSION
-from pyfuse.graph.analyzer import hoist_closure_func_refs, hoist_closure_vars
+from pyfuse.graph.analyzer import hoist_closure_vars, hoist_closure_func_refs
 
 logger = logging.getLogger(__name__)
 

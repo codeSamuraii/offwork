@@ -1,18 +1,18 @@
 """Worker: reconstruct functions from serialized stores, cache, and execute."""
 
 import asyncio
-import contextvars
-import functools
 import hashlib
 import inspect
 import logging
-from collections.abc import Callable
-from dataclasses import dataclass, field
+import functools
+import contextvars
 from typing import Any
+from dataclasses import field, dataclass
+from collections.abc import Callable
 
+from pyfuse.core.task import Task, resolve_args
 from pyfuse.core.errors import WorkerError
 from pyfuse.core.models import FunctionNode
-from pyfuse.core.task import Task, resolve_args
 from pyfuse.graph.store import Store
 from pyfuse.worker.deps import ensure_dependencies
 from pyfuse.worker.sandbox import DockerSandbox

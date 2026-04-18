@@ -10,14 +10,14 @@ behave like key-value slots.  Result notifications use a fanout exchange.
 
 URL scheme: ``amqp://`` or ``amqps://``  (e.g. ``amqp://guest:guest@localhost/``)
 """
+import time
 import asyncio
 import contextlib
-import time
-from collections.abc import AsyncIterator
 from typing import Any
+from collections.abc import AsyncIterator
 
 try:
-    import aio_pika  # type: ignore[import-not-found]
+    import aio_pika
 except ImportError:
     raise ImportError(
         "aio-pika package is required for RabbitMQBackend. "

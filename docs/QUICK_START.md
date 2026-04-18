@@ -1,51 +1,23 @@
 # Quick Start
 
-This guide walks you through pyfuse's features step by step.
-
-## Installation
+## Install
 
 ```bash
 pip install pyfuse
 pip install pyfuse[redis]   # for Redis backend (multi-machine)
 ```
 
-## 1. Run a function remotely
+## Remote execution
 
-### Mark the entry point with `@trace`
-
-```python
-import math
-from pyfuse import trace
-
-def add(a: int, b: int) -> int:
-    return a + b
-
-@trace
-def hypotenuse(a: float, b: float) -> float:
-    return math.sqrt(add(a**2, b**2))
-```
-
-Only the entry point needs `@trace`. Everything it calls — `add()`, `math.sqrt()`, etc. — is captured automatically via AST analysis.
-
-### Start a worker
-
-```bash
-pyfuse worker --backend local://localhost:9748 --tmp
-```
-
-`--tmp` runs in an isolated temporary venv (cleaned up on exit).
-
-### Submit work
+Add `@trace` to the entry point. Everything it calls is captured automatically.
 
 ```python
-import asyncio
-import math
-import pyfuse
+import asyncio, math, pyfuse
 from pyfuse import trace
 
 pyfuse.connect("local://localhost:9748")
 
-def add(a: int, b: int) -> int:
+def add(a, b):
     return a + b
 
 @trace
@@ -53,213 +25,141 @@ def hypotenuse(a: float, b: float) -> float:
     return math.sqrt(add(a**2, b**2))
 
 async def main():
-    result = await hypotenuse.run(3.0, 4.0)
-    print(result)  # 5.0
+    print(await hypotenuse.run(3.0, 4.0))  # 5.0
 
 asyncio.run(main())
 ```
 
-`.run()` serializes the function and its dependencies, sends everything to the worker, and returns the result.
-
-## 2. Async API
-
-All remote execution methods are coroutines:
-
-```python
-# Submit and await result
-result = await func.run(3.0, 4.0)
-
-# Submit, get a handle, await later
-future = await func.start(3.0, 4.0)
-result = await future
-
-# Batch submit
-results = await func.map([(3, 4), (5, 12), (8, 15)])
-
-# Concurrent execution
-r1, r2 = await asyncio.gather(func.run(3, 4), func.run(5, 12))
+```bash
+pyfuse worker --backend local://localhost:9748 --tmp   # Terminal 1
+python my_script.py                                    # Terminal 2 → 5.0
 ```
 
-`async def` functions work transparently — workers await them directly.
+`--tmp` runs the worker in an isolated venv, cleaned up on exit. For multi-machine, swap `local://` for `redis://`.
 
-## 3. Retry and timeout
+## Async API
+
+```python
+result = await func.run(3.0, 4.0)                          # submit + await
+future = await func.start(3.0, 4.0)                        # submit, get handle
+result = await future                                       # await later
+results = await func.map([(3, 4), (5, 12)])                 # batch
+r1, r2 = await asyncio.gather(func.run(3, 4), func.run(5, 12))  # concurrent
+```
+
+`async def` functions are awaited directly on the worker.
+
+## Retry and timeout
 
 ```python
 @trace(timeout=30, retries=3)
-def flaky_task(url: str) -> str:
-    ...
+def flaky_task(url: str) -> str: ...
 ```
 
-Each attempt is capped at 30 seconds. Retries use exponential backoff (1s, 2s, 4s).
+Retries use exponential backoff (1s, 2s, 4s).
 
-## 4. Class methods
+## Third-party packages
 
-`@trace` works on methods. `self.method()` dependencies are detected automatically:
-
-```python
-class Greeter:
-    @trace
-    def greet(self, name: str) -> str:
-        return self.format_greeting(f"Hello, {name}!")
-
-    def format_greeting(self, msg: str) -> str:
-        return f"*** {msg} ***"
-
-g = Greeter()
-result = await g.greet.run(g, "pyfuse")  # "*** Hello, pyfuse! ***"
-```
-
-The worker reconstructs the entire class with all required methods, including `super()` chains, `@dataclass` decorators, and metaclass keywords.
-
-## 5. Third-party packages
-
-Workers auto-install missing packages. When the import name doesn't match the pip package:
+Workers auto-install missing packages. When the import name differs from the pip package:
 
 ```python
 from pyfuse import install_package_as
 
 with install_package_as("PyYAML"):
     import yaml
-
-@trace
-def to_yaml(data: object) -> str:
-    return yaml.dump(data, default_flow_style=False)
 ```
 
 Common mappings (`cv2` → `opencv-python`, `PIL` → `Pillow`, etc.) are built in.
 
-## 6. Progress reporting
+## Progress, cancellation, and results
 
 ```python
-from pyfuse import trace, progress
+from pyfuse import progress, TaskCancelled, RemoteError, TaskStalled
 
+# Inside a task — report progress (no-op when called locally)
 @trace
-def process_batch(items: list[str]) -> list[str]:
-    results = []
-    for i, item in enumerate(items):
-        results.append(transform(item))
-        progress(i + 1, len(items), message=f"Processing {item}")
-    return results
-```
+def train(epochs: int) -> float:
+    for i in range(epochs):
+        ...
+        progress(i + 1, epochs, message=f"epoch {i+1}")
+    return accuracy
 
-Query from the client:
+# On the client
+future = await train.start(100)
 
-```python
-future = await process_batch.start(items)
+p = await future.progress()             # ProgressInfo or None
+if p: print(f"{p.percent:.0f}%")
 
-while not await future.done():
-    p = await future.progress()
-    if p:
-        print(f"{p.current}/{p.total} ({p.percent:.0f}%) - {p.message}")
-    await asyncio.sleep(0.5)
-
-result = await future
-```
-
-`progress()` is a silent no-op when called outside a worker.
-
-## 7. Task cancellation
-
-```python
-from pyfuse import TaskCancelled
-
-future = await slow_task.start(data)
-await future.cancel()
+await future.cancel()                   # cooperative cancellation
 
 try:
-    result = await future
-except TaskCancelled:
-    print("Task was cancelled")
+    result = await future.result(timeout=60, stall_timeout=10)
+except TaskCancelled: ...               # task was cancelled
+except TaskStalled: ...                 # worker stopped responding
+except RemoteError as e: print(e)       # includes remote traceback
 ```
 
-## 8. Result handling
+## Sandbox
 
-```python
-future = await func.start(3.0, 4.0)
+Run tasks inside Docker containers — transparent to clients:
 
-await future.done()       # True / False
-await future.status()     # "pending" | "success" | "error" | "cancelled"
-await future.cancel()     # cancel the task
-result = await future     # await the result
-
-# With options
-result = await future.result(timeout=10, stall_timeout=5.0)
-
-# Errors are re-raised
-from pyfuse import RemoteError, TaskStalled
-try:
-    result = await future.result()
-except RemoteError as e:
-    print(e)  # includes remote traceback
-except TaskStalled as e:
-    print(e)  # worker stopped responding
+```bash
+pyfuse sandbox setup                                      # build image (once)
+pyfuse worker --backend redis://localhost:6379 --sandbox   # run with isolation
 ```
 
-## 9. Backends
+See [Sandbox](SANDBOX.md) for configuration and management.
 
-| Backend | URL scheme | Use case |
-|---------|-----------|----------|
-| Local | `local://` | Same-machine IPC (async TCP, no external deps) |
-| Redis | `redis://` / `rediss://` | Multi-machine production |
+## Signing
+
+PIN-based pairing + HMAC-SHA256 — workers reject untrusted or tampered tasks:
+
+```bash
+pyfuse worker --backend redis://localhost:6379 --pair   # displays a 6-digit PIN
+pyfuse pair --backend redis://localhost:6379             # on client: enter the PIN
+```
+
+After pairing, tasks are signed automatically. No client-side code changes. See [Signing & Pairing](SIGNING.md) for details.
+
+## Backends
+
+| Backend | URL | Use case |
+|---------|-----|----------|
+| Local | `local://host:port` | Same-machine IPC (async TCP, no deps) |
+| Redis | `redis://host:port` | Multi-machine production |
 
 ```python
 pyfuse.connect("local://localhost:9748")
 pyfuse.connect("redis://localhost:6379")
 ```
 
-Or via environment variable:
+Or: `export PYFUSE_BACKEND=redis://localhost:6379`
+
+## Worker options
 
 ```bash
-export PYFUSE_BACKEND=redis://localhost:6379
-```
-
-## 10. Worker options
-
-```bash
-pyfuse worker --backend redis://localhost:6379 -c 4           # 4 concurrent tasks
-pyfuse worker --backend redis://localhost:6379 --no-auto-install  # no pip installs
-pyfuse worker --backend redis://localhost:6379 --tmp          # isolated temp venv
-pyfuse worker --backend redis://localhost:6379 --sandbox      # Docker sandbox
-pyfuse worker --backend redis://localhost:6379 --pair         # signed execution
+pyfuse worker --backend redis://localhost:6379 -c 4              # 4 concurrent tasks
+pyfuse worker --backend redis://localhost:6379 --no-auto-install  # skip pip installs
+pyfuse worker --backend redis://localhost:6379 --sandbox --pair   # Docker + signing
 ```
 
 Programmatic:
 
 ```python
-await pyfuse.serve("redis://localhost:6379", concurrency=4)
+await pyfuse.serve("redis://localhost:6379", concurrency=4, sandbox=True)
 ```
 
-## 11. Running scripts
-
-The `pyfuse run` command creates a temporary venv, auto-detects dependencies, installs them, and runs the script:
+## Running scripts
 
 ```bash
-pyfuse worker --backend local://localhost:9748 --tmp   # Terminal 1 (if the script submits remote work)
+pyfuse worker --backend local://localhost:9748 --tmp   # Terminal 1
 pyfuse run examples/remote_execution.py                # Terminal 2
 ```
 
-Scripts that call `.run()` or `.start()` need a worker running. Scripts using only local execution don't.
-
-## Error handling
-
-```python
-from pyfuse import Error, RemoteError, TaskCancelled
-
-try:
-    trace(len)  # built-in — no source
-except Error as e:
-    print(e)
-
-try:
-    result = await future.result()
-except RemoteError as e:
-    print(e)  # includes remote traceback
-except TaskCancelled:
-    print("Cancelled")
-```
+`pyfuse run` creates a temporary venv, auto-detects dependencies, installs them, and runs the script.
 
 ## Next steps
 
-- **[Sandbox](SANDBOX.md)** — Docker container isolation
-- **[Signing & Pairing](SIGNING.md)** — Cryptographic task authentication
 - **[Technical Overview](TECHNICAL_OVERVIEW.md)** — Architecture, serialization format, internals
+- **[Sandbox](SANDBOX.md)** — Docker container isolation setup and management
+- **[Signing & Pairing](SIGNING.md)** — Cryptographic task authentication protocol
