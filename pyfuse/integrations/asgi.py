@@ -207,8 +207,11 @@ class PyfuseMiddleware:
                 try:
                     pyfuse.connect(self._url, **self._backend_kwargs)
                     logger.info("pyfuse backend connected (middleware startup)")
-                except Exception:
-                    await send({"type": "lifespan.startup.failed", "message": ""})
+                except Exception as exc:
+                    await send({
+                        "type": "lifespan.startup.failed",
+                        "message": f"pyfuse connect failed: {exc}",
+                    })
                     raise
             return message
 

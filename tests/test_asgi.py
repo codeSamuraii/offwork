@@ -115,10 +115,10 @@ class TestPyfuseMiddleware:
         send = AsyncMock(side_effect=lambda msg: sent.append(msg))
 
         # Inner app simulates sending startup.complete then shutdown.complete
-        async def fake_inner_app(scope: dict[str, object], recv: object, snd: object) -> None:
-            await snd({"type": "lifespan.startup.complete"})  # type: ignore[misc]
-            await recv()  # type: ignore[misc]  # consume shutdown
-            await snd({"type": "lifespan.shutdown.complete"})  # type: ignore[misc]
+        async def fake_inner_app(scope: dict[str, object], receive: object, send: object) -> None:
+            await send({"type": "lifespan.startup.complete"})  # type: ignore[misc]
+            await receive()  # type: ignore[misc]  # consume shutdown
+            await send({"type": "lifespan.shutdown.complete"})  # type: ignore[misc]
 
         mw.app = fake_inner_app  # type: ignore[assignment]
 
