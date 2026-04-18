@@ -14,8 +14,7 @@ from typing import TYPE_CHECKING, Any
 from collections.abc import Callable, Awaitable
 
 from pyfuse.core.task import Task
-from pyfuse.core.pairing import load_shared_key
-from pyfuse.core.signing import derive_key
+from pyfuse.core.token import resolve_signing_key
 from pyfuse.core.version import _VERSION
 from pyfuse.core.progress import _progress_callback
 from pyfuse.worker.result import Result, ResultEnvelope
@@ -167,9 +166,7 @@ async def submit_remote(
 
     # Auto-load client signing key if not explicitly provided
     if _signing_key is None:
-        raw_key = load_shared_key("client")
-        if raw_key is not None:
-            _signing_key = derive_key(raw_key)
+        _signing_key = resolve_signing_key("client")
 
     unwrapped = inspect.unwrap(func)
     function_name = f"{unwrapped.__module__}.{unwrapped.__qualname__}"
@@ -549,14 +546,14 @@ async def serve(
     # Load signing key if required
     signing_key: bytes | None = None
     if require_signing:
-        raw_key = load_shared_key("worker")
-        if raw_key is None:
+        signing_key = resolve_signing_key("worker")
+        if signing_key is None:
             logger.error(
-                "Signing is enabled but no shared key found. "
-                "Run 'pyfuse pair' first to pair with a client."
+                "Signing is enabled but no key material found. "
+                "Set PYFUSE_SIGNING_TOKEN, run 'pyfuse token generate', "
+                "or run 'pyfuse pair' to pair with a client."
             )
             sys.exit(1)
-        signing_key = derive_key(raw_key)
         logger.info("Task signing enabled — only signed tasks will be executed")
 
     try:

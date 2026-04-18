@@ -35,6 +35,13 @@ from pyfuse.core.signing import (
     compute_signature,
     verify_and_load_json,
 )
+from pyfuse.core.token import (
+    load_token,
+    save_token,
+    clear_token,
+    generate_token,
+    resolve_signing_key,
+)
 from pyfuse.core.version import _VERSION
 from pyfuse.core.progress import ProgressInfo
 from pyfuse.core.progress import progress as progress
@@ -129,6 +136,12 @@ __all__ = [
     "sign_json",
     "verify_and_load_json",
     "derive_key",
+    # Token
+    "generate_token",
+    "save_token",
+    "load_token",
+    "clear_token",
+    "resolve_signing_key",
     # Pairing
     "generate_pin",
     "save_shared_key",
