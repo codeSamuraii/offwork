@@ -158,6 +158,36 @@ pyfuse run examples/remote_execution.py                # Terminal 2
 
 `pyfuse run` creates a temporary venv, auto-detects dependencies, installs them, and runs the script.
 
+## Framework integration (FastAPI / Starlette)
+
+Use the built-in ASGI integration for seamless lifecycle management:
+
+```python
+from fastapi import FastAPI
+from pyfuse import trace
+from pyfuse.integrations.asgi import pyfuse_lifespan
+
+app = FastAPI(lifespan=pyfuse_lifespan("redis://localhost:6379"))
+
+@trace
+def heavy_task(x: float) -> float: ...
+
+@app.post("/compute")
+async def compute(x: float):
+    return {"result": await heavy_task.run(x)}
+```
+
+`pyfuse_lifespan` connects the backend on startup and disconnects on shutdown.
+For apps that don't support the lifespan protocol, use `PyfuseMiddleware` instead:
+
+```python
+from pyfuse.integrations.asgi import PyfuseMiddleware
+
+app = PyfuseMiddleware(app, url="redis://localhost:6379")
+```
+
+See [`examples/fastapi_app.py`](../examples/fastapi_app.py) for a complete example.
+
 ## Next steps
 
 - **[Technical Overview](TECHNICAL_OVERVIEW.md)** — Architecture, serialization format, internals

@@ -67,6 +67,27 @@ pyfuse pair --backend redis://localhost:6379             # on client: enter the 
 
 After pairing, tasks are signed automatically. No client-side code changes. See [Signing & Pairing](docs/SIGNING.md) for details.
 
+## FastAPI / Starlette
+
+Built-in ASGI integration — one-line setup:
+
+```python
+from fastapi import FastAPI
+from pyfuse import trace
+from pyfuse.integrations.asgi import pyfuse_lifespan
+
+app = FastAPI(lifespan=pyfuse_lifespan("redis://localhost:6379"))
+
+@trace
+def heavy_computation(x: float) -> float: ...
+
+@app.post("/compute")
+async def compute(x: float):
+    return {"result": await heavy_computation.run(x)}
+```
+
+Works with any ASGI framework (Starlette, Litestar, etc.). See [`examples/fastapi_app.py`](examples/fastapi_app.py).
+
 ## Features
 
 | | |
@@ -81,6 +102,7 @@ After pairing, tasks are signed automatically. No client-side code changes. See 
 | **Pluggable backends** | `redis://` (multi-machine) or `local://` (same-machine TCP) |
 | **Docker sandbox** | Container isolation, transparent to clients |
 | **Signed execution** | PIN-based pairing + HMAC-SHA256 task authentication |
+| **Framework integrations** | Built-in ASGI support for FastAPI, Starlette, and others |
 | **Graceful shutdown** | Ctrl+C drains in-flight tasks; second Ctrl+C force-quits |
 
 ## Documentation
@@ -99,7 +121,7 @@ pyfuse worker --backend local://localhost:9748 --tmp
 pyfuse run examples/remote_execution.py
 ```
 
-[`remote_execution.py`](examples/remote_execution.py) · [`async_execution.py`](examples/async_execution.py) · [`package_installation.py`](examples/package_installation.py) · [`progress_reporting.py`](examples/progress_reporting.py) · [`cancellation.py`](examples/cancellation.py) · [`large_module.py`](examples/large_module.py)
+[`remote_execution.py`](examples/remote_execution.py) · [`async_execution.py`](examples/async_execution.py) · [`package_installation.py`](examples/package_installation.py) · [`progress_reporting.py`](examples/progress_reporting.py) · [`cancellation.py`](examples/cancellation.py) · [`large_module.py`](examples/large_module.py) · [`fastapi_app.py`](examples/fastapi_app.py)
 
 ## License
 

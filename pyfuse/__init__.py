@@ -143,4 +143,6 @@ __all__ = [
     "Backend",
     # Sandbox
     "DockerSandbox",
+    # Integrations (lazy-loaded subpackage)
+    "integrations",
 ]

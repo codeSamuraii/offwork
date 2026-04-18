@@ -26,6 +26,9 @@ pyfuse/
 │   ├── store.py             # Content-addressable store: serialize/reconstruct/merge
 │   ├── analyzer.py          # AST-based source capture, import extraction, dependency detection
 │   └── tracing.py           # Runtime call-stack tracing via contextvars (TracingMixin)
+├── integrations/
+│   ├── __init__.py          # Framework integrations (lazy-loaded)
+│   └── asgi.py              # PyfuseLifespan, PyfuseMiddleware for FastAPI/Starlette
 └── worker/
     ├── worker.py            # Worker: reconstruct, cache, execute with retry/timeout (async)
     ├── remote.py            # connect(), disconnect(), serve(), submit_remote() (async)
@@ -177,6 +180,11 @@ await pyfuse.execute(task)                # -> return value
 # Inspection
 pyfuse.get_graph()                        # -> Graph
 pyfuse.get_graph().to_mermaid(func)       # -> Mermaid diagram
+
+# ASGI / FastAPI / Starlette integration
+from pyfuse.integrations.asgi import pyfuse_lifespan, PyfuseLifespan, PyfuseMiddleware
+app = FastAPI(lifespan=pyfuse_lifespan("redis://..."))  # lifespan
+app = PyfuseMiddleware(app, url="redis://...")           # middleware
 ```
 
 ## Testing
