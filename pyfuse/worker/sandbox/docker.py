@@ -72,6 +72,15 @@ class DockerSandbox:
         timeout: float = 60.0,
         boot_timeout: float = 30.0,
     ) -> None:
+        if cpus < 1:
+            raise ValueError(f"cpus must be at least 1, got {cpus}")
+        if memory_gb < 1:
+            raise ValueError(f"memory_gb must be at least 1, got {memory_gb}")
+        if timeout <= 0:
+            raise ValueError(f"timeout must be positive, got {timeout}")
+        if boot_timeout <= 0:
+            raise ValueError(f"boot_timeout must be positive, got {boot_timeout}")
+
         self.image = image
         self.container_name = container_name
         self.guest_port = guest_port

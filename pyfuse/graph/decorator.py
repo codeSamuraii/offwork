@@ -55,6 +55,13 @@ def _apply_trace(
     retries: int = 0,
     retry_delay: float = 1.0,
 ) -> TracedFunction[_P, _R]:
+    if timeout is not None and timeout <= 0:
+        raise ValueError(f"timeout must be positive, got {timeout}")
+    if retries < 0:
+        raise ValueError(f"retries must be non-negative, got {retries}")
+    if retry_delay < 0:
+        raise ValueError(f"retry_delay must be non-negative, got {retry_delay}")
+
     logger.debug("@trace applied to %s", func.__qualname__)
     graph = Graph.default()
     graph.register(func)

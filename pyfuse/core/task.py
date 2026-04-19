@@ -166,7 +166,7 @@ class Task:
         sig = data.pop("signature", None)
 
         if signing_key is not None:
-            if sig is None:
+            if not sig:
                 raise SignatureError(
                     "Task is unsigned but signing is enabled — "
                     "rejecting unauthenticated task"
@@ -185,5 +185,5 @@ class Task:
             timeout=data.get("timeout"),
             retries=data.get("retries", 0),
             retry_delay=data.get("retry_delay", 1.0),
-            signature=sig,
+            signature=sig or None,
         )

@@ -220,14 +220,14 @@ async def _heartbeat_loop(
         try:
             await backend.send_heartbeat(task_id)
         except Exception:
-            pass  # best-effort
+            logger.debug("Heartbeat send failed for task %s", task_id, exc_info=True)
         if exec_task is not None:
             try:
                 if await backend.is_cancelled(task_id):
                     exec_task.cancel()
                     return
             except Exception:
-                pass
+                logger.debug("Cancellation check failed for task %s", task_id, exc_info=True)
         try:
             await asyncio.wait_for(cancel_event.wait(), timeout=_HEARTBEAT_INTERVAL)
         except asyncio.TimeoutError:

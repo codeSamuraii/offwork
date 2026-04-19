@@ -71,4 +71,5 @@ def _pyfuse_excepthook(
     _original_excepthook(exc_type, exc_value, exc_tb)
 
 
-sys.excepthook = _pyfuse_excepthook
+if sys.excepthook is not _pyfuse_excepthook:
+    sys.excepthook = _pyfuse_excepthook

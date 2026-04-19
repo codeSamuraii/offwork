@@ -25,7 +25,7 @@ class ResultEnvelope:
     """
 
     task_id: str
-    status: str  # "ok" or "error"
+    status: str  # "ok", "error", or "cancelled"
     result: Any = None
     error_type: str | None = None
     error_message: str | None = None
