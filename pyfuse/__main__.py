@@ -41,6 +41,10 @@ def _build_worker_cmd(python: str, args: argparse.Namespace) -> list[str]:
         cmd.append("--verbose")
     if args.log_level:
         cmd.extend(["--log-level", args.log_level])
+    if args.require_signing:
+        cmd.append("--require-signing")
+    if args.sandbox:
+        cmd.append("--sandbox")
     return cmd
 
 
@@ -620,6 +624,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_reconstruct_parser(sub)
     _add_sandbox_parser(sub)
     _add_pair_parser(sub)
+    _add_token_parser(sub)
     return parser
 
 
@@ -631,6 +636,95 @@ def _dispatch_pair(args: argparse.Namespace) -> None:
         _cmd_pair(args)
 
 
+# -- Token -------------------------------------------------------------------
+
+
+def _cmd_token(args: argparse.Namespace) -> None:
+    """Handle ``pyfuse token`` subcommands."""
+    action = getattr(args, "token_action", None)
+    if action is None:
+        print("Usage: pyfuse token {generate|show|clear}", file=sys.stderr)
+        sys.exit(1)
+
+    if action == "generate":
+        _cmd_token_generate(args)
+    elif action == "show":
+        _cmd_token_show(args)
+    elif action == "clear":
+        _cmd_token_clear(args)
+
+
+def _cmd_token_generate(args: argparse.Namespace) -> None:
+    """Generate a new signing token."""
+    from pyfuse.core.token import generate_token, save_token, load_token
+
+    existing = load_token()
+    if existing is not None and not args.force:
+        print(
+            "A signing token already exists.\n"
+            "Use --force to overwrite it, or 'pyfuse token clear' to remove it.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    token_hex = generate_token()
+    save_token(token_hex)
+
+    print(f"\n  Token generated and saved to ~/.pyfuse/token\n")
+    print(f"  Token: {token_hex}\n")
+    print("  Set this on both client and worker:")
+    print(f"    export PYFUSE_SIGNING_TOKEN={token_hex}\n")
+    print("  Or start the worker with signing enabled:")
+    print("    pyfuse worker --backend redis://localhost:6379 --require-signing\n")
+
+
+def _cmd_token_show(_args: argparse.Namespace) -> None:
+    """Show the current signing token status."""
+    from pyfuse.core.token import load_token, _TOKEN_ENV_VAR
+
+    env_val = os.environ.get(_TOKEN_ENV_VAR)
+    if env_val is not None:
+        print(f"  Source: {_TOKEN_ENV_VAR} environment variable")
+        print(f"  Token:  {env_val.strip()[:16]}... (truncated)")
+        return
+
+    token = load_token()
+    if token is not None:
+        print(f"  Source: ~/.pyfuse/token")
+        print(f"  Token:  {token[:16]}... (truncated)")
+    else:
+        print("  No signing token configured.")
+        print("  Generate one with: pyfuse token generate")
+
+
+def _cmd_token_clear(_args: argparse.Namespace) -> None:
+    """Remove the saved signing token."""
+    from pyfuse.core.token import clear_token
+
+    if clear_token():
+        print("Signing token removed.")
+    else:
+        print("No signing token found.")
+
+
+def _add_token_parser(sub: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+    p = sub.add_parser(
+        "token",
+        help="Manage signing tokens for automated deployments",
+    )
+    token_sub = p.add_subparsers(dest="token_action")
+    gen = token_sub.add_parser(
+        "generate",
+        help="Generate a new signing token",
+    )
+    gen.add_argument(
+        "--force", action="store_true",
+        help="Overwrite an existing token",
+    )
+    token_sub.add_parser("show", help="Show current token status")
+    token_sub.add_parser("clear", help="Remove the saved token")
+
+
 _COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "worker": _cmd_worker,
     "run": _cmd_run,
@@ -639,6 +733,7 @@ _COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "reconstruct": _cmd_reconstruct,
     "sandbox": _cmd_sandbox,
     "pair": _dispatch_pair,
+    "token": _cmd_token,
 }
 
 

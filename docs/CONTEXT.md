@@ -11,7 +11,7 @@ pyfuse is a Python library for distributed function execution via automatic sour
 ```
 pyfuse/
 ├── __init__.py              # Public API surface (trace, connect, serve, serialize, etc.)
-├── __main__.py              # CLI: worker, run, info, serialize, reconstruct
+├── __main__.py              # CLI: worker, run, info, serialize, reconstruct, token, pair
 ├── _venv.py                 # Temporary virtual environment management (async)
 ├── py.typed                 # PEP 561 typed package marker
 ├── core/
@@ -19,6 +19,9 @@ pyfuse/
 │   ├── models.py            # FunctionNode and ImportInfo dataclasses, content hashing
 │   ├── version.py           # _VERSION = "0.4.0"
 │   ├── errors.py            # Error, WorkerError, RemoteError, DependencyError, TaskStalled, TaskCancelled
+│   ├── signing.py           # HMAC-SHA256 task signing and verification
+│   ├── pairing.py           # PIN-based pairing protocol for key exchange
+│   ├── token.py             # Pre-shared token generation, persistence, key resolution
 │   └── progress.py          # ProgressInfo dataclass, progress() function, context variable
 ├── graph/
 │   ├── decorator.py         # @trace: marks functions, adds .run()/.start()/.map()
