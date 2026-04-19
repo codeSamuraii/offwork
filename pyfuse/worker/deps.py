@@ -96,6 +96,7 @@ async def _pip_install(package: str, extra_args: list[str]) -> tuple[int, str, s
         stderr=asyncio.subprocess.PIPE,
     )
     stdout_bytes, stderr_bytes = await proc.communicate()
+    # returncode is None if the process hasn't terminated; treat as failure
     returncode = proc.returncode if proc.returncode is not None else 1
     return (
         returncode,

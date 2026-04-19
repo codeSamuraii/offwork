@@ -185,5 +185,5 @@ class Task:
             timeout=data.get("timeout"),
             retries=data.get("retries", 0),
             retry_delay=data.get("retry_delay", 1.0),
-            signature=sig or None,
+            signature=sig or None,  # normalise empty string to None
         )
