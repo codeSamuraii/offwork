@@ -23,7 +23,13 @@ class ImportInfo:
 
     @classmethod
     def from_dict(cls, data: dict[str, str]) -> Self:
-        """Deserialize from a plain dict."""
+        """Deserialize from a plain dict.
+
+        Raises
+        ------
+        KeyError
+            If required fields (``statement``, ``bound_name``) are missing.
+        """
         return cls(
             statement=data["statement"],
             bound_name=data["bound_name"],
@@ -134,7 +140,18 @@ class FunctionNode:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Self:
-        """Deserialize from a plain dict."""
+        """Deserialize from a plain dict.
+
+        Raises
+        ------
+        KeyError
+            If required fields (``qualified_name``, ``name``, ``module``,
+            ``source``, ``imports``, ``dependencies``) are missing.
+        """
+        required = ("qualified_name", "name", "module", "source", "imports", "dependencies")
+        missing = [k for k in required if k not in data]
+        if missing:
+            raise KeyError(f"FunctionNode missing required fields: {', '.join(missing)}")
         return cls(
             qualified_name=data["qualified_name"],
             name=data["name"],
