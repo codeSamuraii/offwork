@@ -137,10 +137,7 @@ def worker_process(
     def _watch_stderr() -> None:
         assert proc.stderr is not None
         for raw_line in proc.stderr:
-            try:
-                line = raw_line.decode("utf-8", errors="replace")
-            except Exception:
-                line = repr(raw_line) + "\n"
+            line = raw_line.decode("utf-8", errors="replace")
             sys.stderr.write(f"[worker] {line}")
             sys.stderr.flush()
             if "Listening for tasks" in line:
