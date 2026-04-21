@@ -1,0 +1,159 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Job 1 – existing unit and backend test suite
+  # Runs with real Redis and RabbitMQ so that the backend-specific test
+  # files (test_rabbitmq_backend.py, test_local_backend.py, …) are
+  # exercised against real services.
+  # ──────────────────────────────────────────────────────────────────────────
+  unit-tests:
+    name: "Unit & backend tests"
+    runs-on: ubuntu-latest
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      rabbitmq:
+        image: rabbitmq:3-management-alpine
+        ports: ["5672:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install pyfuse with all optional extras and dev dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e ".[redis,rabbitmq]"
+          pip install pytest pytest-asyncio
+
+      - name: Run unit and backend test suite
+        env:
+          PYFUSE_TEST_RABBITMQ_URL: amqp://localhost
+        run: pytest tests/ -x -v --ignore=tests/integration/
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Job 2 – cross-process integration tests
+  # Each matrix variant runs a real worker subprocess in a separate process
+  # and a client in the test-runner process, connected to a real backend.
+  #
+  # Matrix dimensions:
+  #   backend  – local (TCP broker), redis, rabbitmq
+  #   signing  – with or without HMAC-signed tasks
+  #   sandbox  – with or without Docker sandbox isolation
+  # ──────────────────────────────────────────────────────────────────────────
+  integration:
+    name: "E2E (${{ matrix.backend }}, sign=${{ matrix.signing }}, sandbox=${{ matrix.sandbox }})"
+    runs-on: ubuntu-latest
+    needs: unit-tests
+
+    # All matrix variants share the same job definition. Including both
+    # services in every variant is simpler than splitting into separate jobs
+    # and the idle service overhead is negligible.
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      rabbitmq:
+        image: rabbitmq:3-alpine
+        ports: ["5672:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 5
+
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [local, redis, rabbitmq]
+        signing: ["true", "false"]
+        sandbox: ["true", "false"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install pyfuse with all optional extras
+        run: |
+          pip install --upgrade pip
+          pip install -e ".[redis,rabbitmq]"
+          pip install pytest pytest-asyncio
+
+      # Build the Docker sandbox image only for sandbox=true variants.
+      # The image is built from the bundled Dockerfile in pyfuse/worker/sandbox/.
+      - name: Build sandbox Docker image
+        if: matrix.sandbox == 'true'
+        run: bash scripts/setup_sandbox_docker.sh
+
+      # Generate a fresh 32-byte random signing token for this run.
+      # The token is stored as a step output and injected as PYFUSE_SIGNING_TOKEN
+      # so that both the worker subprocess (which inherits it from the test
+      # environment) and the client code use the same key material.
+      - name: Generate signing token
+        id: gen-token
+        if: matrix.signing == 'true'
+        run: |
+          TOKEN=$(python -c "import os; print(os.urandom(32).hex())")
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      # ── Signing enabled ─────────────────────────────────────────────────
+      # PYFUSE_SIGNING_TOKEN is set for both the test runner (client) and
+      # the worker subprocess (which inherits the environment).
+      - name: Run integration tests (signing enabled)
+        if: matrix.signing == 'true'
+        env:
+          PYFUSE_TEST_BACKEND: ${{ matrix.backend }}
+          PYFUSE_TEST_SIGNING: "true"
+          PYFUSE_TEST_SANDBOX: ${{ matrix.sandbox }}
+          PYFUSE_SIGNING_TOKEN: ${{ steps.gen-token.outputs.token }}
+        run: pytest tests/integration/ -v -s
+
+      # ── Signing disabled ─────────────────────────────────────────────────
+      # No PYFUSE_SIGNING_TOKEN in the environment; tasks are unsigned and
+      # the worker accepts them without verification.
+      - name: Run integration tests (signing disabled)
+        if: matrix.signing == 'false'
+        env:
+          PYFUSE_TEST_BACKEND: ${{ matrix.backend }}
+          PYFUSE_TEST_SIGNING: "false"
+          PYFUSE_TEST_SANDBOX: ${{ matrix.sandbox }}
+        run: pytest tests/integration/ -v -s
