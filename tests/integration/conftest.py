@@ -15,6 +15,7 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import AsyncIterator, Generator
 from urllib.parse import urlparse
@@ -64,7 +65,12 @@ def backend_url() -> str:
     if backend == "redis":
         return "redis://localhost:6379"
     if backend in ("rabbitmq", "amqp"):
-        return "amqp://localhost"
+        # heartbeat=600 keeps the AMQP connection alive across the whole test
+        # session.  Without this the default 60-second heartbeat timeout
+        # causes the connection to be closed after 60 s of idle time, which
+        # makes the listen() generator exit and stops the worker from
+        # processing further tasks.
+        return "amqp://localhost?heartbeat=600"
     # local: pick a free port
     port = _free_port()
     return f"local://127.0.0.1:{port}"
@@ -94,10 +100,19 @@ def worker_process(
     ``PYFUSE_SIGNING_TOKEN`` (when present) flows automatically to the
     worker without any extra plumbing.
 
+    Readiness is detected by watching the worker's stderr for the
+    "Listening for tasks" log line.  A background daemon thread drains
+    the stderr pipe so it never fills up (which would freeze the worker),
+    and forwards every line to the test-runner's stderr for CI visibility.
+
+    For the local backend an additional TCP probe confirms the broker is
+    accepting connections before the readiness wait begins.
+
     Teardown: SIGTERM → wait 10 s → SIGKILL.
     """
+    # -u forces unbuffered output so log lines appear immediately in the pipe.
     cmd = [
-        sys.executable, "-m", "pyfuse", "worker",
+        sys.executable, "-u", "-m", "pyfuse", "worker",
         "--backend", backend_url,
         "--no-auto-install",
         "--log-level", "DEBUG",
@@ -109,32 +124,64 @@ def worker_process(
 
     proc = subprocess.Popen(
         cmd,
-        stdout=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
     )
 
-    # Wait until the broker/worker is reachable before yielding.
+    # Background thread: drain stderr and signal when the worker is ready.
+    # Draining is essential — if we never read from the pipe and the worker
+    # writes more than 64 KB of debug output, it will block on the write()
+    # syscall, freezing its asyncio event loop.
+    ready = threading.Event()
+
+    def _watch_stderr() -> None:
+        assert proc.stderr is not None
+        for raw_line in proc.stderr:
+            try:
+                line = raw_line.decode("utf-8", errors="replace")
+            except Exception:
+                line = repr(raw_line) + "\n"
+            sys.stderr.write(f"[worker] {line}")
+            sys.stderr.flush()
+            if "Listening for tasks" in line:
+                ready.set()
+        # Process exited or pipe closed — unblock any waiter.
+        ready.set()
+
+    watcher = threading.Thread(target=_watch_stderr, daemon=True)
+    watcher.start()
+
+    # For the local backend, also wait for the broker TCP port to be open.
+    # This provides a fast early-failure signal (e.g. port already in use)
+    # without waiting the full readiness timeout.
     if backend_url.startswith("local://"):
         parsed = urlparse(backend_url)
         host = parsed.hostname or "127.0.0.1"
         port = parsed.port or 9748
         if not _wait_for_tcp(host, port, timeout=20.0):
             proc.terminate()
-            _, err = proc.communicate(timeout=5)
+            proc.wait(timeout=5)
+            watcher.join(timeout=5)
             raise RuntimeError(
-                f"Worker broker did not start on {host}:{port}.\n"
-                f"stderr:\n{err.decode()}"
+                f"Worker broker did not start on {host}:{port}."
             )
-    else:
-        # Redis / RabbitMQ workers connect asynchronously; give them time
-        # to connect and begin listening before the first task is submitted.
-        time.sleep(4)
+
+    # Wait until the worker reports it is listening for tasks.
+    # Sandbox container boot can take up to ~60 seconds on a cold CI runner,
+    # so we allow up to 120 seconds here.
+    ready_timeout = 120.0
+    if not ready.wait(timeout=ready_timeout):
+        proc.terminate()
+        proc.wait(timeout=5)
+        watcher.join(timeout=5)
+        raise RuntimeError(
+            f"Worker did not become ready within {ready_timeout:.0f} seconds."
+        )
 
     if proc.poll() is not None:
-        _, err = proc.communicate()
+        watcher.join(timeout=5)
         raise RuntimeError(
-            f"Worker process exited prematurely (rc={proc.returncode}).\n"
-            f"stderr:\n{err.decode()}"
+            f"Worker process exited prematurely (rc={proc.returncode})."
         )
 
     yield proc
@@ -145,6 +192,7 @@ def worker_process(
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait()
+    watcher.join(timeout=5)
 
 
 # ---------------------------------------------------------------------------
