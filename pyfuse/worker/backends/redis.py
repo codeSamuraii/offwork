@@ -34,11 +34,14 @@ class RedisBackend(Backend):
     HEARTBEAT_PREFIX = "pyfuse:heartbeat:"
     CANCEL_PREFIX = "pyfuse:cancel:"
     PROGRESS_PREFIX = "pyfuse:progress:"
+    SCHEDULE_PREFIX = "pyfuse:schedule:"
+    THROTTLE_PREFIX = "pyfuse:throttle:"
     NOTIFY_CHANNEL = "pyfuse:notify"
     DEFAULT_RESULT_TTL = 300
     HEARTBEAT_TTL = 30
     CANCEL_TTL = 3600
     PROGRESS_TTL = 300
+    SCHEDULE_TTL = 2592000  # 30 days
 
     def __init__(
         self,
@@ -127,6 +130,24 @@ class RedisBackend(Backend):
         if raw is None:
             return None
         return raw.decode() if isinstance(raw, bytes) else raw
+
+    async def cancel_schedule(self, schedule_id: str) -> None:
+        key = f"{self.SCHEDULE_PREFIX}{schedule_id}"
+        await self._redis.set(key, "1", ex=self.SCHEDULE_TTL)
+
+    async def is_schedule_cancelled(self, schedule_id: str) -> bool:
+        key = f"{self.SCHEDULE_PREFIX}{schedule_id}"
+        return int(await self._redis.exists(key)) > 0
+
+    async def check_throttle(self, function_name: str) -> bool:
+        key = f"{self.THROTTLE_PREFIX}{function_name}"
+        return int(await self._redis.exists(key)) == 0
+
+    async def record_throttle(
+        self, function_name: str, throttle_seconds: float,
+    ) -> None:
+        key = f"{self.THROTTLE_PREFIX}{function_name}"
+        await self._redis.set(key, "1", ex=max(1, int(throttle_seconds)))
 
     async def notify_result(self, task_id: str) -> None:
         """Publish task_id on the Pub/Sub notification channel."""

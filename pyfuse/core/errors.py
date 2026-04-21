@@ -46,6 +46,10 @@ class PairingError(Error):
     """Raised when the PIN-based pairing protocol fails."""
 
 
+class ThrottleError(Error):
+    """Raised when a task is rejected due to rate limiting."""
+
+
 # ---------------------------------------------------------------------------
 # Custom excepthook: suppress client traceback for RemoteError
 # ---------------------------------------------------------------------------

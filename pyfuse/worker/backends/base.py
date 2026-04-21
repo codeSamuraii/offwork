@@ -89,6 +89,38 @@ class Backend(abc.ABC):
         """
         return None
 
+    # -- Schedule cancellation ------------------------------------------------
+
+    async def cancel_schedule(self, schedule_id: str) -> None:
+        """Mark a recurring schedule as cancelled.
+
+        The worker checks this before re-enqueuing the next occurrence.
+        The default implementation is a no-op.
+        """
+
+    async def is_schedule_cancelled(self, schedule_id: str) -> bool:
+        """Return whether a recurring schedule has been cancelled."""
+        return False
+
+    # -- Throttle --------------------------------------------------------------
+
+    async def check_throttle(self, function_name: str) -> bool:
+        """Return ``True`` if the function is allowed to execute.
+
+        Returns ``False`` when the cooldown period from a previous
+        execution has not elapsed.  The default always returns ``True``.
+        """
+        return True
+
+    async def record_throttle(
+        self, function_name: str, throttle_seconds: float,
+    ) -> None:
+        """Record that a function was just executed, starting a cooldown.
+
+        Subsequent :meth:`check_throttle` calls within *throttle_seconds*
+        should return ``False``.  The default is a no-op.
+        """
+
     # -- Result notifications --------------------------------------------------
 
     async def notify_result(self, task_id: str) -> None:

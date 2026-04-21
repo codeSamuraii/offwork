@@ -59,6 +59,7 @@ pyfuse/
 # Decorator
 @trace                                    # capture function for remote execution
 @trace(timeout=30, retries=3)             # with execution options
+@trace(throttle=timedelta(hours=24)/50)   # rate-limit: 50 calls per day
 
 # Remote execution (all async)
 pyfuse.connect("redis://localhost:6379")  # configure backend (sync)
@@ -66,6 +67,12 @@ await pyfuse.serve("redis://...", concurrency=4)  # start worker loop
 await func.run(*args)                     # submit + await result
 future = await func.start(*args)          # submit, returns Result handle
 results = await func.map([(a1, b1), ...]) # batch submit + await all
+
+# Scheduling
+await func.run_in(timedelta(minutes=5), *args)       # execute after delay
+await func.run_at(datetime(2026, 1, 1), *args)       # execute at specific time
+schedule = await func.run_every(timedelta(hours=1), *args)  # recurring
+await schedule.cancel()                               # stop recurring
 
 # Result handling
 result = await future                     # await result value
@@ -101,13 +108,17 @@ pyfuse.get_graph().to_mermaid(func)       # -> Mermaid diagram string
 ### Worker side: `await serve()` / `pyfuse worker`
 
 1. **Listen** -- `async for task_json in backend.listen()` yields tasks as they arrive.
-2. **Cancellation check** -- If `await backend.is_cancelled(task_id)` returns ``True``, skip execution and log the cancellation.
-3. **Deserialize** -- Parse the JSON graph into a `Store`.
+2. **Scheduling wait** -- If the task has a `scheduled_at` timestamp in the future, `await asyncio.sleep(delay)` until that time.
+3. **Cancellation check** -- If `await backend.is_cancelled(task_id)` returns ``True``, skip execution and log the cancellation.
+4. **Throttle check** -- If the task has a `throttle` value and the cooldown hasn't elapsed, return a `"throttled"` result immediately.
+5. **Deserialize** -- Parse the JSON graph into a `Store`.
 4. **Cache check** -- Compute a subgraph key (SHA-256 of all reachable content hashes). If cached, skip to step 7.
 5. **Install dependencies** -- Extract third-party imports, install missing packages via `asyncio.create_subprocess_exec`.
 6. **Reconstruct** -- Produce a self-contained Python script from the store. `compile()` and `exec()` it into a fresh namespace.
-7. **Execute** -- Call the function with the provided arguments. Async functions are awaited directly; sync functions run in an executor with explicit context propagation (for progress reporting). Apply retry/timeout policies via `asyncio.wait_for`.
-8. **Send result** -- Wrap the return value (or exception traceback) in a `ResultEnvelope` and send it back. If cancelled during execution, skip result delivery.
+9. **Execute** -- Call the function with the provided arguments. Async functions are awaited directly; sync functions run in an executor with explicit context propagation (for progress reporting). Apply retry/timeout policies via `asyncio.wait_for`.
+10. **Send result** -- Wrap the return value (or exception traceback) in a `ResultEnvelope` and send it back. If cancelled during execution, skip result delivery.
+11. **Record throttle** -- If the task has a `throttle` value and execution succeeded, record a cooldown in the backend.
+12. **Re-enqueue recurring** -- If the task has a `recur_interval` and its schedule hasn't been cancelled, submit a new task instance with `scheduled_at = now + interval`.
 
 ### Client side: `await future` / `await future.result()`
 
@@ -117,7 +128,7 @@ The `Result` object supports two waiting strategies:
 
 **With stall detection** (default, `stall_timeout=10.0`) -- An async polling loop calls `try_get_result()` and checks heartbeats every second. If the heartbeat hasn't changed for longer than `stall_timeout`, `TaskStalled` is raised.
 
-**Unwrap** -- If status is `"ok"`, return the value. If `"error"`, raise `RemoteError` with the remote traceback.
+**Unwrap** -- If status is `"ok"`, return the value. If `"error"`, raise `RemoteError` with the remote traceback. If `"throttled"`, raise `ThrottleError`.
 
 ## Transport backends
 
@@ -137,6 +148,10 @@ The `Backend` ABC defines an async transport interface:
 | `async is_cancelled(task_id)` | Check cancellation flag (default returns `False`) |
 | `async send_progress(task_id, json)` | Store latest progress data (no-op default) |
 | `async get_progress(task_id)` | Get latest progress JSON (default returns `None`) |
+| `async cancel_schedule(schedule_id)` | Mark recurring schedule cancelled (no-op default) |
+| `async is_schedule_cancelled(schedule_id)` | Check schedule cancellation (default `False`) |
+| `async check_throttle(function_name)` | Check if function is rate-limited (default `True`) |
+| `async record_throttle(fn, seconds)` | Start cooldown after execution (no-op default) |
 | `async notify_result(task_id)` | Push notification that result is ready (no-op default) |
 | `async subscribe_results()` | Async iterator yielding task_ids on result arrival |
 | `async close()` | Release resources |
@@ -151,6 +166,8 @@ Uses `redis.asyncio.Redis` with `RPUSH`/`BLPOP` patterns. Keys:
 - `pyfuse:heartbeat:{task_id}` -- worker heartbeat timestamp (TTL: 30s)
 - `pyfuse:cancel:{task_id}` -- cancellation flag (TTL: 3600s)
 - `pyfuse:progress:{task_id}` -- latest progress JSON (TTL: 300s)
+- `pyfuse:schedule:{schedule_id}` -- schedule cancellation flag (TTL: 30 days)
+- `pyfuse:throttle:{function_name}` -- throttle cooldown (TTL: throttle seconds)
 - `pyfuse:notify` -- Pub/Sub channel for result notifications
 
 Result notifications use Redis Pub/Sub (`PUBLISH`/`SUBSCRIBE`). Batch heartbeat fetching uses `MGET` for efficiency.

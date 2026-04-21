@@ -58,6 +58,39 @@ def flaky_task(url: str) -> str: ...
 
 Retries use exponential backoff (1s, 2s, 4s).
 
+## Scheduling
+
+Execute tasks on a delay, at a specific time, or on a recurring schedule:
+
+```python
+from datetime import datetime, timedelta
+
+# Run after a delay
+result = await func.run_in(timedelta(minutes=5), *args)
+
+# Run at a specific time
+result = await func.run_at(datetime(2026, 4, 21, 9, 0), *args)
+
+# Recurring execution (every hour)
+schedule = await func.run_every(timedelta(hours=1), *args)
+await schedule.cancel()  # stop the schedule
+```
+
+`start_at` and `start_in` return a `Result` handle (like `.start()`).
+
+## Throttling
+
+Rate-limit how often a function can be executed:
+
+```python
+from datetime import timedelta
+
+@trace(throttle=timedelta(hours=24) / 50)  # ~29 min cooldown
+def expensive_api_call(query: str) -> str: ...
+```
+
+If a task arrives during the cooldown window, the worker returns a `ThrottleError` immediately (no retry). The cooldown is only recorded after a successful execution.
+
 ## Third-party packages
 
 Workers auto-install missing packages. When the import name differs from the pip package:

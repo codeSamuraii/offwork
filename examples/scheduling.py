@@ -1,0 +1,61 @@
+"""Task scheduling with pyfuse.
+
+Demonstrates:
+- run_in(delay)   — execute after a delay
+- run_at(datetime) — execute at a specific time
+- run_every(freq)  — recurring execution with cancellation
+
+Usage:
+    # Terminal 1 -- start a worker
+    pyfuse worker --backend redis://localhost:6379 --tmp
+
+    # Terminal 2 -- run this script
+    pyfuse run examples/scheduling.py
+"""
+
+import asyncio
+from datetime import datetime, timedelta
+
+import pyfuse
+from pyfuse import trace
+
+pyfuse.connect("local://localhost:9748")
+
+
+@trace
+def greet(name: str) -> str:
+    return f"Hello, {name}! (executed at {datetime.now():%H:%M:%S})"
+
+
+@trace
+def tick(n: int) -> str:
+    return f"Tick #{n} at {datetime.now():%H:%M:%S}"
+
+
+async def main() -> None:
+    print(f"Now: {datetime.now():%H:%M:%S}\n")
+
+    # 1. run_in — execute after a 2-second delay
+    print("— run_in(2 seconds) —")
+    result = await greet.run_in(timedelta(seconds=2), "Alice")
+    print(result)
+
+    # 2. run_at — execute at a specific time (3 seconds from now)
+    print("\n— run_at(now + 3s) —")
+    target = datetime.now() + timedelta(seconds=3)
+    print(f"Scheduled for: {target:%H:%M:%S}")
+    result = await greet.run_at(target, "Bob")
+    print(result)
+
+    # 3. run_every — recurring execution every 2 seconds
+    print("\n— run_every(2 seconds) for ~6 seconds —")
+    schedule = await tick.run_every(timedelta(seconds=2), 1)
+    print(f"Schedule started: {schedule.schedule_id}")
+    await asyncio.sleep(6)
+
+    # Cancel the recurring schedule
+    await schedule.cancel()
+    print(f"Schedule cancelled: {schedule.schedule_id}")
+
+
+asyncio.run(main())

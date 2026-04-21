@@ -67,6 +67,8 @@ class _Broker:
         self._results: dict[str, asyncio.Queue[str]] = {}
         self._heartbeats: dict[str, float] = {}
         self._cancelled: set[str] = set()
+        self._cancelled_schedules: set[str] = set()
+        self._throttles: dict[str, float] = {}
         self._progress: dict[str, str] = {}
         self._result_subs: list[asyncio.Queue[str]] = []
 
@@ -149,6 +151,22 @@ class _Broker:
             return {"ok": True}
         if op == "progress_get":
             return {"ok": True, "data": self._progress.get(msg["task_id"])}
+        if op == "schedule_cancel":
+            self._cancelled_schedules.add(msg["schedule_id"])
+            return {"ok": True}
+        if op == "schedule_check":
+            return {"ok": True, "data": msg["schedule_id"] in self._cancelled_schedules}
+        if op == "throttle_check":
+            fn = msg["function_name"]
+            expiry = self._throttles.get(fn)
+            if expiry is not None and time.time() < expiry:
+                return {"ok": True, "data": False}
+            self._throttles.pop(fn, None)
+            return {"ok": True, "data": True}
+        if op == "throttle_record":
+            fn = msg["function_name"]
+            self._throttles[fn] = time.time() + msg["seconds"]
+            return {"ok": True}
         return {"ok": False, "error": f"unknown op: {op}"}
 
     # -- streaming handlers ----------------------------------------------------
@@ -387,6 +405,26 @@ class LocalBackend(Backend):
     async def get_progress(self, task_id: str) -> str | None:
         resp = await self._request({"op": "progress_get", "task_id": task_id})
         return resp.get("data")
+
+    async def cancel_schedule(self, schedule_id: str) -> None:
+        await self._request({"op": "schedule_cancel", "schedule_id": schedule_id})
+
+    async def is_schedule_cancelled(self, schedule_id: str) -> bool:
+        resp = await self._request({"op": "schedule_check", "schedule_id": schedule_id})
+        return bool(resp.get("data", False))
+
+    async def check_throttle(self, function_name: str) -> bool:
+        resp = await self._request({"op": "throttle_check", "function_name": function_name})
+        return bool(resp.get("data", True))
+
+    async def record_throttle(
+        self, function_name: str, throttle_seconds: float,
+    ) -> None:
+        await self._request({
+            "op": "throttle_record",
+            "function_name": function_name,
+            "seconds": throttle_seconds,
+        })
 
     async def notify_result(self, task_id: str) -> None:
         pass  # broker dispatches notifications inside result_put

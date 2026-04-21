@@ -102,6 +102,10 @@ class Task:
     timeout: float | None = None
     retries: int = 0
     retry_delay: float = 1.0
+    scheduled_at: float | None = None
+    recur_interval: float | None = None
+    schedule_id: str | None = None
+    throttle: float | None = None
     signature: str | None = None
 
     # -- Serialization -------------------------------------------------------
@@ -121,6 +125,14 @@ class Task:
             d["retries"] = self.retries
         if self.retry_delay != 1.0:
             d["retry_delay"] = self.retry_delay
+        if self.scheduled_at is not None:
+            d["scheduled_at"] = self.scheduled_at
+        if self.recur_interval is not None:
+            d["recur_interval"] = self.recur_interval
+        if self.schedule_id is not None:
+            d["schedule_id"] = self.schedule_id
+        if self.throttle is not None:
+            d["throttle"] = self.throttle
         return d
 
     def to_json(self, *, signing_key: bytes | None = None) -> str:
@@ -185,5 +197,9 @@ class Task:
             timeout=data.get("timeout"),
             retries=data.get("retries", 0),
             retry_delay=data.get("retry_delay", 1.0),
+            scheduled_at=data.get("scheduled_at"),
+            recur_interval=data.get("recur_interval"),
+            schedule_id=data.get("schedule_id"),
+            throttle=data.get("throttle"),
             signature=sig or None,  # normalise empty string to None
         )

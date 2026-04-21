@@ -81,6 +81,8 @@ After setup, tasks are signed automatically. No client-side code changes. See [S
 | **Package auto-install** | Workers `pip install` missing packages before execution |
 | **Async-native** | `.run()`, `.start()`, `.map()`, `asyncio.gather` |
 | **Retry & timeout** | `@trace(timeout=30, retries=3)` with exponential backoff |
+| **Scheduling** | `.run_in(delay)`, `.run_at(datetime)`, `.run_every(freq)` with cancellation |
+| **Throttling** | `@trace(throttle=timedelta(hours=24)/50)` — rate-limit executions |
 | **Progress & cancellation** | `pyfuse.progress(3, 10)` inside tasks; `await future.cancel()` on client |
 | **Heartbeat & stall detection** | Workers heartbeat; clients raise `TaskStalled` on silence |
 | **Content-hash caching** | Same code = cache hit, regardless of client |
@@ -105,7 +107,7 @@ pyfuse worker --backend local://localhost:9748 --tmp
 pyfuse run examples/remote_execution.py
 ```
 
-[`remote_execution.py`](examples/remote_execution.py) · [`async_execution.py`](examples/async_execution.py) · [`package_installation.py`](examples/package_installation.py) · [`progress_reporting.py`](examples/progress_reporting.py) · [`cancellation.py`](examples/cancellation.py) · [`large_module.py`](examples/large_module.py)
+[`remote_execution.py`](examples/remote_execution.py) · [`async_execution.py`](examples/async_execution.py) · [`package_installation.py`](examples/package_installation.py) · [`progress_reporting.py`](examples/progress_reporting.py) · [`cancellation.py`](examples/cancellation.py) · [`scheduling.py`](examples/scheduling.py) · [`throttling_and_retry.py`](examples/throttling_and_retry.py) · [`large_module.py`](examples/large_module.py)
 
 ## License
 

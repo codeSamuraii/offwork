@@ -14,6 +14,7 @@ from pyfuse.core.errors import (
     TaskCancelled,
     SignatureError,
     DependencyError,
+    ThrottleError,
 )
 from pyfuse.core.models import ImportInfo, FunctionNode
 from pyfuse.graph.graph import Graph
@@ -50,6 +51,7 @@ from pyfuse.worker.result import Result, ResultEnvelope
 from pyfuse.worker.worker import Worker
 from pyfuse.worker.worker import execute as execute
 from pyfuse.worker.sandbox import DockerSandbox
+from pyfuse.worker.schedule import ScheduleHandle
 from pyfuse.graph.decorator import trace
 from pyfuse.worker.backends.base import Backend
 
@@ -125,6 +127,7 @@ __all__ = [
     "RemoteError",
     "TaskStalled",
     "TaskCancelled",
+    "ThrottleError",
     "SignatureError",
     "PairingError",
     # Graph
@@ -154,6 +157,8 @@ __all__ = [
     "Task",
     "Worker",
     "Backend",
+    # Scheduling
+    "ScheduleHandle",
     # Sandbox
     "DockerSandbox",
 ]

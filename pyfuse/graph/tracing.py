@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time as _time
 import asyncio
 import inspect
 import logging
@@ -12,6 +13,7 @@ import threading
 import contextvars
 from typing import Any, TypeVar, ParamSpec, cast
 from pathlib import Path
+from datetime import datetime, timedelta
 from collections.abc import Callable, Awaitable, Generator, AsyncGenerator
 
 from pyfuse.typing import TracedFunction
@@ -32,7 +34,7 @@ def _make_start_method(
     """Create the ``.start()`` async method that submits and returns a Result."""
 
     async def start(*args: Any, backend: str | Backend | None = None, **kwargs: Any) -> object:
-        from pyfuse.worker.remote import submit_remote
+        from pyfuse.worker.remote import submit_remote  # circular
 
         return await submit_remote(func, wrapper, *args, _backend=backend, **kwargs)
 
@@ -70,6 +72,89 @@ def _make_map_method(
     return map
 
 
+def _make_start_at_method(
+    wrapper: Callable[..., object], func: Callable[..., object]
+) -> Callable[..., object]:
+    """Create the ``.start_at()`` method that submits a task scheduled for a specific time."""
+
+    async def start_at(dt: Any, *args: Any, backend: str | Backend | None = None, **kwargs: Any) -> object:
+        from pyfuse.worker.remote import submit_remote_scheduled  # circular
+
+        ts = dt.timestamp() if isinstance(dt, datetime) else float(dt)
+        return await submit_remote_scheduled(
+            func, wrapper, *args, _backend=backend, _scheduled_at=ts, **kwargs,
+        )
+
+    return start_at
+
+
+def _make_run_at_method(
+    start_at_method: Callable[..., object],
+) -> Callable[..., object]:
+    """Create the ``.run_at()`` method that submits at a time and awaits the result."""
+
+    async def run_at(dt: Any, *args: object, **kwargs: object) -> object:
+        result = await start_at_method(dt, *args, **kwargs)  # type: ignore[misc]
+        return await result
+
+    return run_at
+
+
+def _make_start_in_method(
+    wrapper: Callable[..., object], func: Callable[..., object]
+) -> Callable[..., object]:
+    """Create the ``.start_in()`` method that submits a task after a delay."""
+
+    async def start_in(delay: Any, *args: Any, backend: str | Backend | None = None, **kwargs: Any) -> object:
+        from pyfuse.worker.remote import submit_remote_scheduled  # circular
+
+        seconds = delay.total_seconds() if isinstance(delay, timedelta) else float(delay)
+        return await submit_remote_scheduled(
+            func, wrapper, *args, _backend=backend, _scheduled_at=_time.time() + seconds, **kwargs,
+        )
+
+    return start_in
+
+
+def _make_run_in_method(
+    start_in_method: Callable[..., object],
+) -> Callable[..., object]:
+    """Create the ``.run_in()`` method that submits after a delay and awaits."""
+
+    async def run_in(delay: Any, *args: object, **kwargs: object) -> object:
+        result = await start_in_method(delay, *args, **kwargs)  # type: ignore[misc]
+        return await result
+
+    return run_in
+
+
+def _make_run_every_method(
+    wrapper: Callable[..., object], func: Callable[..., object]
+) -> Callable[..., object]:
+    """Create the ``.run_every()`` method for recurring execution."""
+
+    async def run_every(
+        frequency: Any,
+        *args: Any,
+        _start_at: Any = None,
+        backend: str | Backend | None = None,
+        **kwargs: Any,
+    ) -> object:
+        from pyfuse.worker.remote import submit_recurring  # circular
+
+        interval = frequency.total_seconds() if isinstance(frequency, timedelta) else float(frequency)
+        start_ts: float | None = None
+        if _start_at is not None:
+            start_ts = _start_at.timestamp() if isinstance(_start_at, datetime) else float(_start_at)
+        return await submit_recurring(
+            func, wrapper, *args,
+            _backend=backend, _interval=interval, _start_at=start_ts,
+            **kwargs,
+        )
+
+    return run_every
+
+
 def _attach_traced_attrs(
     wrapper: Callable[..., object], func: Callable[..., object]
 ) -> None:
@@ -79,6 +164,16 @@ def _attach_traced_attrs(
     wrapper.start = start  # type: ignore[attr-defined]
     wrapper.run = _make_run_method(start)  # type: ignore[attr-defined]
     wrapper.map = _make_map_method(start)  # type: ignore[attr-defined]
+
+    start_at = _make_start_at_method(wrapper, func)
+    wrapper.start_at = start_at  # type: ignore[attr-defined]
+    wrapper.run_at = _make_run_at_method(start_at)  # type: ignore[attr-defined]
+
+    start_in = _make_start_in_method(wrapper, func)
+    wrapper.start_in = start_in  # type: ignore[attr-defined]
+    wrapper.run_in = _make_run_in_method(start_in)  # type: ignore[attr-defined]
+
+    wrapper.run_every = _make_run_every_method(wrapper, func)  # type: ignore[attr-defined]
 
 
 def _get_stdlib_dirs() -> list[str]:

@@ -9,7 +9,7 @@ from typing import Any, Self
 from dataclasses import dataclass
 from collections.abc import Generator
 
-from pyfuse.core.errors import RemoteError, TaskStalled, TaskCancelled
+from pyfuse.core.errors import RemoteError, TaskStalled, TaskCancelled, ThrottleError
 from pyfuse.core.progress import ProgressInfo
 from pyfuse.worker.backends.base import Backend
 
@@ -40,6 +40,11 @@ class ResultEnvelope:
     def cancelled(cls, task_id: str) -> Self:
         """Create an envelope for a cancelled task."""
         return cls(task_id=task_id, status="cancelled")
+
+    @classmethod
+    def throttled(cls, task_id: str) -> Self:
+        """Create an envelope for a throttled (rate-limited) task."""
+        return cls(task_id=task_id, status="throttled")
 
     @classmethod
     def failure(cls, task_id: str, exc: BaseException) -> Self:
@@ -106,6 +111,10 @@ class Result:
         if self._envelope.status == "cancelled":
             raise TaskCancelled(
                 f"Task {self._task_id} was cancelled"
+            ) from None
+        if self._envelope.status == "throttled":
+            raise ThrottleError(
+                f"Task {self._task_id} was throttled (rate-limited)"
             ) from None
         if self._envelope.status == "error":
             msg = (
@@ -241,6 +250,8 @@ class Result:
             return "success"
         if self._envelope.status == "cancelled":
             return "cancelled"
+        if self._envelope.status == "throttled":
+            return "throttled"
         return "error"
 
     def __repr__(self) -> str:

@@ -4,6 +4,7 @@ import os
 import sys
 import json
 import time
+import uuid
 import atexit
 import signal
 import asyncio
@@ -19,6 +20,7 @@ from pyfuse.core.version import _VERSION
 from pyfuse.core.progress import _progress_callback
 from pyfuse.worker.result import Result, ResultEnvelope
 from pyfuse.worker.worker import Worker
+from pyfuse.worker.schedule import ScheduleHandle
 from pyfuse.worker.backends.base import Backend
 
 if TYPE_CHECKING:
@@ -155,7 +157,7 @@ async def submit_remote(
         When provided, the task JSON is HMAC-signed so the worker can
         verify the origin.  Typically loaded from disk after pairing.
     """
-    from pyfuse.graph.graph import Graph
+    from pyfuse.graph.graph import Graph  # circular
 
     if isinstance(_backend, str):
         backend = _create_backend(_backend)
@@ -181,11 +183,112 @@ async def submit_remote(
         timeout=opts.get("timeout"),
         retries=opts.get("retries", 0),
         retry_delay=opts.get("retry_delay", 1.0),
+        throttle=opts.get("throttle"),
     )
 
     await backend.submit(task.to_json(signing_key=_signing_key))
     logger.info("Submitted task %s for %s", task.task_id, function_name)
     return Result(task.task_id, backend)
+
+
+async def submit_remote_scheduled(
+    func: Callable[..., object],
+    wrapper: Callable[..., object],
+    *args: Any,
+    _backend: str | Backend | None = None,
+    _signing_key: bytes | None = None,
+    _scheduled_at: float | None = None,
+    **kwargs: Any,
+) -> Result:
+    """Submit a task scheduled for future execution."""
+    from pyfuse.graph.graph import Graph  # circular
+
+    if isinstance(_backend, str):
+        backend = _create_backend(_backend)
+    elif isinstance(_backend, Backend):
+        backend = _backend
+    else:
+        backend = get_backend()
+
+    if _signing_key is None:
+        _signing_key = resolve_signing_key("client")
+
+    unwrapped = inspect.unwrap(func)
+    function_name = f"{unwrapped.__module__}.{unwrapped.__qualname__}"
+    graph_json = Graph.default().serialize(wrapper)
+
+    opts = getattr(wrapper, "__pyfuse_options__", {})
+    task = Task(
+        graph_json=graph_json,
+        function_name=function_name,
+        args=args,
+        kwargs=kwargs,
+        timeout=opts.get("timeout"),
+        retries=opts.get("retries", 0),
+        retry_delay=opts.get("retry_delay", 1.0),
+        throttle=opts.get("throttle"),
+        scheduled_at=_scheduled_at,
+    )
+
+    await backend.submit(task.to_json(signing_key=_signing_key))
+    logger.info(
+        "Submitted scheduled task %s for %s (at %.0f)",
+        task.task_id, function_name, _scheduled_at or 0,
+    )
+    return Result(task.task_id, backend)
+
+
+async def submit_recurring(
+    func: Callable[..., object],
+    wrapper: Callable[..., object],
+    *args: Any,
+    _backend: str | Backend | None = None,
+    _signing_key: bytes | None = None,
+    _interval: float = 0,
+    _start_at: float | None = None,
+    **kwargs: Any,
+) -> ScheduleHandle:
+    """Submit a recurring task and return a :class:`ScheduleHandle`."""
+    from pyfuse.graph.graph import Graph  # circular
+
+    if isinstance(_backend, str):
+        backend = _create_backend(_backend)
+    elif isinstance(_backend, Backend):
+        backend = _backend
+    else:
+        backend = get_backend()
+
+    if _signing_key is None:
+        _signing_key = resolve_signing_key("client")
+
+    unwrapped = inspect.unwrap(func)
+    function_name = f"{unwrapped.__module__}.{unwrapped.__qualname__}"
+    graph_json = Graph.default().serialize(wrapper)
+
+    schedule_id = uuid.uuid4().hex[:12]
+    scheduled_at = _start_at or time.time()
+
+    opts = getattr(wrapper, "__pyfuse_options__", {})
+    task = Task(
+        graph_json=graph_json,
+        function_name=function_name,
+        args=args,
+        kwargs=kwargs,
+        timeout=opts.get("timeout"),
+        retries=opts.get("retries", 0),
+        retry_delay=opts.get("retry_delay", 1.0),
+        throttle=opts.get("throttle"),
+        scheduled_at=scheduled_at,
+        recur_interval=_interval,
+        schedule_id=schedule_id,
+    )
+
+    await backend.submit(task.to_json(signing_key=_signing_key))
+    logger.info(
+        "Submitted recurring task %s for %s (every %.1fs, schedule=%s)",
+        task.task_id, function_name, _interval, schedule_id,
+    )
+    return ScheduleHandle(schedule_id, backend)
 
 
 def _build_detail_tags(worker: Worker) -> str:
@@ -366,10 +469,28 @@ async def _handle_task(
 
     logger.debug("Received task %s: %s", task.task_id, task.function_name)
 
+    # Wait for scheduled time
+    if task.scheduled_at is not None:
+        delay = task.scheduled_at - time.time()
+        if delay > 0:
+            logger.debug("Task %s scheduled in %.1fs", task.task_id, delay)
+            await asyncio.sleep(delay)
+
     # Check cancellation before execution
     if await backend.is_cancelled(task.task_id):
         envelope = ResultEnvelope.cancelled(task.task_id)
         _log_task_result(task, envelope, 0, worker)
+        return
+
+    # Check throttle
+    if task.throttle is not None and not await backend.check_throttle(task.function_name):
+        envelope = ResultEnvelope.throttled(task.task_id)
+        await backend.send_result(task.task_id, envelope.to_json())
+        await backend.notify_result(task.task_id)
+        logger.info(
+            "\u23f3  %-40s          %s  throttled",
+            task.function_name, task.task_id[:8],
+        )
         return
 
     # Set up rate-limited progress callback
@@ -411,6 +532,32 @@ async def _handle_task(
     await backend.notify_result(task.task_id)
 
     _log_task_result(task, envelope, elapsed_ms, worker)
+
+    # Record throttle cooldown after successful execution
+    if task.throttle is not None and envelope.status == "ok":
+        await backend.record_throttle(task.function_name, task.throttle)
+
+    # Re-enqueue recurring task
+    if task.recur_interval is not None and task.schedule_id is not None:
+        if not await backend.is_schedule_cancelled(task.schedule_id):
+            next_task = Task(
+                graph_json=task.graph_json,
+                function_name=task.function_name,
+                args=task.args,
+                kwargs=task.kwargs,
+                timeout=task.timeout,
+                retries=task.retries,
+                retry_delay=task.retry_delay,
+                throttle=task.throttle,
+                scheduled_at=time.time() + task.recur_interval,
+                recur_interval=task.recur_interval,
+                schedule_id=task.schedule_id,
+            )
+            await backend.submit(next_task.to_json(signing_key=signing_key))
+            logger.debug(
+                "Re-enqueued recurring task %s (schedule=%s, next in %.1fs)",
+                next_task.task_id, task.schedule_id, task.recur_interval,
+            )
 
 
 async def _worker_loop(
