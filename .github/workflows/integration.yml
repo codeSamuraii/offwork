@@ -10,6 +10,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Restrict the workflow token to the minimum required permissions.
+permissions:
+  contents: read
+
 env:
   PYTHON_VERSION: "3.12"
 

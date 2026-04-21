@@ -120,7 +120,7 @@ def worker_process(
         port = parsed.port or 9748
         if not _wait_for_tcp(host, port, timeout=20.0):
             proc.terminate()
-            _out, err = proc.communicate(timeout=5)
+            _, err = proc.communicate(timeout=5)
             raise RuntimeError(
                 f"Worker broker did not start on {host}:{port}.\n"
                 f"stderr:\n{err.decode()}"
@@ -131,7 +131,7 @@ def worker_process(
         time.sleep(4)
 
     if proc.poll() is not None:
-        _out, err = proc.communicate()
+        _, err = proc.communicate()
         raise RuntimeError(
             f"Worker process exited prematurely (rc={proc.returncode}).\n"
             f"stderr:\n{err.decode()}"
