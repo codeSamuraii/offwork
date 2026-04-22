@@ -19,6 +19,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from datetime import timedelta
 from typing import Any
@@ -46,13 +47,20 @@ pytestmark = pytest.mark.skipif(not BACKEND_URL, reason="PYFUSE_TEST_BACKEND not
 # Worker subprocess management
 # ---------------------------------------------------------------------------
 
+_WORKER_READY_TIMEOUT = 60  # seconds to wait for "Listening" log line
+
+
 def _start_worker(
     backend: str,
     *,
     signing_token: str | None = None,
     sandbox: bool = False,
 ) -> subprocess.Popen[bytes]:
-    """Launch ``python -m pyfuse worker`` in a subprocess."""
+    """Launch ``python -m pyfuse worker`` in a subprocess.
+
+    Waits for the worker to print its "Listening for tasks" log line
+    before returning, so the caller knows it is actually ready.
+    """
     cmd = [sys.executable, "-m", "pyfuse", "worker", "--backend", backend]
     if signing_token:
         cmd.append("--require-signing")
@@ -69,12 +77,30 @@ def _start_worker(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    # Give the worker time to connect and start listening
-    time.sleep(3)
-    assert proc.poll() is None, (
-        f"Worker exited early with code {proc.returncode}:\n"
-        + (proc.stderr.read().decode() if proc.stderr else "")
-    )
+
+    # Read stderr in a background thread and wait for the ready signal.
+    ready = threading.Event()
+    stderr_lines: list[str] = []
+
+    def _drain_stderr() -> None:
+        assert proc.stderr is not None
+        for raw in proc.stderr:
+            line = raw.decode(errors="replace")
+            stderr_lines.append(line)
+            if "Listening" in line:
+                ready.set()
+
+    reader = threading.Thread(target=_drain_stderr, daemon=True)
+    reader.start()
+
+    if not ready.wait(timeout=_WORKER_READY_TIMEOUT):
+        proc.kill()
+        proc.wait(timeout=5)
+        raise RuntimeError(
+            f"Worker not ready after {_WORKER_READY_TIMEOUT}s.\n"
+            f"stderr:\n{''.join(stderr_lines)}"
+        )
+
     return proc
 
 
@@ -297,6 +323,14 @@ class TestThrottling:
             await throttled_fn.run()
 
 
+def _step_a(x: int) -> int:
+    return x + 1
+
+
+def _step_b(x: int) -> int:
+    return _step_a(x) * 2
+
+
 class TestErrorHandling:
     async def test_remote_error_propagation(self, worker: subprocess.Popen[bytes]) -> None:
         @trace
@@ -309,18 +343,12 @@ class TestErrorHandling:
 
     async def test_function_with_dependencies(self, worker: subprocess.Popen[bytes]) -> None:
         """Multi-level dependency chain works end-to-end."""
-        def step_a(x: int) -> int:
-            return x + 1
-
-        def step_b(x: int) -> int:
-            return step_a(x) * 2
-
         @trace
         def pipeline(x: int) -> int:
-            return step_b(x) + 10
+            return _step_b(x) + 10
 
         result = await pipeline.run(5)
-        assert result == 22  # step_a(5)=6, step_b(5)=12, pipeline(5)=22
+        assert result == 22  # _step_a(5)=6, _step_b(5)=12, pipeline(5)=22
 
 
 class TestClassMethods:
