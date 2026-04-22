@@ -206,13 +206,14 @@ class TestBasicExecution:
 
 class TestProgressAndCancellation:
     async def test_progress_reporting(self, worker: subprocess.Popen[bytes]) -> None:
-        import time as _time
+
 
         @trace
         def slow_with_progress(n: int) -> int:
+            import time
             total = 0
             for i in range(n):
-                _time.sleep(0.1)
+                time.sleep(0.1)
                 total += i
                 progress(i + 1, n)
             return total

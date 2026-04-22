@@ -36,9 +36,9 @@ class TracedFunction(Protocol[P, R]):
     async def run_every(
         self,
         frequency: timedelta | float,
-        *args: P.args,
+        *args: Any,
         _start_at: datetime | None = ...,
-        **kwargs: P.kwargs,
+        **kwargs: Any,
     ) -> ScheduleHandle: ...
 
 
