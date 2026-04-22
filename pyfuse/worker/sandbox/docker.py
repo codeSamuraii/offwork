@@ -20,6 +20,7 @@ import os
 import shutil
 import asyncio
 import logging
+import contextlib
 from typing import Any
 from pathlib import Path
 from collections.abc import Callable
@@ -133,6 +134,11 @@ class DockerSandbox:
                 f"Sandbox execution of '{function_name}' timed out "
                 f"after {self.timeout}s"
             ) from None
+        except (asyncio.IncompleteReadError, ConnectionError, OSError) as exc:
+            raise WorkerError(
+                f"Sandbox connection lost while executing '{function_name}': "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
 
         if response["status"] == "error":
             raise WorkerError(
@@ -211,6 +217,8 @@ class DockerSandbox:
                     timeout=2.0,
                 )
                 _w.close()
+                with contextlib.suppress(ConnectionError, OSError):
+                    await _w.wait_closed()
                 return
             except (OSError, asyncio.TimeoutError):
                 await asyncio.sleep(1)
