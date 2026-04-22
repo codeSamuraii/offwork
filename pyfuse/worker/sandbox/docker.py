@@ -20,6 +20,7 @@ import os
 import shutil
 import asyncio
 import logging
+import contextlib
 from typing import Any
 from pathlib import Path
 from collections.abc import Callable
@@ -133,6 +134,11 @@ class DockerSandbox:
                 f"Sandbox execution of '{function_name}' timed out "
                 f"after {self.timeout}s"
             ) from None
+        except (asyncio.IncompleteReadError, ConnectionError, OSError) as exc:
+            raise WorkerError(
+                f"Sandbox connection lost while executing '{function_name}': "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
 
         if response["status"] == "error":
             raise WorkerError(
@@ -211,6 +217,8 @@ class DockerSandbox:
                     timeout=2.0,
                 )
                 _w.close()
+                with contextlib.suppress(ConnectionError, OSError):
+                    await _w.wait_closed()
                 return
             except (OSError, asyncio.TimeoutError):
                 await asyncio.sleep(1)
@@ -234,15 +242,30 @@ class DockerSandbox:
             if self._reader is None or self._writer is None:
                 await self._connect()
             assert self._reader is not None and self._writer is not None
+            success = False
             try:
-                await async_send(self._writer, request)
-                return await self._read_response(progress_cb)
-            except (asyncio.IncompleteReadError, ConnectionError, OSError):
-                self._reader = self._writer = None
-                await self._connect()
-                assert self._reader is not None and self._writer is not None
-                await async_send(self._writer, request)
-                return await self._read_response(progress_cb)
+                try:
+                    await async_send(self._writer, request)
+                    result = await self._read_response(progress_cb)
+                    success = True
+                    return result
+                except (asyncio.IncompleteReadError, ConnectionError, OSError):
+                    self._reader = self._writer = None
+                    await self._connect()
+                    assert self._reader is not None and self._writer is not None
+                    await async_send(self._writer, request)
+                    result = await self._read_response(progress_cb)
+                    success = True
+                    return result
+            finally:
+                if not success:
+                    # On cancellation or timeout the guest agent may still
+                    # be processing and will eventually write a stale
+                    # response.  Reset the connection so the next request
+                    # doesn't read that leftover data.
+                    if self._writer is not None:
+                        self._writer.close()
+                    self._reader = self._writer = None
 
     async def _read_response(
         self,

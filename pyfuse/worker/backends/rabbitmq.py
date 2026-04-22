@@ -45,12 +45,20 @@ class RabbitMQBackend(Backend):
     HEARTBEAT_PREFIX = "pyfuse.hb."
     CANCEL_PREFIX = "pyfuse.cancel."
     PROGRESS_PREFIX = "pyfuse.progress."
+    SCHEDULE_PREFIX = "pyfuse.schedule."
+    THROTTLE_PREFIX = "pyfuse.throttle."
     NOTIFY_EXCHANGE = "pyfuse.notify"
 
     DEFAULT_RESULT_TTL = 300   # seconds
     HEARTBEAT_TTL = 30
     CANCEL_TTL = 3600
     PROGRESS_TTL = 300
+    SCHEDULE_TTL = 2592000  # 30 days
+    # Fixed queue TTL used for throttle queues.  Both check_throttle and
+    # record_throttle always declare with the same arguments, avoiding
+    # RabbitMQ PRECONDITION_FAILED errors.  Actual throttle expiry is
+    # encoded in the message value (expiry timestamp), not x-message-ttl.
+    THROTTLE_QUEUE_TTL = 86400  # 24 hours
 
     def __init__(
         self,
@@ -71,12 +79,16 @@ class RabbitMQBackend(Backend):
     async def _get_channel(self) -> Any:
         """Return the shared channel, creating connection if needed."""
         async with self._lock:
-            if self._connection is None or self._connection.is_closed:
-                self._connection = await aio_pika.connect_robust(self._url)
-                self._channel = None
-            if self._channel is None or self._channel.is_closed:
-                self._channel = await self._connection.channel()
-            return self._channel
+            return await self._ensure_channel()
+
+    async def _ensure_channel(self) -> Any:
+        """Return the shared channel (caller must hold ``self._lock``)."""
+        if self._connection is None or self._connection.is_closed:
+            self._connection = await aio_pika.connect_robust(self._url)
+            self._channel = None
+        if self._channel is None or self._channel.is_closed:
+            self._channel = await self._connection.channel()
+        return self._channel
 
     async def _new_channel(self) -> Any:
         """Create a dedicated channel for long-running operations."""
@@ -104,17 +116,42 @@ class RabbitMQBackend(Backend):
             "x-expires": self._result_ttl * 2 * 1000,
         }
 
+    async def _declare_queue_robust(
+        self, channel: Any, name: str, arguments: dict[str, Any],
+    ) -> Any:
+        """Declare a queue, recovering from PRECONDITION_FAILED.
+
+        When RabbitMQ rejects a redeclaration because the existing queue
+        has different arguments, it closes the channel.  This helper
+        catches that, reopens the channel, deletes the stale queue, and
+        redeclares it with the new arguments.
+        """
+        try:
+            return await channel.declare_queue(name, arguments=arguments)
+        except Exception:
+            # Channel is closed by RabbitMQ after PRECONDITION_FAILED.
+            # Reopen a fresh channel, purge the stale queue, and retry.
+            self._channel = None
+            channel = await self._ensure_channel()
+            try:
+                await channel.queue_delete(name)
+            except Exception:
+                self._channel = None
+                channel = await self._ensure_channel()
+            return await channel.declare_queue(name, arguments=arguments)
+
     async def _kv_put(
         self, prefix: str, task_id: str, value: str, ttl_s: int,
     ) -> None:
         """Write to a per-task KV queue (``x-max-length: 1`` overwrites)."""
-        channel = await self._get_channel()
-        name = f"{prefix}{task_id}"
-        await channel.declare_queue(name, arguments=self._kv_args(ttl_s))
-        await channel.default_exchange.publish(
-            aio_pika.Message(value.encode()),
-            routing_key=name,
-        )
+        async with self._lock:
+            channel = await self._ensure_channel()
+            name = f"{prefix}{task_id}"
+            await self._declare_queue_robust(channel, name, self._kv_args(ttl_s))
+            await channel.default_exchange.publish(
+                aio_pika.Message(value.encode()),
+                routing_key=name,
+            )
 
     async def _kv_get(
         self, prefix: str, task_id: str, ttl_s: int, *, peek: bool = False,
@@ -125,31 +162,33 @@ class RabbitMQBackend(Backend):
         reads still see it (used for cancellation flags).  Otherwise the
         message is consumed.
         """
-        channel = await self._get_channel()
-        name = f"{prefix}{task_id}"
-        queue = await channel.declare_queue(
-            name, arguments=self._kv_args(ttl_s),
-        )
-        msg = await queue.get(fail=False, no_ack=not peek)
-        if msg is None:
-            return None
-        if peek:
-            await msg.nack(requeue=True)
-        raw: str = msg.body.decode()
-        return raw
+        async with self._lock:
+            channel = await self._ensure_channel()
+            name = f"{prefix}{task_id}"
+            queue = await self._declare_queue_robust(
+                channel, name, self._kv_args(ttl_s),
+            )
+            msg = await queue.get(fail=False, no_ack=not peek)
+            if msg is None:
+                return None
+            if peek:
+                await msg.nack(requeue=True)
+            raw: str = msg.body.decode()
+            return raw
 
     # -- Backend interface: tasks -----------------------------------------------
 
     async def submit(self, task_json: str) -> None:
-        channel = await self._get_channel()
-        await channel.declare_queue(self._task_queue_name, durable=True)
-        await channel.default_exchange.publish(
-            aio_pika.Message(
-                task_json.encode(),
-                delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
-            ),
-            routing_key=self._task_queue_name,
-        )
+        async with self._lock:
+            channel = await self._ensure_channel()
+            await channel.declare_queue(self._task_queue_name, durable=True)
+            await channel.default_exchange.publish(
+                aio_pika.Message(
+                    task_json.encode(),
+                    delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                ),
+                routing_key=self._task_queue_name,
+            )
 
     async def listen(self) -> AsyncIterator[str]:
         channel = await self._new_channel()
@@ -169,13 +208,14 @@ class RabbitMQBackend(Backend):
     # -- Backend interface: results ---------------------------------------------
 
     async def send_result(self, task_id: str, result_json: str) -> None:
-        channel = await self._get_channel()
-        name = f"{self.RESULT_PREFIX}{task_id}"
-        await channel.declare_queue(name, arguments=self._result_args())
-        await channel.default_exchange.publish(
-            aio_pika.Message(result_json.encode()),
-            routing_key=name,
-        )
+        async with self._lock:
+            channel = await self._ensure_channel()
+            name = f"{self.RESULT_PREFIX}{task_id}"
+            await channel.declare_queue(name, arguments=self._result_args())
+            await channel.default_exchange.publish(
+                aio_pika.Message(result_json.encode()),
+                routing_key=name,
+            )
 
     async def get_result(self, task_id: str, timeout: float | None = None) -> str:
         channel = await self._new_channel()
@@ -209,17 +249,18 @@ class RabbitMQBackend(Backend):
                 await channel.close()
 
     async def try_get_result(self, task_id: str) -> str | None:
-        channel = await self._get_channel()
-        name = f"{self.RESULT_PREFIX}{task_id}"
-        queue = await channel.declare_queue(
-            name, arguments=self._result_args(),
-        )
-        msg = await queue.get(fail=False)
-        if msg is None:
-            return None
-        await msg.ack()
-        raw: str = msg.body.decode()
-        return raw
+        async with self._lock:
+            channel = await self._ensure_channel()
+            name = f"{self.RESULT_PREFIX}{task_id}"
+            queue = await channel.declare_queue(
+                name, arguments=self._result_args(),
+            )
+            msg = await queue.get(fail=False)
+            if msg is None:
+                return None
+            await msg.ack()
+            raw: str = msg.body.decode()
+            return raw
 
     # -- Heartbeat -------------------------------------------------------------
 
@@ -230,8 +271,12 @@ class RabbitMQBackend(Backend):
         )
 
     async def get_heartbeat(self, task_id: str) -> float | None:
+        # Consume (ack) the heartbeat rather than peeking. This avoids a
+        # RabbitMQ race where nack+requeue bypasses x-max-length=1 and causes
+        # the stale heartbeat to be returned on every subsequent poll, making
+        # stall detection fire spuriously.
         raw = await self._kv_get(
-            self.HEARTBEAT_PREFIX, task_id, self.HEARTBEAT_TTL,
+            self.HEARTBEAT_PREFIX, task_id, self.HEARTBEAT_TTL, peek=False,
         )
         return float(raw) if raw is not None else None
 
@@ -257,20 +302,64 @@ class RabbitMQBackend(Backend):
 
     async def get_progress(self, task_id: str) -> str | None:
         return await self._kv_get(
-            self.PROGRESS_PREFIX, task_id, self.PROGRESS_TTL,
+            self.PROGRESS_PREFIX, task_id, self.PROGRESS_TTL, peek=True,
+        )
+
+    # -- Schedule cancellation -------------------------------------------------
+
+    async def cancel_schedule(self, schedule_id: str) -> None:
+        await self._kv_put(
+            self.SCHEDULE_PREFIX, schedule_id, "1", self.SCHEDULE_TTL,
+        )
+
+    async def is_schedule_cancelled(self, schedule_id: str) -> bool:
+        raw = await self._kv_get(
+            self.SCHEDULE_PREFIX, schedule_id, self.SCHEDULE_TTL, peek=True,
+        )
+        return raw is not None
+
+    # -- Throttle --------------------------------------------------------------
+    # Throttle state is stored as an expiry timestamp in the message body.
+    # Both check and record always declare the queue with the same fixed TTL
+    # (THROTTLE_QUEUE_TTL) so RabbitMQ never sees conflicting queue arguments.
+    # The actual cooldown window is enforced by comparing time.time() against
+    # the stored expiry value, not by x-message-ttl.
+
+    async def check_throttle(self, function_name: str) -> bool:
+        # Uses THROTTLE_QUEUE_TTL for both declaration and storage so that
+        # check_throttle and record_throttle always declare with identical
+        # queue arguments (avoiding PRECONDITION_FAILED on redeclaration).
+        # The actual throttle deadline is stored as a UNIX timestamp in the
+        # message body.
+        raw = await self._kv_get(
+            self.THROTTLE_PREFIX, function_name,
+            self.THROTTLE_QUEUE_TTL, peek=True,
+        )
+        if raw is None:
+            return True  # no throttle entry → execution allowed
+        return time.time() >= float(raw)  # allowed only if past expiry
+
+    async def record_throttle(
+        self, function_name: str, throttle_seconds: float,
+    ) -> None:
+        expiry = time.time() + throttle_seconds
+        await self._kv_put(
+            self.THROTTLE_PREFIX, function_name,
+            str(expiry), self.THROTTLE_QUEUE_TTL,
         )
 
     # -- Result notifications --------------------------------------------------
 
     async def notify_result(self, task_id: str) -> None:
-        channel = await self._get_channel()
-        exchange = await channel.declare_exchange(
-            self.NOTIFY_EXCHANGE, aio_pika.ExchangeType.FANOUT,
-        )
-        await exchange.publish(
-            aio_pika.Message(task_id.encode()),
-            routing_key="",
-        )
+        async with self._lock:
+            channel = await self._ensure_channel()
+            exchange = await channel.declare_exchange(
+                self.NOTIFY_EXCHANGE, aio_pika.ExchangeType.FANOUT,
+            )
+            await exchange.publish(
+                aio_pika.Message(task_id.encode()),
+                routing_key="",
+            )
 
     async def subscribe_results(self) -> AsyncIterator[str]:
         channel = await self._new_channel()

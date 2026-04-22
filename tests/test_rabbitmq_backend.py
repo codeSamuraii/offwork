@@ -110,6 +110,7 @@ class TestRabbitMQBackend:
         await backend.send_heartbeat("t1")
         hb = await backend.get_heartbeat("t1")
         assert hb is not None and hb > 0
+        assert await backend.get_heartbeat("t1") == hb
 
     @pytest.mark.asyncio
     async def test_cancellation(self, backend: "RabbitMQBackend") -> None:
@@ -125,6 +126,7 @@ class TestRabbitMQBackend:
         await backend.send_progress("t1", '{"current": 50}')
         raw = await backend.get_progress("t1")
         assert raw == '{"current": 50}'
+        assert await backend.get_progress("t1") == raw
 
     @pytest.mark.asyncio
     async def test_progress_overwrite(self, backend: "RabbitMQBackend") -> None:

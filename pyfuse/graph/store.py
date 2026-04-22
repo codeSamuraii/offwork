@@ -1,5 +1,6 @@
 """Content-addressable store for serializing and reconstructing functions."""
 
+import ast
 import json
 import logging
 from typing import Any, Self
@@ -72,6 +73,46 @@ def _apply_closure_transforms(
     return source
 
 
+class _SuperRewriter(ast.NodeTransformer):
+    """Replace ``super()`` with ``super(ClassName, self)`` or ``super(ClassName, cls)``."""
+
+    def __init__(self, class_name: str) -> None:
+        self._class_name = class_name
+        self._first_param: str | None = None
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self._first_param = node.args.args[0].arg if node.args.args else "self"
+        self.generic_visit(node)
+        self._first_param = None
+        return node
+
+    visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
+
+    def visit_Call(self, node: ast.Call) -> ast.Call:
+        self.generic_visit(node)
+        if (
+            isinstance(node.func, ast.Name)
+            and node.func.id == "super"
+            and not node.args
+            and not node.keywords
+        ):
+            node.args = [
+                ast.Name(id=self._class_name, ctx=ast.Load()),
+                ast.Name(id=self._first_param or "self", ctx=ast.Load()),
+            ]
+        return node
+
+
+def _rewrite_bare_super(source: str, class_name: str) -> str:
+    """Replace zero-arg ``super()`` with ``super(ClassName, self/cls)``."""
+    if "super()" not in source:
+        return source
+    tree = ast.parse(source)
+    tree = _SuperRewriter(class_name).visit(tree)
+    ast.fix_missing_locations(tree)
+    return ast.unparse(tree)
+
+
 def _indent_method(source: str) -> str:
     """Indent a method source for embedding inside a class block."""
     return "\n".join(
@@ -89,7 +130,9 @@ def _build_class_block(
     class_name = owner_class.rsplit(".", 1)[-1]
 
     method_sources = [
-        _indent_method(_apply_closure_transforms(nodes[qname], nodes))
+        _indent_method(_rewrite_bare_super(
+            _apply_closure_transforms(nodes[qname], nodes), class_name,
+        ))
         for qname in member_qnames
     ]
 
@@ -119,7 +162,8 @@ def _build_class_block(
 
     decorator_lines = "".join(f"@{d}\n" for d in class_decorators)
     attr_block = "".join(
-        _indent_method(attr) + "\n\n" for attr in class_attrs
+        _indent_method(_rewrite_bare_super(attr, class_name)) + "\n\n"
+        for attr in class_attrs
     )
 
     return decorator_lines + header + attr_block + "\n\n".join(method_sources)

@@ -362,12 +362,16 @@ def _make_progress_callback(
         "flushed": False,        # set by flush() to block late sends
     }
 
+    async def _send(data_json: str) -> None:
+        try:
+            await backend.send_progress(task_id, data_json)
+        except Exception:
+            logger.debug("Progress send failed for task %s", task_id, exc_info=True)
+
     def _do_send(data_json: str) -> None:
         if state["flushed"]:
             return
-        state["task"] = asyncio.create_task(
-            backend.send_progress(task_id, data_json),
-        )
+        state["task"] = asyncio.create_task(_send(data_json))
 
     def _on_progress(
         current: float,
@@ -395,16 +399,16 @@ def _make_progress_callback(
 
     async def _flush() -> None:
         state["flushed"] = True
-        # Cancel any in-flight fire-and-forget send to prevent stale overwrites
+        # Do not cancel an in-flight backend RPC on the shared channel.
+        # Wait for it, then send the authoritative final state.
         t: asyncio.Task[None] | None = state.get("task")
-        if t is not None and not t.done():
-            t.cancel()
+        if t is not None:
             with contextlib.suppress(asyncio.CancelledError):
                 await t
         # Always send the authoritative final state
         if state["latest"] is not None:
             data_json = json.dumps(state["latest"], separators=(",", ":"))
-            await backend.send_progress(task_id, data_json)
+            await _send(data_json)
 
     return _on_progress, _flush
 
@@ -518,7 +522,11 @@ async def _handle_task(
     finally:
         _progress_callback.reset(token)
         cancel_event.set()
-        hb_task.cancel()
+        # Do not hb_task.cancel() — cancelling can interrupt an
+        # in-flight AMQP RPC (e.g. Queue.Declare) on the shared
+        # channel, causing it to close and preventing send_result
+        # from delivering the result.  The cancel_event already
+        # signals the loop to exit promptly.
         with contextlib.suppress(asyncio.CancelledError):
             await hb_task
 

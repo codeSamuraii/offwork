@@ -19,6 +19,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from datetime import timedelta
 from typing import Any
@@ -46,13 +47,20 @@ pytestmark = pytest.mark.skipif(not BACKEND_URL, reason="PYFUSE_TEST_BACKEND not
 # Worker subprocess management
 # ---------------------------------------------------------------------------
 
+_WORKER_READY_TIMEOUT = 60  # seconds to wait for "Listening" log line
+
+
 def _start_worker(
     backend: str,
     *,
     signing_token: str | None = None,
     sandbox: bool = False,
 ) -> subprocess.Popen[bytes]:
-    """Launch ``python -m pyfuse worker`` in a subprocess."""
+    """Launch ``python -m pyfuse worker`` in a subprocess.
+
+    Waits for the worker to print its "Listening for tasks" log line
+    before returning, so the caller knows it is actually ready.
+    """
     cmd = [sys.executable, "-m", "pyfuse", "worker", "--backend", backend]
     if signing_token:
         cmd.append("--require-signing")
@@ -67,14 +75,35 @@ def _start_worker(
         cmd,
         env=env,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
     )
-    # Give the worker time to connect and start listening
-    time.sleep(3)
-    assert proc.poll() is None, (
-        f"Worker exited early with code {proc.returncode}:\n"
-        + (proc.stderr.read().decode() if proc.stderr else "")
-    )
+
+    # Read worker output in a background thread, mirror it live, and wait
+    # for the ready signal so callers only proceed once the worker is up.
+    ready = threading.Event()
+    output_lines: list[str] = []
+
+    def _drain_output() -> None:
+        assert proc.stdout is not None
+        for raw in proc.stdout:
+            line = raw.decode(errors="replace")
+            output_lines.append(line)
+            sys.stderr.write(line)
+            sys.stderr.flush()
+            if "Listening" in line:
+                ready.set()
+
+    reader = threading.Thread(target=_drain_output, daemon=True)
+    reader.start()
+
+    if not ready.wait(timeout=_WORKER_READY_TIMEOUT):
+        proc.kill()
+        proc.wait(timeout=5)
+        raise RuntimeError(
+            f"Worker not ready after {_WORKER_READY_TIMEOUT}s.\n"
+            f"worker output:\n{''.join(output_lines)}"
+        )
+
     return proc
 
 
@@ -206,13 +235,14 @@ class TestBasicExecution:
 
 class TestProgressAndCancellation:
     async def test_progress_reporting(self, worker: subprocess.Popen[bytes]) -> None:
-        import time as _time
+
 
         @trace
         def slow_with_progress(n: int) -> int:
+            import time
             total = 0
             for i in range(n):
-                _time.sleep(0.1)
+                time.sleep(0.1)
                 total += i
                 progress(i + 1, n)
             return total
@@ -308,18 +338,18 @@ class TestErrorHandling:
 
     async def test_function_with_dependencies(self, worker: subprocess.Popen[bytes]) -> None:
         """Multi-level dependency chain works end-to-end."""
-        def step_a(x: int) -> int:
+        def _step_a(x: int) -> int:
             return x + 1
 
-        def step_b(x: int) -> int:
-            return step_a(x) * 2
+        def _step_b(x: int) -> int:
+            return _step_a(x) * 2
 
         @trace
         def pipeline(x: int) -> int:
-            return step_b(x) + 10
+            return _step_b(x) + 10
 
         result = await pipeline.run(5)
-        assert result == 22  # step_a(5)=6, step_b(5)=12, pipeline(5)=22
+        assert result == 22  # _step_a(5)=6, _step_b(5)=12, pipeline(5)=22
 
 
 class TestClassMethods:
@@ -338,3 +368,84 @@ class TestClassMethods:
 
         result = await use_calculator.run(42)
         assert result == 142
+
+
+# ---------------------------------------------------------------------------
+# Run as script — simulate CI matrix
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import sys
+    import itertools
+
+    def _flush_backend(backend_url: str) -> None:
+        """Remove leftover pyfuse state so permutations don't interfere."""
+        scheme = backend_url.split("://", 1)[0].lower()
+        if scheme in ("redis", "rediss"):
+            try:
+                import redis as _redis
+                r = _redis.Redis.from_url(backend_url)
+                for key in r.scan_iter("pyfuse:*"):
+                    r.delete(key)
+                r.close()
+            except Exception:
+                pass
+
+    BACKENDS = [
+        ("redis", "redis://localhost:6379"),
+        ("rabbitmq", "amqp://localhost:5672"),
+    ]
+    SIGNING_OPTIONS = [False, True]
+    SANDBOX_OPTIONS = [False, True]
+
+    passed, failed, skipped = 0, 0, 0
+    extra_pytest_args = sys.argv[1:]
+    if "-s" not in extra_pytest_args and not any(
+        arg.startswith("--capture=") for arg in extra_pytest_args
+    ):
+        extra_pytest_args = ["--capture=sys", *extra_pytest_args]
+
+    for (backend_name, backend_url), signing, sandbox in itertools.product(
+        BACKENDS, SIGNING_OPTIONS, SANDBOX_OPTIONS,
+    ):
+        _flush_backend(backend_url)
+        label = f"e2e · {backend_name} · sign={signing} · sandbox={sandbox}"
+        print(f"\n{'=' * 60}")
+        print(f"  {label}")
+        print(f"{'=' * 60}\n")
+
+        env = os.environ.copy()
+        env["PYFUSE_TEST_BACKEND"] = backend_url
+        env["PYFUSE_TEST_SIGNING"] = "1" if signing else "0"
+        env["PYFUSE_TEST_SANDBOX"] = "1" if sandbox else "0"
+
+        if signing:
+            token = generate_token()
+            env["PYFUSE_SIGNING_TOKEN"] = token
+
+        cmd = [sys.executable, "-m", "pytest", __file__, "--tb=short", "-p", "no:warnings", "--no-header"] + extra_pytest_args
+        print(f"Running command: python {' '.join(cmd[1:])}")
+
+        result = subprocess.run(
+            cmd,
+            env=env,
+            timeout=120
+        )
+
+        if result.returncode == 0:
+            passed += 1
+            print(f"\n  ✓ PASSED: {label}")
+        elif result.returncode == 5:
+            # pytest exit code 5 = no tests collected (skip)
+            skipped += 1
+            print(f"\n  ○ SKIPPED: {label}")
+        else:
+            failed += 1
+            print(f"\n  ✗ FAILED: {label}")
+            break
+
+    print(f"\n{'=' * 60}")
+    print(f"  Results: {passed} passed, {failed} failed, {skipped} skipped")
+    print(f"{'=' * 60}")
+
+    raise SystemExit(1 if failed else 0)

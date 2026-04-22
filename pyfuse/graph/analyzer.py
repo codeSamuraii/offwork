@@ -346,9 +346,15 @@ def _resolve_owner_class(qualname: str) -> str | None:
     if len(parts) == 1:
         return None
     prefix = parts[0]
-    if "<locals>" in prefix:
-        return None
-    return prefix
+    if "<locals>" not in prefix:
+        return prefix
+    # For nested classes like "outer.<locals>.MyClass.__init__",
+    # extract the class name after the last "<locals>." segment.
+    after_locals = prefix.rsplit("<locals>.", 1)[-1]
+    # If there's still a class name (not empty, not another scope marker)
+    if after_locals and "<" not in after_locals:
+        return after_locals
+    return None
 
 
 def _extract_annotation_type_names(annotation: ast.expr) -> set[str]:

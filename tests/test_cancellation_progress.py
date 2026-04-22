@@ -83,6 +83,11 @@ class InMemoryBackend(Backend):
         self.stop = True
 
 
+class FailingProgressBackend(InMemoryBackend):
+    async def send_progress(self, task_id: str, progress_json: str) -> None:
+        raise RuntimeError("progress backend unavailable")
+
+
 # ---------------------------------------------------------------------------
 # Store helpers
 # ---------------------------------------------------------------------------
@@ -429,6 +434,26 @@ class TestProgressInjection:
         assert info.total == 3
 
         # And the result should be correct
+        raw_result = await backend.try_get_result(task.task_id)
+        assert raw_result is not None
+        env = ResultEnvelope.from_json(raw_result)
+        assert env.status == "ok"
+        assert env.result == ["A", "B", "C"]
+
+    @pytest.mark.asyncio
+    async def test_handle_task_sends_result_when_progress_fails(self) -> None:
+        _, json_str = _progress_store()
+        task = Task(
+            graph_json=json_str,
+            function_name="process",
+            args=( ["a", "b", "c"],),
+        )
+
+        backend = FailingProgressBackend()
+        worker = Worker(auto_install=False)
+
+        await _handle_task(worker, backend, task.to_json())
+
         raw_result = await backend.try_get_result(task.task_id)
         assert raw_result is not None
         env = ResultEnvelope.from_json(raw_result)

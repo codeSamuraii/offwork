@@ -703,7 +703,7 @@ def test_super_init_call(tmp_path: Path) -> None:
     source = reconstruct(serialize(), "create")
     assert "class Base:" in source
     assert "class Child(Base):" in source
-    assert "super().__init__(x)" in source
+    assert "super(Child, self).__init__(x)" in source
     assert "def create(" in source
 
     ns: dict[str, object] = {}

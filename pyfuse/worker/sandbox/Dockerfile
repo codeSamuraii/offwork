@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 LABEL maintainer="pyfuse" \
       description="pyfuse sandbox guest agent"
@@ -20,5 +20,5 @@ USER pyfuse
 
 EXPOSE 9749
 
-ENTRYPOINT ["python3", "/home/pyfuse/guest_agent.py"]
+ENTRYPOINT ["python", "-u", "/home/pyfuse/guest_agent.py"]
 CMD ["--host", "0.0.0.0", "--port", "9749"]
