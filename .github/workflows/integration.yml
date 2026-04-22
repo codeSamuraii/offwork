@@ -1,0 +1,133 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: integration-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # -----------------------------------------------------------------------
+  # Unit tests (no external services)
+  # -----------------------------------------------------------------------
+  unit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install pyfuse + dev deps
+        run: |
+          pip install -e ".[redis,rabbitmq]"
+          pip install pytest pytest-asyncio
+
+      - name: Run unit tests
+        run: pytest tests/ --ignore=tests/test_e2e.py -x -q
+
+  # -----------------------------------------------------------------------
+  # End-to-end matrix
+  # -----------------------------------------------------------------------
+  e2e:
+    runs-on: ubuntu-latest
+    needs: unit
+    strategy:
+      fail-fast: false
+      matrix:
+        backend:
+          - name: redis
+            url: redis://localhost:6379
+            extras: redis
+          - name: rabbitmq
+            url: amqp://localhost
+            extras: rabbitmq
+        signing: [false, true]
+        sandbox: [false, true]
+
+    name: "e2e · ${{ matrix.backend.name }} · sign=${{ matrix.signing }} · sandbox=${{ matrix.sandbox }}"
+
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+      rabbitmq:
+        image: rabbitmq:3
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # --- Install --------------------------------------------------------
+      - name: Install pyfuse + backend extras
+        run: |
+          pip install -e ".[${{ matrix.backend.extras }}]"
+          pip install pytest pytest-asyncio pytest-timeout
+
+      # --- Sandbox setup --------------------------------------------------
+      - name: Build sandbox Docker image
+        if: matrix.sandbox
+        run: bash scripts/setup_sandbox_docker.sh
+
+      # --- Signing setup --------------------------------------------------
+      - name: Generate signing token
+        if: matrix.signing
+        run: |
+          TOKEN=$(python -c "from pyfuse.core.token import generate_token; print(generate_token())")
+          echo "PYFUSE_SIGNING_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      # --- Run e2e tests --------------------------------------------------
+      - name: Run end-to-end tests
+        env:
+          PYFUSE_TEST_BACKEND: ${{ matrix.backend.url }}
+          PYFUSE_TEST_SIGNING: ${{ matrix.signing && '1' || '0' }}
+          PYFUSE_TEST_SANDBOX: ${{ matrix.sandbox && '1' || '0' }}
+        run: pytest tests/test_e2e.py -x -v --timeout=120
+
+      # --- Dump worker logs on failure ------------------------------------
+      - name: Show worker stderr on failure
+        if: failure()
+        run: |
+          echo "=== Worker process logs ==="
+          # Collected by the test fixtures via subprocess
+          cat /tmp/pyfuse-worker-*.log 2>/dev/null || echo "(no log files)"
+
+  # -----------------------------------------------------------------------
+  # Mypy type checking
+  # -----------------------------------------------------------------------
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install pyfuse + dev deps
+        run: |
+          pip install -e ".[redis,rabbitmq]"
+          pip install mypy pytest pytest-asyncio
+
+      - name: Run mypy
+        run: mypy pyfuse/
