@@ -128,28 +128,36 @@ def _try_get_lambda_source(func: Callable[..., object]) -> str | None:
 
 def _capture_closure(
     func: Callable[..., object],
-) -> tuple[dict[str, str], dict[str, str], dict[str, Callable[..., object]]]:
+) -> tuple[dict[str, str], dict[str, str], dict[str, Callable[..., object]], list[ImportInfo]]:
     """Extract closure variables and traced function references from *func*.
 
-    Returns ``(closure_vars, closure_func_refs, closure_func_objects)``
+    Returns ``(closure_vars, closure_func_refs, closure_func_objects, closure_module_imports)``
     where *closure_vars* maps variable names to repr strings,
-    *closure_func_refs* maps variable names to qualified names, and
+    *closure_func_refs* maps variable names to qualified names,
     *closure_func_objects* maps qualified names to the actual callable
-    objects (for auto-registration of non-traced functions).
+    objects (for auto-registration of non-traced functions), and
+    *closure_module_imports* is a list of :class:`ImportInfo` for module
+    objects found in the closure (from inline imports).
     """
     closure_vars: dict[str, str] = {}
     closure_func_refs: dict[str, str] = {}
     closure_func_objects: dict[str, Callable[..., object]] = {}
+    closure_module_imports: list[ImportInfo] = []
 
     if not func.__code__.co_freevars:
-        return closure_vars, closure_func_refs, closure_func_objects
+        return closure_vars, closure_func_refs, closure_func_objects, closure_module_imports
 
     try:
         closure_info = inspect.getclosurevars(func)
     except ValueError:
-        return closure_vars, closure_func_refs, closure_func_objects
+        return closure_vars, closure_func_refs, closure_func_objects, closure_module_imports
 
     for name, value in closure_info.nonlocals.items():
+        # Skip the implicit __class__ cell injected by Python for super() calls.
+        # Reconstructed code uses explicit super(ClassName, self) instead.
+        if name == "__class__" and inspect.isclass(value):
+            continue
+
         try:
             repr_value = repr(value)
         except Exception:
@@ -166,6 +174,17 @@ def _capture_closure(
             continue
         except SyntaxError:
             pass
+
+        # Module objects from inline imports (e.g. `import time as _time`)
+        if inspect.ismodule(value):
+            mod_name = value.__name__
+            if name == mod_name or name == mod_name.split(".")[0]:
+                stmt = f"import {mod_name}"
+            else:
+                stmt = f"import {mod_name} as {name}"
+            closure_module_imports.append(ImportInfo(statement=stmt, bound_name=name))
+            logger.debug("Closure var '%s' is module %s", name, mod_name)
+            continue
 
         # Callables: prefer source-level capture over serialization
         if getattr(value, "__pyfuse_traced__", False):
@@ -210,7 +229,7 @@ def _capture_closure(
             stacklevel=3,
         )
 
-    return closure_vars, closure_func_refs, closure_func_objects
+    return closure_vars, closure_func_refs, closure_func_objects, closure_module_imports
 
 
 def _mermaid_node_id(qname: str) -> str:
@@ -325,18 +344,24 @@ class Graph(TracingMixin):
                 "unavailable. Functions must be defined in .py source files."
             ) from exc
 
-        closure_vars, closure_func_refs, closure_func_objects = _capture_closure(original)
+        closure_vars, closure_func_refs, closure_func_objects, closure_module_imports = _capture_closure(original)
 
         for ref_qname, func_obj in closure_func_objects.items():
             if ref_qname not in self._nodes:
                 self._auto_register(func_obj)
+
+        # Add module imports from closures (inline imports like `import time as _time`)
+        existing = {imp.bound_name for imp in analysis.imports}
+        for imp in closure_module_imports:
+            if imp.bound_name not in existing:
+                analysis.imports.append(imp)
+                existing.add(imp.bound_name)
 
         if closure_vars:
             closure_names: set[str] = set()
             for cv in closure_vars.values():
                 closure_names |= get_used_names(cv)
             if closure_names:
-                existing = {imp.bound_name for imp in analysis.imports}
                 all_imports = get_module_imports(original)
                 for imp in all_imports:
                     if imp.bound_name in closure_names and imp.bound_name not in existing:
@@ -396,6 +421,30 @@ class Graph(TracingMixin):
             )
             return False
 
+        closure_vars, closure_func_refs, closure_func_objects, closure_module_imports = _capture_closure(func)
+
+        # Add module imports from closures (inline imports)
+        existing_names = {imp.bound_name for imp in analysis.imports}
+        for imp in closure_module_imports:
+            if imp.bound_name not in existing_names:
+                analysis.imports.append(imp)
+                existing_names.add(imp.bound_name)
+
+        # Add imports needed by closure var expressions
+        if closure_vars:
+            closure_names: set[str] = set()
+            for cv in closure_vars.values():
+                closure_names |= get_used_names(cv)
+            if closure_names:
+                try:
+                    all_imports = get_module_imports(func)
+                    for imp in all_imports:
+                        if imp.bound_name in closure_names and imp.bound_name not in existing_names:
+                            analysis.imports.append(imp)
+                            existing_names.add(imp.bound_name)
+                except (OSError, TypeError):
+                    pass
+
         dependencies = [
             dep for dep in detect_traced_dependencies(
                 analysis.source, func.__module__, self._nodes,
@@ -403,6 +452,9 @@ class Graph(TracingMixin):
             )
             if dep != qualified_name
         ]
+        for ref_qname in closure_func_refs.values():
+            if ref_qname != qualified_name and ref_qname not in dependencies:
+                dependencies.append(ref_qname)
 
         node = FunctionNode(
             qualified_name=qualified_name,
@@ -412,11 +464,18 @@ class Graph(TracingMixin):
             imports=analysis.imports,
             dependencies=dependencies,
             owner_class=analysis.owner_class,
+            closure_vars=closure_vars,
+            closure_func_refs=closure_func_refs,
             module_vars=analysis.module_vars,
         )
         self._nodes[qualified_name] = node
         self._funcs[qualified_name] = func
         logger.info("Auto-registered untraced dependency %s", qualified_name)
+
+        # Auto-register closure function deps (after node is in self._nodes to prevent re-entry)
+        for ref_qname, func_obj in closure_func_objects.items():
+            if ref_qname not in self._nodes:
+                self._auto_register(func_obj)
 
         self._discover_untraced_deps(func.__module__, node)
         return True

@@ -1539,3 +1539,159 @@ def test_closure_pickle_fallback_custom_class(tmp_path: Path) -> None:
     node = get_graph().nodes["cvpickle.outer.<locals>.inner"]
     assert "cfg" in node.closure_vars
     assert "__import__('pickle')" in node.closure_vars["cfg"]
+
+# ---------------------------------------------------------------------------
+# Nested function resolution
+# ---------------------------------------------------------------------------
+
+
+def test_nested_function_chain_via_closure(tmp_path: Path) -> None:
+    """Nested functions referencing each other via closures are captured."""
+    mod = create_module(
+        tmp_path,
+        "nested_chain",
+        (
+            "from pyfuse import trace\n\n"
+            "def outer():\n"
+            "    def step_a(x):\n"
+            "        return x + 1\n\n"
+            "    def step_b(x):\n"
+            "        return step_a(x) * 2\n\n"
+            "    @trace\n"
+            "    def pipeline(x):\n"
+            "        return step_b(x) + 10\n\n"
+            "    return pipeline\n"
+        ),
+    )
+    func = mod.outer()
+    graph = get_graph()
+    node = graph.nodes["nested_chain.outer.<locals>.pipeline"]
+    # step_b should be captured as a closure func ref
+    assert "step_b" in node.closure_func_refs
+
+    # step_b itself should be auto-registered with step_a as its closure ref
+    step_b_qname = node.closure_func_refs["step_b"]
+    assert step_b_qname in graph.nodes
+    step_b_node = graph.nodes[step_b_qname]
+    assert "step_a" in step_b_node.closure_func_refs
+
+    # Reconstructed code should be runnable
+    source = reconstruct(serialize(), "pipeline")
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    assert ns["pipeline"](5) == 22  # step_a(5)=6, step_b(5)=12, pipeline(5)=22
+
+
+def test_nested_function_in_class_method(tmp_path: Path) -> None:
+    """Nested functions inside a class method are resolved via closures."""
+    mod = create_module(
+        tmp_path,
+        "nested_cls",
+        (
+            "from pyfuse import trace\n\n"
+            "class MyClass:\n"
+            "    def run(self):\n"
+            "        def helper(x):\n"
+            "            return x * 2\n\n"
+            "        @trace\n"
+            "        def compute(x):\n"
+            "            return helper(x) + 1\n\n"
+            "        return compute\n"
+        ),
+    )
+    obj = mod.MyClass()
+    func = obj.run()
+    graph = get_graph()
+    node = graph.nodes["nested_cls.MyClass.run.<locals>.compute"]
+    assert "helper" in node.closure_func_refs
+
+    source = reconstruct(serialize(), "compute")
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    assert ns["compute"](5) == 11
+
+
+# ---------------------------------------------------------------------------
+# Inline import resolution
+# ---------------------------------------------------------------------------
+
+
+def test_inline_import_module_captured(tmp_path: Path) -> None:
+    """Module from inline import in closure is captured as import statement."""
+    mod = create_module(
+        tmp_path,
+        "inline_imp",
+        (
+            "from pyfuse import trace\n\n"
+            "def outer():\n"
+            "    import json as _json\n\n"
+            "    @trace\n"
+            "    def serialize(data):\n"
+            "        return _json.dumps(data)\n\n"
+            "    return serialize\n"
+        ),
+    )
+    func = mod.outer()
+    graph = get_graph()
+    node = graph.nodes["inline_imp.outer.<locals>.serialize"]
+    import_stmts = [imp.statement for imp in node.imports]
+    assert any("json" in s for s in import_stmts)
+
+    source = reconstruct(serialize(), "serialize")
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    assert ns["serialize"]({"a": 1}) == '{"a": 1}'
+
+
+def test_inline_import_aliased_module(tmp_path: Path) -> None:
+    """Aliased inline import (import X as Y) generates correct statement."""
+    mod = create_module(
+        tmp_path,
+        "inline_alias",
+        (
+            "from pyfuse import trace\n\n"
+            "def outer():\n"
+            "    import os.path as _osp\n\n"
+            "    @trace\n"
+            "    def check(p):\n"
+            "        return _osp.exists(p)\n\n"
+            "    return check\n"
+        ),
+    )
+    func = mod.outer()
+    graph = get_graph()
+    node = graph.nodes["inline_alias.outer.<locals>.check"]
+    import_stmts = [imp.statement for imp in node.imports]
+    assert any("_osp" in s for s in import_stmts)
+
+    source = reconstruct(serialize(), "check")
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    assert ns["check"]("/") is True
+
+
+def test_inline_import_same_name_module(tmp_path: Path) -> None:
+    """Inline import with no alias (import json) captured correctly."""
+    mod = create_module(
+        tmp_path,
+        "inline_same",
+        (
+            "from pyfuse import trace\n\n"
+            "def outer():\n"
+            "    import json\n\n"
+            "    @trace\n"
+            "    def dump(data):\n"
+            "        return json.dumps(data)\n\n"
+            "    return dump\n"
+        ),
+    )
+    func = mod.outer()
+    graph = get_graph()
+    node = graph.nodes["inline_same.outer.<locals>.dump"]
+    import_stmts = [imp.statement for imp in node.imports]
+    assert "import json" in import_stmts
+
+    source = reconstruct(serialize(), "dump")
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    assert ns["dump"]([1, 2]) == "[1, 2]"
