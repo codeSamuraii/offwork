@@ -146,9 +146,14 @@ class Result:
         if self._envelope is not None:
             return self._unwrap()
 
+        logger.debug("Waiting for result of task %s", self._task_id[:8])
         if stall_timeout is None:
             raw = await self._backend.get_result(self._task_id, timeout=timeout)
             self._envelope = ResultEnvelope.from_json(raw)
+            logger.debug(
+                "Received result for task %s: status=%s",
+                self._task_id[:8], self._envelope.status,
+            )
             return self._unwrap()
 
         await self._wait_with_stall_detection(timeout, stall_timeout)
@@ -168,6 +173,10 @@ class Result:
             raw = await self._backend.try_get_result(self._task_id)
             if raw is not None:
                 self._envelope = ResultEnvelope.from_json(raw)
+                logger.debug(
+                    "Received result for task %s: status=%s",
+                    self._task_id[:8], self._envelope.status,
+                )
                 return
 
             if deadline is not None:
@@ -177,6 +186,7 @@ class Result:
                         f"Timed out waiting for result of task {self._task_id}"
                     )
 
+            logger.debug("Polling heartbeat for task %s", self._task_id[:8])
             hb = await self._backend.get_heartbeat(self._task_id)
             now = time.monotonic()
             if hb is not None and hb != last_hb_value:

@@ -66,6 +66,9 @@ def _start_worker(
         cmd.append("--require-signing")
     if sandbox:
         cmd.append("--sandbox")
+    log_level = os.environ.get("PYFUSE_LOG_LEVEL", "")
+    if log_level:
+        cmd.extend(["--log-level", log_level])
 
     env = os.environ.copy()
     if signing_token:
@@ -403,7 +406,7 @@ if __name__ == "__main__":
     if "-s" not in extra_pytest_args and not any(
         arg.startswith("--capture=") for arg in extra_pytest_args
     ):
-        extra_pytest_args = ["--capture=sys", *extra_pytest_args]
+        extra_pytest_args = ["--capture=no", *extra_pytest_args]
 
     for (backend_name, backend_url), signing, sandbox in itertools.product(
         BACKENDS, SIGNING_OPTIONS, SANDBOX_OPTIONS,

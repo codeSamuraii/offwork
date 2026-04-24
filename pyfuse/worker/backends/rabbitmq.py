@@ -11,6 +11,7 @@ behave like key-value slots.  Result notifications use a fanout exchange.
 URL scheme: ``amqp://`` or ``amqps://``  (e.g. ``amqp://guest:guest@localhost/``)
 """
 import time
+import hashlib
 import asyncio
 import contextlib
 from typing import Any
@@ -99,6 +100,24 @@ class RabbitMQBackend(Backend):
         return await self._connection.channel()
 
     # -- internal helpers -------------------------------------------------------
+
+    @staticmethod
+    def _safe_suffix(value: str) -> str:
+        """Return an AMQP-safe queue-name suffix for *value*.
+
+        AMQP queue names only allow ``[a-zA-Z0-9-_.:@#,/ ]`` (pamqp enforces
+        this in ``Queue.Declare.validate``).  Function names can legally
+        contain ``<locals>``, ``>``, ``[``, etc., which are rejected.
+        Hash any value that would be invalid (or overlong) so it always
+        produces a stable, valid suffix.
+        """
+        # Fast path: short values that already match the AMQP queue-name
+        # regex can be used verbatim.
+        if len(value) <= 128 and all(
+            c.isalnum() or c in "-_.:@#,/ " for c in value
+        ):
+            return value
+        return hashlib.sha256(value.encode()).hexdigest()[:32]
 
     @staticmethod
     def _kv_args(ttl_s: int) -> dict[str, int]:
@@ -330,9 +349,10 @@ class RabbitMQBackend(Backend):
         # check_throttle and record_throttle always declare with identical
         # queue arguments (avoiding PRECONDITION_FAILED on redeclaration).
         # The actual throttle deadline is stored as a UNIX timestamp in the
-        # message body.
+        # message body.  Function names can contain characters rejected by
+        # the AMQP queue-name grammar (e.g. ``<locals>``), so we hash them.
         raw = await self._kv_get(
-            self.THROTTLE_PREFIX, function_name,
+            self.THROTTLE_PREFIX, self._safe_suffix(function_name),
             self.THROTTLE_QUEUE_TTL, peek=True,
         )
         if raw is None:
@@ -344,7 +364,7 @@ class RabbitMQBackend(Backend):
     ) -> None:
         expiry = time.time() + throttle_seconds
         await self._kv_put(
-            self.THROTTLE_PREFIX, function_name,
+            self.THROTTLE_PREFIX, self._safe_suffix(function_name),
             str(expiry), self.THROTTLE_QUEUE_TTL,
         )
 

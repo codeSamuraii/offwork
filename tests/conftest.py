@@ -1,4 +1,6 @@
 import importlib
+import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -6,6 +8,27 @@ from typing import Any
 import pytest
 
 from pyfuse.graph.graph import Graph
+
+
+def _configure_client_logging() -> None:
+    """Mirror worker logging setup for the pytest process."""
+    level_name = os.environ.get("PYFUSE_LOG_LEVEL", "")
+    if not level_name:
+        return
+    level = getattr(logging, level_name.upper(), None)
+    if level is None:
+        return
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)-7s [client] %(message)s", datefmt="%H:%M:%S",
+    ))
+    pyfuse_logger = logging.getLogger("pyfuse")
+    if not pyfuse_logger.handlers:
+        pyfuse_logger.setLevel(level)
+        pyfuse_logger.addHandler(handler)
+
+
+_configure_client_logging()
 
 
 def create_module(

@@ -172,6 +172,7 @@ async def submit_remote(
 
     unwrapped = inspect.unwrap(func)
     function_name = f"{unwrapped.__module__}.{unwrapped.__qualname__}"
+    logger.debug("Serializing graph for %s", function_name)
     graph_json = Graph.default().serialize(wrapper)
 
     opts = getattr(wrapper, "__pyfuse_options__", {})
@@ -186,6 +187,7 @@ async def submit_remote(
         throttle=opts.get("throttle"),
     )
 
+    logger.debug("Submitting task %s → %s", task.task_id[:8], function_name)
     await backend.submit(task.to_json(signing_key=_signing_key))
     logger.info("Submitted task %s for %s", task.task_id, function_name)
     return Result(task.task_id, backend)
@@ -215,6 +217,7 @@ async def submit_remote_scheduled(
 
     unwrapped = inspect.unwrap(func)
     function_name = f"{unwrapped.__module__}.{unwrapped.__qualname__}"
+    logger.debug("Serializing graph for %s", function_name)
     graph_json = Graph.default().serialize(wrapper)
 
     opts = getattr(wrapper, "__pyfuse_options__", {})
@@ -230,6 +233,10 @@ async def submit_remote_scheduled(
         scheduled_at=_scheduled_at,
     )
 
+    logger.debug(
+        "Submitting scheduled task %s → %s (at %.3f)",
+        task.task_id[:8], function_name, _scheduled_at or 0,
+    )
     await backend.submit(task.to_json(signing_key=_signing_key))
     logger.info(
         "Submitted scheduled task %s for %s (at %.0f)",
@@ -263,6 +270,7 @@ async def submit_recurring(
 
     unwrapped = inspect.unwrap(func)
     function_name = f"{unwrapped.__module__}.{unwrapped.__qualname__}"
+    logger.debug("Serializing graph for %s", function_name)
     graph_json = Graph.default().serialize(wrapper)
 
     schedule_id = uuid.uuid4().hex[:12]
@@ -283,6 +291,10 @@ async def submit_recurring(
         schedule_id=schedule_id,
     )
 
+    logger.debug(
+        "Submitting recurring task %s → %s (every %.1fs, schedule=%s)",
+        task.task_id[:8], function_name, _interval, schedule_id,
+    )
     await backend.submit(task.to_json(signing_key=_signing_key))
     logger.info(
         "Submitted recurring task %s for %s (every %.1fs, schedule=%s)",
@@ -480,22 +492,45 @@ async def _handle_task(
             logger.debug("Task %s scheduled in %.1fs", task.task_id, delay)
             await asyncio.sleep(delay)
 
-    # Check cancellation before execution
-    if await backend.is_cancelled(task.task_id):
+    # Any failure in the backend checks below must still surface to the
+    # client, otherwise it would hang forever polling for a result.
+    try:
+        cancelled = await backend.is_cancelled(task.task_id)
+    except Exception as exc:
+        logger.exception("is_cancelled failed for task %s", task.task_id)
+        envelope = ResultEnvelope.failure(task.task_id, exc)
+        await backend.send_result(task.task_id, envelope.to_json())
+        await backend.notify_result(task.task_id)
+        return
+
+    if cancelled:
         envelope = ResultEnvelope.cancelled(task.task_id)
         _log_task_result(task, envelope, 0, worker)
         return
 
     # Check throttle
-    if task.throttle is not None and not await backend.check_throttle(task.function_name):
-        envelope = ResultEnvelope.throttled(task.task_id)
-        await backend.send_result(task.task_id, envelope.to_json())
-        await backend.notify_result(task.task_id)
-        logger.info(
-            "\u23f3  %-40s          %s  throttled",
-            task.function_name, task.task_id[:8],
-        )
-        return
+    if task.throttle is not None:
+        try:
+            allowed = await backend.check_throttle(task.function_name)
+        except Exception as exc:
+            logger.exception(
+                "check_throttle failed for task %s (%s)",
+                task.task_id, task.function_name,
+            )
+            envelope = ResultEnvelope.failure(task.task_id, exc)
+            await backend.send_result(task.task_id, envelope.to_json())
+            await backend.notify_result(task.task_id)
+            return
+
+        if not allowed:
+            envelope = ResultEnvelope.throttled(task.task_id)
+            await backend.send_result(task.task_id, envelope.to_json())
+            await backend.notify_result(task.task_id)
+            logger.info(
+                "\u23f3  %-40s          %s  throttled",
+                task.function_name, task.task_id[:8],
+            )
+            return
 
     # Set up rate-limited progress callback
     loop = asyncio.get_running_loop()
