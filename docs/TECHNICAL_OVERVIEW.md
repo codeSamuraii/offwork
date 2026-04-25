@@ -24,33 +24,43 @@ pyfuse enables remote execution of Python functions without deploying code to wo
 ```
 pyfuse/
     __init__.py              Public API: trace, connect, serve, serialize, reconstruct, ...
-    __main__.py              CLI: pyfuse worker/run/info/serialize/reconstruct
-    _venv.py                 Temporary virtual environment management (async)
+    __main__.py              CLI: worker, run, pair, token, sandbox, info, serialize, reconstruct
+    _venv.py                 Async temporary virtual environment management
     core/
-        models.py            FunctionNode, ImportInfo dataclasses (incl. content hashing, class metadata)
-        task.py              Task: serializable envelope bundling graph + arguments
-        version.py           Version constant
-        errors.py            Error, WorkerError, RemoteError, DependencyError, TaskStalled
+        models.py            FunctionNode, ImportInfo dataclasses + content hashing
+        task.py              Task envelope: graph_json + function_name + args + options
+        errors.py            Error hierarchy: WorkerError, RemoteError, DependencyError,
+                             TaskStalled, TaskCancelled, ThrottleError, SignatureError, PairingError
+        progress.py          ProgressInfo + progress() contextvar callback
+        signing.py           HMAC-SHA256 sign/verify, derive_key
+        token.py             Token generate/save/load (~/.pyfuse/token)
+        pairing.py           PIN-based key exchange (SPAKE2/SAS-style)
+        version.py           Version constant resolved from package metadata
     graph/
-        decorator.py         @trace: marks functions for remote execution
-        analyzer.py          AST-based source and dependency analysis, class attrs/decorators
-        graph.py             Dependency graph: registration, auto-discovery, runtime tracing
-        store.py             Content-addressable store: serialization, reconstruction
-        tracing.py           Runtime call-stack tracing via contextvars
+        decorator.py         @trace: wraps functions with .run/.start/.map/.run_in/.run_at/.run_every
+        analyzer.py          AST analysis: imports, calls, closures, classes, module vars,
+                             install_package_as detection, star-import resolution
+        graph.py             Registry, auto-discovery, serialize/reconstruct entry points
+        store.py             Content-addressable store: pack, unpack, topo-sort, emit source
+        tracing.py           Runtime call-stack tracing via contextvars.ContextVar
     worker/
-        worker.py            Worker: reconstruct, install deps, execute with caching (async)
-        remote.py            connect/disconnect/serve/submit_remote: orchestration (async)
-        result.py            Result (awaitable future), ResultEnvelope
-        deps.py              Third-party dependency extraction and pip installation (async)
+        worker.py            Cache, install deps, reconstruct, exec, retry/timeout,
+                             throttle/cancel checks, recurring re-enqueue
+        remote.py            connect/disconnect/serve/submit_remote orchestration
+        result.py            Result (awaitable future), ResultEnvelope (wire format)
+        deps.py              Third-party detection, DEFAULT_IMPORT_TO_PACKAGE,
+                             install_package_as context manager, async pip subprocess
+        schedule.py          ScheduleHandle for recurring task cancellation
         backends/
-            base.py          Backend ABC: async pluggable transport interface
-            redis.py         RedisBackend: redis.asyncio with RPUSH/BLPOP pattern
-            local.py         LocalBackend: async-native TCP for same-machine IPC
+            base.py          Backend ABC: source of truth for the transport contract
+            redis.py         RedisBackend: redis.asyncio (RPUSH/BLPOP, Pub/Sub, MGET)
+            local.py         LocalBackend: async TCP broker for same-machine IPC
+            rabbitmq.py      RabbitMQBackend: aio-pika (durable queue, fanout exchange)
         sandbox/
-            docker.py        DockerSandbox: Docker container isolation
-            guest_agent.py   Stdlib-only agent deployed inside container
-            _protocol.py     Length-prefixed JSON wire protocol
-            Dockerfile       Container image for the guest agent
+            docker.py        DockerSandbox: build image, start container, TCP exec
+            guest_agent.py   Stdlib-only agent running inside the container
+            _protocol.py     4-byte big-endian length-prefixed JSON
+            Dockerfile       Container image definition
 ```
 
 ## Public API reference
@@ -107,18 +117,19 @@ pyfuse.get_graph().to_mermaid(func)       # -> Mermaid diagram string
 
 ### Worker side: `await serve()` / `pyfuse worker`
 
-1. **Listen** -- `async for task_json in backend.listen()` yields tasks as they arrive.
-2. **Scheduling wait** -- If the task has a `scheduled_at` timestamp in the future, `await asyncio.sleep(delay)` until that time.
-3. **Cancellation check** -- If `await backend.is_cancelled(task_id)` returns ``True``, skip execution and log the cancellation.
-4. **Throttle check** -- If the task has a `throttle` value and the cooldown hasn't elapsed, return a `"throttled"` result immediately.
-5. **Deserialize** -- Parse the JSON graph into a `Store`.
-4. **Cache check** -- Compute a subgraph key (SHA-256 of all reachable content hashes). If cached, skip to step 7.
-5. **Install dependencies** -- Extract third-party imports, install missing packages via `asyncio.create_subprocess_exec`.
-6. **Reconstruct** -- Produce a self-contained Python script from the store. `compile()` and `exec()` it into a fresh namespace.
-9. **Execute** -- Call the function with the provided arguments. Async functions are awaited directly; sync functions run in an executor with explicit context propagation (for progress reporting). Apply retry/timeout policies via `asyncio.wait_for`.
-10. **Send result** -- Wrap the return value (or exception traceback) in a `ResultEnvelope` and send it back. If cancelled during execution, skip result delivery.
-11. **Record throttle** -- If the task has a `throttle` value and execution succeeded, record a cooldown in the backend.
-12. **Re-enqueue recurring** -- If the task has a `recur_interval` and its schedule hasn't been cancelled, submit a new task instance with `scheduled_at = now + interval`.
+1. **Listen** — `async for task_json in backend.listen()` yields tasks as they arrive.
+2. **Verify signature** — If `--require-signing` is set, call `verify_and_load_json(task_json, key)`; reject with `SignatureError` on failure.
+3. **Scheduling wait** — If the task has a `scheduled_at` timestamp in the future, `await asyncio.sleep(delay)` until then.
+4. **Cancellation check** — If `await backend.is_cancelled(task_id)` returns `True`, skip execution.
+5. **Throttle check** — If the task has a `throttle` value and the cooldown hasn't elapsed, return a `"throttled"` result immediately.
+6. **Deserialize** — Parse the JSON graph into a `Store`.
+7. **Cache check** — Compute a subgraph key (SHA-256 of all reachable content hashes). If cached, skip to step 10.
+8. **Install dependencies** — Extract third-party imports and install missing packages via `asyncio.create_subprocess_exec` (pip).
+9. **Reconstruct** — Produce a self-contained Python script from the store, then `compile()` + `exec()` into a fresh namespace.
+10. **Execute** — Call the function. Async functions are awaited directly; sync functions run in an executor with explicit context propagation (for progress reporting). Retry and per-attempt timeout are enforced via `asyncio.wait_for`.
+11. **Send result** — Wrap the return value (or exception traceback) in a `ResultEnvelope` and send it back. If cancelled during execution, skip result delivery (the cancel call already stored a `"cancelled"` envelope).
+12. **Record throttle** — If the task has a `throttle` value and execution succeeded, record a cooldown in the backend.
+13. **Re-enqueue recurring** — If the task has a `recur_interval` and its schedule hasn't been cancelled, submit a new task instance with `scheduled_at = now + interval`.
 
 ### Client side: `await future` / `await future.result()`
 
@@ -176,15 +187,21 @@ The `redis` package is imported lazily and is an optional dependency.
 
 ### LocalBackend
 
-An async-native TCP backend for same-machine IPC.  A lightweight broker server built on `asyncio.start_server` handles task dispatch, result routing, and heartbeats -- no threads, no `multiprocessing`, no external services.
+An async-native TCP backend for same-machine IPC. A lightweight broker server built on `asyncio.start_server` handles task dispatch, result routing, and heartbeats — no threads, no `multiprocessing`, no external services.
 
 URL format: `local://host:port` (default: `127.0.0.1:9748`).
 
-The broker auto-starts as a subprocess on first connection (or can be started explicitly with `server=True`). All I/O is native `asyncio` -- the backend opens TCP connections to the broker and communicates via a length-prefixed JSON protocol. Streaming operations (`listen()`, `subscribe_results()`) use dedicated connections; RPC operations share a single connection protected by an `asyncio.Lock`.
+The broker auto-starts as a subprocess on first connection (or can be started explicitly with `server=True`). All I/O is native `asyncio` — the backend opens TCP connections to the broker and communicates via a length-prefixed JSON protocol. Streaming operations (`listen()`, `subscribe_results()`) use dedicated connections; RPC operations share a single connection protected by an `asyncio.Lock`.
+
+### RabbitMQBackend
+
+Uses `aio-pika` (async AMQP 0-9-1). Tasks go through a single durable queue (`pyfuse.tasks`). Per-task results, heartbeats, cancellation flags, and progress live in single-message queues (`x-max-length: 1`) used as key-value slots. Result notifications fan out via a topic exchange (`pyfuse.notify`). Throttle queues use a fixed TTL with the cooldown expiry encoded in the message body.
+
+URL scheme: `amqp://` or `amqps://` (e.g. `amqp://guest:guest@localhost/`). The `aio-pika` package is an optional dependency installed via `pip install pyfuse[rabbitmq]`.
 
 ### Custom backends
 
-Subclass `Backend` to implement any transport (RabbitMQ, HTTP, message queues, etc.):
+Subclass `Backend` to implement any transport (HTTP, NATS, gRPC, etc.):
 
 ```python
 pyfuse.connect("redis://...")  # built-in
@@ -644,8 +661,20 @@ Environment variables `PYFUSE_SANDBOX_DOCKER_IMAGE` and `PYFUSE_SANDBOX_DOCKER_C
 pyfuse worker --backend redis://localhost:6379
 pyfuse worker --backend redis://localhost:6379 -c 4
 pyfuse worker --backend redis://localhost:6379 --no-auto-install
-pyfuse worker --backend redis://localhost:6379 --tmp   # isolated temp venv
-pyfuse worker --backend redis://localhost:6379 --sandbox   # Docker sandbox
+pyfuse worker --backend redis://localhost:6379 --tmp              # isolated temp venv
+pyfuse worker --backend redis://localhost:6379 --sandbox          # Docker sandbox
+pyfuse worker --backend redis://localhost:6379 --require-signing  # reject unsigned tasks
+pyfuse worker --backend redis://localhost:6379 --pair             # pair then serve
+
+# Signing — token-based
+pyfuse token generate           # write ~/.pyfuse/token
+pyfuse token show               # display current token source
+pyfuse token clear              # remove ~/.pyfuse/token
+
+# Signing — PIN-based pairing
+pyfuse pair --backend URL                   # client side: enter PIN displayed by worker
+pyfuse pair --backend URL --role worker     # worker side (or use `pyfuse worker --pair`)
+pyfuse pair --backend URL --clear           # remove ~/.pyfuse/{client,worker}.key
 
 # Sandbox management
 pyfuse sandbox setup       # build Docker sandbox image

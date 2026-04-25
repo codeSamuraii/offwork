@@ -78,6 +78,7 @@ def connect(url: str | None = None, **kwargs: Any) -> Backend:
 
         - ``redis://`` / ``rediss://`` -- :class:`RedisBackend`
         - ``local://`` -- :class:`LocalBackend` (same-machine IPC)
+        - ``amqp://`` / ``amqps://`` -- :class:`RabbitMQBackend`
 
         When *None*, the ``PYFUSE_BACKEND`` environment variable is used.
 
@@ -436,18 +437,18 @@ def _log_task_result(
     details = _build_detail_tags(worker)
     if envelope.status == "ok":
         logger.info(
-            "\u2713  %-40s %6.0fms  %s  %s",
+            "%-40s %6.0fms  %s  %s",
             task.function_name, elapsed_ms, short_id, details,
         )
     elif envelope.status == "cancelled":
         logger.info(
-            "\u2718  %-40s          %s  cancelled",
+            "%-40s          %s  cancelled",
             task.function_name, short_id,
         )
     else:
         error_msg = f"  {envelope.error_type}: {envelope.error_message}"
         logger.warning(
-            "\u2717  %-40s %6.0fms  %s  %s%s",
+            "%-40s %6.0fms  %s  %s%s",
             task.function_name, elapsed_ms, short_id, details, error_msg,
         )
 
@@ -527,7 +528,7 @@ async def _handle_task(
             await backend.send_result(task.task_id, envelope.to_json())
             await backend.notify_result(task.task_id)
             logger.info(
-                "\u23f3  %-40s          %s  throttled",
+                "%-40s          %s  throttled",
                 task.function_name, task.task_id[:8],
             )
             return

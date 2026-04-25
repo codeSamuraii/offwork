@@ -86,7 +86,7 @@ After setup, tasks are signed automatically. No client-side code changes. See [S
 | **Progress & cancellation** | `pyfuse.progress(3, 10)` inside tasks; `await future.cancel()` on client |
 | **Heartbeat & stall detection** | Workers heartbeat; clients raise `TaskStalled` on silence |
 | **Content-hash caching** | Same code = cache hit, regardless of client |
-| **Pluggable backends** | `redis://` (multi-machine) or `local://` (same-machine TCP) |
+| **Pluggable backends** | `local://` (same-machine TCP), `redis://`, `amqp://` (RabbitMQ) |
 | **Docker sandbox** | Container isolation, transparent to clients |
 | **Signed execution** | Pre-shared token or PIN pairing + HMAC-SHA256 task authentication |
 | **Graceful shutdown** | Ctrl+C drains in-flight tasks; second Ctrl+C force-quits |

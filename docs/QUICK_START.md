@@ -4,8 +4,11 @@
 
 ```bash
 pip install pyfuse
-pip install pyfuse[redis]   # for Redis backend (multi-machine)
+pip install pyfuse[redis]      # Redis backend (multi-machine)
+pip install pyfuse[rabbitmq]   # RabbitMQ backend (multi-machine, AMQP)
 ```
+
+pyfuse itself has zero runtime dependencies. Backend extras are only needed when you actually use the corresponding URL scheme.
 
 ## Remote execution
 
@@ -162,14 +165,16 @@ After setup, tasks are signed automatically. No client-side code changes. See [S
 
 ## Backends
 
-| Backend | URL | Use case |
-|---------|-----|----------|
-| Local | `local://host:port` | Same-machine IPC (async TCP, no deps) |
-| Redis | `redis://host:port` | Multi-machine production |
+| Backend | URL | Install | Use case |
+|---------|-----|---------|----------|
+| Local | `local://host:port` | (built-in) | Same-machine IPC (async TCP, no deps) |
+| Redis | `redis://host:port` | `pip install pyfuse[redis]` | Multi-machine production |
+| RabbitMQ | `amqp://host:port` | `pip install pyfuse[rabbitmq]` | Multi-machine production with AMQP |
 
 ```python
 pyfuse.connect("local://localhost:9748")
 pyfuse.connect("redis://localhost:6379")
+pyfuse.connect("amqp://guest:guest@localhost/")
 ```
 
 Or: `export PYFUSE_BACKEND=redis://localhost:6379`
