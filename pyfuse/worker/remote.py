@@ -437,18 +437,18 @@ def _log_task_result(
     details = _build_detail_tags(worker)
     if envelope.status == "ok":
         logger.info(
-            "%-40s %6.0fms  %s  %s",
+            "\u2713  %-40s %6.0fms  %s  %s",
             task.function_name, elapsed_ms, short_id, details,
         )
     elif envelope.status == "cancelled":
         logger.info(
-            "%-40s          %s  cancelled",
+            "\u2718  %-40s          %s  cancelled",
             task.function_name, short_id,
         )
     else:
         error_msg = f"  {envelope.error_type}: {envelope.error_message}"
         logger.warning(
-            "%-40s %6.0fms  %s  %s%s",
+            "\u2717  %-40s %6.0fms  %s  %s%s",
             task.function_name, elapsed_ms, short_id, details, error_msg,
         )
 
