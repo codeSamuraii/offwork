@@ -209,21 +209,47 @@ class DockerSandbox:
             raise WorkerError(f"Failed to start Docker container: {stderr.strip()}")
 
     async def _wait_for_agent(self) -> None:
+        """Block until the guest agent is actually answering on the wire.
+
+        A bare TCP ``open_connection`` is not sufficient on Linux: when
+        a container port is published, ``docker-proxy`` accepts host
+        connections *before* the in-container process is listening,
+        which causes the very first request to race with agent startup
+        and come back as ``IncompleteReadError``.  Performing an actual
+        ping/pong exchange guarantees end-to-end readiness.
+        """
         assert self._host_port is not None
-        for _ in range(int(self.boot_timeout)):
+        deadline = asyncio.get_running_loop().time() + self.boot_timeout
+        last_err: Exception | None = None
+        while asyncio.get_running_loop().time() < deadline:
             try:
-                _r, _w = await asyncio.wait_for(
+                reader, writer = await asyncio.wait_for(
                     asyncio.open_connection("127.0.0.1", self._host_port),
                     timeout=2.0,
                 )
-                _w.close()
-                with contextlib.suppress(ConnectionError, OSError):
-                    await _w.wait_closed()
-                return
-            except (OSError, asyncio.TimeoutError):
-                await asyncio.sleep(1)
+                try:
+                    await asyncio.wait_for(
+                        async_send(writer, {"op": "ping"}), timeout=2.0,
+                    )
+                    msg = await asyncio.wait_for(async_recv(reader), timeout=2.0)
+                finally:
+                    writer.close()
+                    with contextlib.suppress(ConnectionError, OSError):
+                        await writer.wait_closed()
+                if msg.get("status") == "pong":
+                    return
+                last_err = WorkerError(f"Unexpected handshake reply: {msg!r}")
+            except (
+                OSError,
+                asyncio.TimeoutError,
+                asyncio.IncompleteReadError,
+                ConnectionError,
+            ) as exc:
+                last_err = exc
+            await asyncio.sleep(0.5)
         raise WorkerError(
-            f"Docker guest agent did not become reachable within {self.boot_timeout}s"
+            f"Docker guest agent did not become reachable within "
+            f"{self.boot_timeout}s: {last_err!r}"
         )
 
     async def _connect(self) -> None:

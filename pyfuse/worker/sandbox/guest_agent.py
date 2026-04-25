@@ -264,6 +264,14 @@ async def _handle_client(
     try:
         while True:
             req = await _recv(reader)
+            # Cheap liveness handshake used by the host to confirm the
+            # in-container agent is actually accepting requests (a TCP
+            # connection alone isn't sufficient: on Linux docker-proxy
+            # accepts the connection on the host port even before the
+            # guest agent process has started listening).
+            if req.get("op") == "ping":
+                await _send(writer, {"status": "pong"})
+                continue
             resp = await _execute_request(req, writer)
             await _send(writer, resp)
     except (asyncio.IncompleteReadError, ConnectionError, OSError):
