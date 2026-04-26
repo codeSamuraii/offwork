@@ -13,16 +13,19 @@ class ImportInfo:
     statement: str
     bound_name: str
     package: str | None = None
+    worker_only: bool = False
 
-    def to_dict(self) -> dict[str, str]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain dict."""
-        d = {"statement": self.statement, "bound_name": self.bound_name}
+        d: dict[str, Any] = {"statement": self.statement, "bound_name": self.bound_name}
         if self.package is not None:
             d["package"] = self.package
+        if self.worker_only:
+            d["worker_only"] = True
         return d
 
     @classmethod
-    def from_dict(cls, data: dict[str, str]) -> Self:
+    def from_dict(cls, data: dict[str, Any]) -> Self:
         """Deserialize from a plain dict.
 
         Raises
@@ -34,6 +37,7 @@ class ImportInfo:
             statement=data["statement"],
             bound_name=data["bound_name"],
             package=data.get("package"),
+            worker_only=bool(data.get("worker_only", False)),
         )
 
 

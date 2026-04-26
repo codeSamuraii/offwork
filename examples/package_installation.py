@@ -4,6 +4,11 @@ The worker has no packages pre-installed (besides the standard library).
 pyfuse detects the imports, installs the packages via pip, and executes
 the function -- all automatically.
 
+This example also demonstrates ``worker_only_import``: the client never
+installs ``markdown`` or ``python-dateutil`` -- only the worker does.
+The local imports resolve to lightweight stubs that raise
+``WorkerOnlyError`` if used outside a traced function.
+
 Requires Redis on localhost:6379.  Install: pip install redis
 
 Usage:
@@ -17,12 +22,9 @@ Usage:
 import asyncio
 from html.parser import HTMLParser
 
-import requests
-import markdown
-
 import pyfuse
 from pyfuse import trace
-from pyfuse import install_package_as
+from pyfuse import install_package_as, worker_only_import
 
 # Some packages have different import and pip names:
 #   import yaml       -> pip install PyYAML
@@ -33,7 +35,18 @@ from pyfuse import install_package_as
 with install_package_as("PyYAML"):
     import yaml
 
-with install_package_as("python-dateutil"):
+# `worker_only_import` skips the local install entirely. The package only
+# needs to be available on the worker. The client gets a stub object that
+# raises WorkerOnlyError if used directly, but is fine to reference inside
+# a @trace function (it's serialized and re-imported on the worker).
+
+# No pip name needed when import name == package name:
+with worker_only_import():
+    import requests
+    import markdown
+
+# Pass an explicit pip name when the import name differs from the package:
+with worker_only_import("python-dateutil"):
     from dateutil import parser as date_parser
 
 

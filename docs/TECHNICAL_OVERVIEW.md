@@ -442,7 +442,8 @@ A single import binding:
 |-------|---------|
 | `statement` | `"import csv"`, `"from os.path import join"` |
 | `bound_name` | `"csv"`, `"join"` |
-| `package` | `"opencv-python"` (from `install_package_as`, or `None`) |
+| `package` | `"opencv-python"` (from `install_package_as` / `worker_only_import`, or `None`) |
+| `worker_only` | `True` if the import was inside a `worker_only_import` block (omitted when `False`) |
 
 Multi-name imports are split into individual objects for per-function tracking.
 
@@ -488,6 +489,24 @@ with install_package_as("opencv-python"):
 ```
 
 The worker sees the `package` field on the import and knows to `pip install opencv-python` instead of `pip install cv2`.
+
+### `worker_only_import` context manager
+
+Lets clients reference a package without installing it locally. On the client, imports inside the block resolve to lightweight stub modules (`_WorkerOnlyStub`) that raise `WorkerOnlyError` if used outside a worker context. On the worker, the package is installed via pip and imported normally.
+
+```python
+with worker_only_import():                       # import name == pip name
+    import requests
+
+with worker_only_import("opencv-python-headless"):  # explicit pip name
+    import cv2
+```
+
+Implementation:
+- A meta-path finder is appended to `sys.meta_path` for the duration of the block (real installed packages still win because the finder runs last).
+- The finder's whitelist is populated by parsing the caller's `with` block source via AST — only names the user literally writes inside the block are eligible to be stubbed. This prevents transitive missing imports from real installed packages from being silently swallowed.
+- The AST analyzer marks every `ImportInfo` in the block with `worker_only=True` and records any explicit pip name as `package`.
+- The worker treats worker-only imports identically to regular third-party imports: `extract_third_party_modules` collects them, `_collect_package_hints` honors the pip name, and `pip install` runs before reconstruction.
 
 ## Heartbeat and stall detection
 

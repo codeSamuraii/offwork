@@ -28,7 +28,7 @@ from pyfuse import serialize, reconstruct
 from pyfuse._venv import temp_venv
 from pyfuse.worker.deps import DEFAULT_IMPORT_TO_PACKAGE
 from pyfuse.worker.remote import serve
-from pyfuse.graph.analyzer import _parse_install_package_as
+from pyfuse.graph.analyzer import _parse_install_package_as, _parse_worker_only_import
 
 
 def _build_worker_cmd(python: str, args: argparse.Namespace) -> list[str]:
@@ -228,6 +228,7 @@ def _detect_script_packages(script: str) -> list[str]:
 
     # module name -> pip package name (None means use default mapping)
     modules: dict[str, str | None] = {}
+    skip: set[str] = set()
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             for m in _extract_top_modules(node):
@@ -238,10 +239,17 @@ def _detect_script_packages(script: str) -> list[str]:
                 for child in node.body:
                     for m in _extract_top_modules(child):
                         modules[m] = package
+                continue
+            if _parse_worker_only_import(node) is not False:
+                for child in node.body:
+                    for m in _extract_top_modules(child):
+                        skip.add(m)
 
     packages: dict[str, None] = {}
     for m, explicit_package in sorted(modules.items()):
         if m in sys.stdlib_module_names or m == "pyfuse":
+            continue
+        if m in skip:
             continue
         if _is_local_package(m, script_dir):
             continue

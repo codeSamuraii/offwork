@@ -107,6 +107,24 @@ with install_package_as("PyYAML"):
 
 Common mappings (`cv2` → `opencv-python`, `PIL` → `Pillow`, etc.) are built in.
 
+### Worker-only imports
+
+Skip installing packages locally — the worker installs them on demand:
+
+```python
+from pyfuse import worker_only_import
+
+with worker_only_import():
+    import requests
+
+with worker_only_import("opencv-python-headless"):
+    import cv2
+```
+
+The local `requests` and `cv2` resolve to lightweight stubs. They're fine to reference inside a `@trace` function (the worker re-imports them for real), but raise `WorkerOnlyError` if used directly on the client.
+
+Only the names imported literally inside the `with` block are stubbed — real installed packages and their transitive imports are unaffected.
+
 ## Progress, cancellation, and results
 
 ```python

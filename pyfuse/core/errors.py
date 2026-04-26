@@ -50,6 +50,10 @@ class ThrottleError(Error):
     """Raised when a task is rejected due to rate limiting."""
 
 
+class WorkerOnlyError(Error):
+    """Raised when a worker-only import stub is used on the client."""
+
+
 # ---------------------------------------------------------------------------
 # Custom excepthook: suppress client traceback for RemoteError
 # ---------------------------------------------------------------------------

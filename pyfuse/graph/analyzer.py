@@ -74,6 +74,15 @@ def get_module_imports(func: Callable[..., object]) -> list[ImportInfo]:
                         imports.extend(_extract_import(child, package))
                     elif isinstance(child, ast.ImportFrom):
                         imports.extend(_extract_import_from(child, package))
+                continue
+            wo = _parse_worker_only_import(node)
+            if wo is not False:
+                wo_package = wo if isinstance(wo, str) else None
+                for child in node.body:
+                    if isinstance(child, ast.Import):
+                        imports.extend(_extract_import(child, wo_package, worker_only=True))
+                    elif isinstance(child, ast.ImportFrom):
+                        imports.extend(_extract_import_from(child, wo_package, worker_only=True))
 
     logger.debug(
         "Found %d import bindings in %s", len(imports), source_file
@@ -129,19 +138,57 @@ def _parse_install_package_as(node: ast.With) -> str | None:
     return ctx.args[0].value
 
 
+def _is_worker_only_import_call(expr: ast.expr) -> bool:
+    """Match ``worker_only_import`` or ``pyfuse.worker_only_import``."""
+    if isinstance(expr, ast.Name):
+        return expr.id == "worker_only_import"
+    if isinstance(expr, ast.Attribute):
+        return expr.attr == "worker_only_import"
+    return False
+
+
+def _parse_worker_only_import(node: ast.With) -> str | bool:
+    """Detect ``with worker_only_import([package]):`` blocks.
+
+    Returns ``False`` if not a match, ``True`` if matched without a
+    package argument, or the package string if one was supplied.
+    """
+    if len(node.items) != 1:
+        return False
+    ctx = node.items[0].context_expr
+    if not isinstance(ctx, ast.Call) or not _is_worker_only_import_call(ctx.func):
+        return False
+    if not ctx.args:
+        return True
+    if (
+        len(ctx.args) == 1
+        and isinstance(ctx.args[0], ast.Constant)
+        and isinstance(ctx.args[0].value, str)
+    ):
+        return ctx.args[0].value
+    return True
+
+
 def _extract_import(
-    node: ast.Import, package: str | None = None
+    node: ast.Import,
+    package: str | None = None,
+    worker_only: bool = False,
 ) -> list[ImportInfo]:
     result: list[ImportInfo] = []
     for alias in node.names:
         bound = alias.asname or alias.name.split(".")[0]
         stmt = ast.unparse(ast.Import(names=[alias]))
-        result.append(ImportInfo(statement=stmt, bound_name=bound, package=package))
+        result.append(ImportInfo(
+            statement=stmt, bound_name=bound,
+            package=package, worker_only=worker_only,
+        ))
     return result
 
 
 def _extract_import_from(
-    node: ast.ImportFrom, package: str | None = None
+    node: ast.ImportFrom,
+    package: str | None = None,
+    worker_only: bool = False,
 ) -> list[ImportInfo]:
     result: list[ImportInfo] = []
     for alias in node.names:
@@ -170,7 +217,10 @@ def _extract_import_from(
                 for export_name in exported:
                     stmt = f"from {node.module} import {export_name}"
                     result.append(
-                        ImportInfo(statement=stmt, bound_name=export_name, package=package)
+                        ImportInfo(
+                            statement=stmt, bound_name=export_name,
+                            package=package, worker_only=worker_only,
+                        )
                     )
             except ImportError:
                 warnings.warn(
@@ -185,7 +235,10 @@ def _extract_import_from(
                 module=node.module, names=[alias], level=node.level
             )
         )
-        result.append(ImportInfo(statement=stmt, bound_name=bound, package=package))
+        result.append(ImportInfo(
+            statement=stmt, bound_name=bound,
+            package=package, worker_only=worker_only,
+        ))
     return result
 
 

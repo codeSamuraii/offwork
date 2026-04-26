@@ -15,11 +15,12 @@ from pyfuse.core.errors import (
     SignatureError,
     DependencyError,
     ThrottleError,
+    WorkerOnlyError,
 )
 from pyfuse.core.models import ImportInfo, FunctionNode
 from pyfuse.graph.graph import Graph
 from pyfuse.graph.store import Store, MergeResult
-from pyfuse.worker.deps import install_package_as
+from pyfuse.worker.deps import install_package_as, worker_only_import
 from pyfuse.core.pairing import (
     PairingResult,
     generate_pin,
@@ -111,6 +112,7 @@ __all__ = [
     "disconnect",
     "serve",
     "install_package_as",
+    "worker_only_import",
     "progress",
     # Serialization
     "serialize",
@@ -130,6 +132,7 @@ __all__ = [
     "ThrottleError",
     "SignatureError",
     "PairingError",
+    "WorkerOnlyError",
     # Graph
     "get_graph",
     "Graph",
