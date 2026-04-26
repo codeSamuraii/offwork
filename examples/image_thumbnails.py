@@ -18,6 +18,7 @@ Usage:
 
 from io import BytesIO
 
+import uvicorn
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import Response
 from PIL import Image, ImageOps
@@ -73,3 +74,7 @@ async def make_thumbnail(
     blob = await file.read()
     jpeg = await thumbnail.run(blob, size=size)
     return Response(content=jpeg, media_type="image/jpeg")
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8080)

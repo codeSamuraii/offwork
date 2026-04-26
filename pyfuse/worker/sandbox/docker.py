@@ -19,6 +19,7 @@ CI to avoid a cold-start build).
 import os
 import shutil
 import asyncio
+import hashlib
 import logging
 import contextlib
 from typing import Any
@@ -32,7 +33,28 @@ from pyfuse.worker.sandbox._protocol import async_recv, async_send
 logger = logging.getLogger(__name__)
 
 _DOCKERFILE_DIR = Path(__file__).resolve().parent  # contains Dockerfile + guest_agent.py
-_DEFAULT_IMAGE = "pyfuse-sandbox"
+_IMAGE_ASSETS = ("Dockerfile", "guest_agent.py", "_protocol.py")
+
+
+def _assets_digest() -> str:
+    """Short hash of the files baked into the sandbox image.
+
+    Used as the default image tag so a code change in the guest agent
+    or Dockerfile produces a fresh image instead of silently reusing a
+    stale one whose ``guest_agent.py`` no longer matches the host.
+    """
+    h = hashlib.sha256()
+    for name in _IMAGE_ASSETS:
+        path = _DOCKERFILE_DIR / name
+        if path.exists():
+            h.update(name.encode())
+            h.update(b"\0")
+            h.update(path.read_bytes())
+            h.update(b"\0")
+    return h.hexdigest()[:12]
+
+
+_DEFAULT_IMAGE = f"pyfuse-sandbox:{_assets_digest()}"
 _DEFAULT_CONTAINER = "pyfuse-sandbox"
 
 
@@ -156,6 +178,16 @@ class DockerSandbox:
             await _build_image(self.image)
 
         container = self.container_name
+        if await _container_exists(container):
+            current_image = await _container_image(container)
+            if current_image != self.image:
+                logger.info(
+                    "Container '%s' was built from a different image (%s); "
+                    "recreating from '%s'",
+                    container, current_image or "<unknown>", self.image,
+                )
+                await _docker_wait("rm", "-f", container)
+
         if not await _container_running(container):
             if await _container_exists(container):
                 await _docker_wait("rm", "-f", container)
@@ -369,6 +401,17 @@ async def _container_running(name: str) -> bool:
         "inspect", "-f", "{{.State.Running}}", name,
     )
     return rc == 0 and stdout.strip().lower() == "true"
+
+
+async def _container_image(name: str) -> str | None:
+    """Return the image (with tag) the container was created from, or None."""
+    rc, stdout, _ = await _docker_wait(
+        "inspect", "-f", "{{.Config.Image}}", name,
+    )
+    if rc != 0:
+        return None
+    image = stdout.strip()
+    return image or None
 
 
 async def _mapped_port(container: str, guest_port: int) -> int:

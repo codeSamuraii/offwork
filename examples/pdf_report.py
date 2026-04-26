@@ -24,6 +24,7 @@ Usage:
 
 from io import BytesIO
 
+import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -67,8 +68,11 @@ def render_report(title: str, rows: list[list[str | float]]) -> bytes:
 # --- FastAPI app ----------------------------------------------------------
 
 class ReportRequest(BaseModel):
-    title: str
-    rows: list[list[str | float]]
+    title: str = "Example Report"
+    rows: list[list[str | float]] = [
+        ["Revenue", 120000],
+        ["Costs", 80000],
+    ]
 
 
 app = FastAPI(title="pyfuse PDF service")
@@ -84,7 +88,12 @@ async def _shutdown() -> None:
     await pyfuse.disconnect()
 
 
-@app.post("/reports")
-async def make_report(req: ReportRequest) -> Response:
+@app.get("/reports")
+async def make_report() -> Response:
+    req = ReportRequest()
     pdf = await render_report.run(req.title, req.rows)
     return Response(content=pdf, media_type="application/pdf")
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8080)
