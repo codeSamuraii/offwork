@@ -14,6 +14,14 @@ Usage:
     python examples/large_module.py
 """
 import asyncio
+import sys
+from pathlib import Path
+
+# Make ``tests.fixtures.stress_test_module`` importable when running this
+# script directly from a checkout, without needing PYTHONPATH gymnastics.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 import pyfuse
 from pyfuse import trace
@@ -47,18 +55,13 @@ def full_sensor_report(sensor_count: int, readings_per_sensor: int, seed: int = 
         stats, anomalies, normalized,
     )
     report["delta_count"] = len(deltas)
-    r = format_text_report(report)
-    print(r)
-    return r
+    return format_text_report(report)
+
 
 async def main() -> None:
-    # Connect to the worker
     pyfuse.connect("redis://localhost:6379")
-
-    # Remote call (same function, same args, on a worker)
-    remote_result = await full_sensor_report.run(3, 50, seed=42)
-
-    print(f"Success! Local and remote results match:\n  {repr(remote_result)[:80] + '...'}")
+    report = await full_sensor_report.run(3, 50, seed=42)
+    print(report)
 
 
 if __name__ == "__main__":

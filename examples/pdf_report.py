@@ -15,15 +15,20 @@ Endpoints:
 
 Usage:
     pyfuse worker --backend redis://localhost:6379 --tmp
-    uvicorn examples.pdf_report:app --reload
+    python examples/pdf_report.py
 
-    curl -X POST localhost:8000/reports -o report.pdf \\
-         -H 'content-type: application/json' \\
-         -d '{"title":"Q1","rows":[["Revenue",120000],["Costs",80000]]}'
+The script starts the FastAPI app in-process, posts a sample report,
+prints the resulting PDF size (and writes it to ``/tmp/pyfuse_report.pdf``),
+and exits.
 """
 
+import asyncio
+from contextlib import asynccontextmanager
 from io import BytesIO
+from pathlib import Path
+from typing import AsyncIterator
 
+import httpx
 import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import Response
@@ -68,32 +73,61 @@ def render_report(title: str, rows: list[list[str | float]]) -> bytes:
 # --- FastAPI app ----------------------------------------------------------
 
 class ReportRequest(BaseModel):
-    title: str = "Example Report"
+    title: str = "Quarterly Report"
     rows: list[list[str | float]] = [
         ["Revenue", 120000],
         ["Costs", 80000],
+        ["Profit", 40000],
     ]
 
 
-app = FastAPI(title="pyfuse PDF service")
-
-
-@app.on_event("startup")
-async def _startup() -> None:
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     pyfuse.connect("redis://localhost:6379")
+    try:
+        yield
+    finally:
+        await pyfuse.disconnect()
 
 
-@app.on_event("shutdown")
-async def _shutdown() -> None:
-    await pyfuse.disconnect()
+app = FastAPI(title="pyfuse PDF service", lifespan=lifespan)
 
 
-@app.get("/reports")
-async def make_report() -> Response:
-    req = ReportRequest()
+@app.post("/reports")
+async def make_report(req: ReportRequest) -> Response:
     pdf = await render_report.run(req.title, req.rows)
     return Response(content=pdf, media_type="application/pdf")
 
 
+# --- self-driving demo ----------------------------------------------------
+
+async def _demo() -> None:
+    config = uvicorn.Config(app, host="127.0.0.1", port=8080, log_level="warning")
+    server = uvicorn.Server(config)
+    task = asyncio.create_task(server.serve())
+    while not server.started:
+        await asyncio.sleep(0.5)
+
+    payload = {
+        "title": "Q1 2026 Report",
+        "rows": [
+            ["Revenue", 240_000],
+            ["Cost of goods", 90_000],
+            ["Operating expenses", 55_000],
+            ["Net profit", 95_000],
+        ],
+    }
+    try:
+        async with httpx.AsyncClient(base_url="http://127.0.0.1:8080") as client:
+            resp = await client.post("/reports", json=payload, timeout=60.0)
+            resp.raise_for_status()
+            out = Path("/tmp/pyfuse_report.pdf")
+            out.write_bytes(resp.content)
+            print(f"PDF: {len(resp.content)} bytes -> {out}")
+    finally:
+        server.should_exit = True
+        await task
+
+
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    asyncio.run(_demo())

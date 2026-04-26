@@ -1,4 +1,4 @@
-"""Poll an IMAP mailbox locally, fan attachment work out to workers.
+"""Inspect email attachments on workers, fanned out from a local poller.
 
 Two concerns kept apart:
 
@@ -14,15 +14,18 @@ ships their source as part of the same task envelope.
 
 Usage:
     pyfuse worker --backend redis://localhost:6379 --tmp
-    python -m pyfuse run --tmp examples/email_attachments.py
+    python examples/email_attachments.py
+
+The script synthesizes a handful of emails with attachments in-memory
+(no IMAP server needed), dispatches each attachment to the worker, and
+prints the verdict.
 """
 
 import asyncio
 import hashlib
-import imaplib
 import re
 from email import message_from_bytes
-from email.message import Message
+from email.message import EmailMessage, Message
 from typing import Any
 
 import pyfuse
@@ -84,7 +87,7 @@ def process_attachment(filename: str, payload: bytes) -> dict[str, Any]:
     }
 
 
-# --- local-only IMAP plumbing --------------------------------------------
+# --- local-only mailbox plumbing -----------------------------------------
 
 def iter_attachments(msg: Message) -> list[tuple[str, bytes]]:
     out: list[tuple[str, bytes]] = []
@@ -100,45 +103,59 @@ def iter_attachments(msg: Message) -> list[tuple[str, bytes]]:
     return out
 
 
-def fetch_unseen(host: str, user: str, password: str) -> list[Message]:
-    cli = imaplib.IMAP4_SSL(host)
-    try:
-        cli.login(user, password)
-        cli.select("INBOX")
-        _, data = cli.search(None, "UNSEEN")
-        msgs: list[Message] = []
-        for uid in data[0].split():
-            _, parts = cli.fetch(uid, "(RFC822)")
-            raw = parts[0][1] if parts and parts[0] else None
-            if isinstance(raw, bytes):
-                msgs.append(message_from_bytes(raw))
-        return msgs
-    finally:
-        cli.logout()
+def synthesize_inbox() -> list[Message]:
+    """Build a small in-memory inbox with attachments for the demo."""
+    samples: list[tuple[str, str, list[tuple[str, bytes]]]] = [
+        (
+            "alice@example.com",
+            "Lunch tomorrow?",
+            [("photo.jpg", b"\xff\xd8\xff" + b"\x00" * 4096)],
+        ),
+        (
+            "billing@vendor.com",
+            "Invoice INV-9921",
+            [("invoice.pdf", b"%PDF-1.4 invoice total: $1,250.00 due upon receipt")],
+        ),
+        (
+            "noreply@scary.example",
+            "URGENT: please review attached",
+            [("urgent_invoice.scr", b"MZ" + b"\x00" * 2048)],
+        ),
+        (
+            "ops@partner.com",
+            "Q1 deck and notes",
+            [
+                ("deck.pdf", b"%PDF-1.4 strategy review Q1"),
+                ("notes.txt", b"meeting notes go here"),
+            ],
+        ),
+    ]
+
+    inbox: list[Message] = []
+    for sender, subject, atts in samples:
+        msg = EmailMessage()
+        msg["From"] = sender
+        msg["To"] = "you@example.com"
+        msg["Subject"] = subject
+        msg.set_content("See attached.")
+        for name, payload in atts:
+            msg.add_attachment(
+                payload, maintype="application", subtype="octet-stream", filename=name,
+            )
+        inbox.append(message_from_bytes(bytes(msg)))
+    return inbox
 
 
 async def main() -> None:
-    host, user, password = "imap.example.com", "you@example.com", "secret"
+    messages = synthesize_inbox()
+    attachments = [a for m in messages for a in iter_attachments(m)]
+    print(f"Inbox: {len(messages)} messages, {len(attachments)} attachments")
 
-    while True:
-        try:
-            messages = await asyncio.to_thread(fetch_unseen, host, user, password)
-        except Exception as exc:
-            print(f"poll failed: {exc}")
-            await asyncio.sleep(30)
-            continue
-
-        attachments = [a for m in messages for a in iter_attachments(m)]
-        if not attachments:
-            await asyncio.sleep(30)
-            continue
-
-        results = await process_attachment.map(attachments)
-        for r in results:
-            flag = "!!" if r["risk"] >= 50 else "ok"
-            print(f"  [{flag}] {r['filename']:<40} {r['kind']:<10} risk={r['risk']}")
-
-        await asyncio.sleep(30)
+    results = await process_attachment.map(attachments)
+    for r in results:
+        flag = "!!" if r["risk"] >= 50 else "ok"
+        print(f"  [{flag}] {r['filename']:<24} {r['kind']:<10} "
+              f"size={r['size']:<6} risk={r['risk']}")
 
 
 if __name__ == "__main__":

@@ -21,16 +21,15 @@ pyfuse.connect("local://localhost:9748")
 @trace
 async def slow_computation(n: int) -> int:
     """A deliberately slow function."""
+    total = 0
     try:
-        total = 0
         for _ in range(n):
             await asyncio.sleep(1.0)
             total += 1
         return total
     finally:
         if total < n:
-            print("Task cancelled")
-
+            print(f"Task interrupted after {total}/{n} iterations")
 
 
 async def main() -> None:
@@ -46,6 +45,7 @@ async def main() -> None:
     # Awaiting a cancelled task raises TaskCancelled
     try:
         result = await future
+        print(f"Unexpected result: {result}")
     except TaskCancelled:
         print("Task was cancelled successfully!")
 
@@ -54,4 +54,5 @@ async def main() -> None:
     print(f"Task status: {status}")  # "cancelled"
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
