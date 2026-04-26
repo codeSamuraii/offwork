@@ -202,6 +202,20 @@ class TestDetectScriptPackages:
         assert "yaml" not in packages
         assert "dateutil" not in packages
 
+    def test_install_package_as_attribute_form(
+        self, tmp_path: pytest.TempPathFactory,
+    ) -> None:
+        """``with pyfuse.install_package_as(...)`` is also recognized."""
+        script = tmp_path / "test_ipa_attr.py"  # type: ignore[operator]
+        script.write_text(
+            "import pyfuse\n"
+            'with pyfuse.install_package_as("python-multipart"):\n'
+            "    import multipart\n"
+        )
+        packages = _detect_script_packages(str(script))
+        assert "python-multipart" in packages
+        assert "multipart" not in packages
+
 
 class TestDetectPyfuseExtras:
     def test_connect_redis(self, tmp_path: pytest.TempPathFactory) -> None:

@@ -1,3 +1,5 @@
+import ast
+
 import pytest
 
 from pyfuse.worker.deps import (
@@ -9,6 +11,7 @@ from pyfuse.worker.deps import (
     install_package_as,
     is_installed,
 )
+from pyfuse.graph.analyzer import _parse_install_package_as
 from pyfuse.core.models import FunctionNode, ImportInfo
 from pyfuse.graph.store import Store
 
@@ -154,6 +157,32 @@ class TestInstallPackageAs:
     def test_package_none_from_dict_without_key(self) -> None:
         restored = ImportInfo.from_dict({"statement": "import os", "bound_name": "os"})
         assert restored.package is None
+
+
+# -- _parse_install_package_as ----------------------------------------------
+
+class TestParseInstallPackageAs:
+    def _parse(self, source: str) -> str | None:
+        tree = ast.parse(source)
+        with_node = tree.body[0]
+        assert isinstance(with_node, ast.With)
+        return _parse_install_package_as(with_node)
+
+    def test_bare_form(self) -> None:
+        assert self._parse('with install_package_as("PyYAML"):\n    pass\n') == "PyYAML"
+
+    def test_attribute_form(self) -> None:
+        """``with pyfuse.install_package_as(...)`` is also recognized."""
+        assert (
+            self._parse('with pyfuse.install_package_as("python-multipart"):\n    pass\n')
+            == "python-multipart"
+        )
+
+    def test_unrelated_with_block(self) -> None:
+        assert self._parse('with open("x") as f:\n    pass\n') is None
+
+    def test_missing_argument(self) -> None:
+        assert self._parse('with install_package_as():\n    pass\n') is None
 
 
 # -- _collect_package_hints --------------------------------------------------

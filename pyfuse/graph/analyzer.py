@@ -121,15 +121,27 @@ def get_module_assignments(func: Callable[..., object]) -> dict[str, str]:
     return assignments
 
 
+def _is_install_package_as_call(expr: ast.expr) -> bool:
+    """Match ``install_package_as`` or ``pyfuse.install_package_as``."""
+    if isinstance(expr, ast.Name):
+        return expr.id == "install_package_as"
+    if isinstance(expr, ast.Attribute):
+        return expr.attr == "install_package_as"
+    return False
+
+
 def _parse_install_package_as(node: ast.With) -> str | None:
-    """Return the package name if *node* is ``with install_package_as(...)``."""
+    """Return the package name if *node* is ``with install_package_as(...)``.
+
+    Accepts both the bare form (``install_package_as("foo")``) and the
+    attribute form (``pyfuse.install_package_as("foo")``).
+    """
     if len(node.items) != 1:
         return None
     ctx = node.items[0].context_expr
     if not (
         isinstance(ctx, ast.Call)
-        and isinstance(ctx.func, ast.Name)
-        and ctx.func.id == "install_package_as"
+        and _is_install_package_as_call(ctx.func)
         and len(ctx.args) == 1
         and isinstance(ctx.args[0], ast.Constant)
         and isinstance(ctx.args[0].value, str)
