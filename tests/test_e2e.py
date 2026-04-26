@@ -280,17 +280,31 @@ class TestProgressAndCancellation:
 
 class TestRetryAndTimeout:
     async def test_retry_on_failure(self, worker: subprocess.Popen[bytes]) -> None:
-        @trace(retries=3, retry_delay=0.1)
-        def sometimes_fails() -> str:
-            import random
-            random.seed()  # re-seed each call
-            if random.random() < 0.3:
-                raise RuntimeError("transient")
-            return "ok"
+        # Deterministic retry test: a counter file local to the worker
+        # process records how many attempts have been made.  The first
+        # two raise; the third succeeds.  This avoids RNG flakes while
+        # still exercising the full retry path.  The path lives on
+        # whichever filesystem actually runs the function -- the host
+        # worker's /tmp, or the sandbox container's /tmp.
+        import uuid
+        counter_path = f"/tmp/pyfuse-retry-{uuid.uuid4().hex}.txt"
 
-        # With 3 retries, at least one attempt should succeed (very high probability)
-        result = await sometimes_fails.run()
-        assert result == "ok"
+        @trace(retries=3, retry_delay=0.1)
+        def fails_then_succeeds(path: str, fail_until: int) -> str:
+            import os
+            n = 0
+            if os.path.exists(path):
+                with open(path) as f:
+                    n = int(f.read() or "0")
+            n += 1
+            with open(path, "w") as f:
+                f.write(str(n))
+            if n <= fail_until:
+                raise RuntimeError(f"transient (attempt {n})")
+            return f"ok after {n} attempts"
+
+        result = await fails_then_succeeds.run(counter_path, 2)
+        assert result == "ok after 3 attempts"
 
 
 class TestScheduling:

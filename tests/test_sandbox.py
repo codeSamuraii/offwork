@@ -276,7 +276,10 @@ class TestGuestAgentServer:
 class TestDockerSandbox:
     def test_default_params(self) -> None:
         sb = DockerSandbox()
-        assert sb.image == "pyfuse-sandbox"
+        # The default tag embeds a content hash of the bundled image
+        # assets so changes to the Dockerfile / guest agent invalidate
+        # any previously-built image.
+        assert sb.image.startswith("pyfuse-sandbox:")
         assert sb.container_name == "pyfuse-sandbox"
         assert sb.guest_port == 9749
         assert sb.cpus == 2
