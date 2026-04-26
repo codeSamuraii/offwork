@@ -48,6 +48,7 @@ asyncio_mode = "auto"
 
 [tool.mypy]
 strict = true
+files = ["pyfuse"]
 
 [tool.isort]
 profile = "black"

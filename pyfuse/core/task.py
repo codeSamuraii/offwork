@@ -59,19 +59,19 @@ _PATH_CLASSES: dict[str, type[pathlib.PurePath]] = {
 def _decode_builtin(info: dict[str, Any], namespace: dict[str, Any]) -> Any:
     """Reverse :func:`_encode_builtin`."""
     kind = info.get("type")
-    raw = info.get("value")
+    raw: Any = info.get("value")
     if kind == "datetime":
-        return _dt.datetime.fromisoformat(raw)
+        return _dt.datetime.fromisoformat(str(raw))
     if kind == "date":
-        return _dt.date.fromisoformat(raw)
+        return _dt.date.fromisoformat(str(raw))
     if kind == "time":
-        return _dt.time.fromisoformat(raw)
+        return _dt.time.fromisoformat(str(raw))
     if kind == "timedelta":
-        return _dt.timedelta(seconds=raw)
+        return _dt.timedelta(seconds=float(raw))
     if kind == "decimal":
-        return Decimal(raw)
+        return Decimal(str(raw))
     if kind == "uuid":
-        return uuid.UUID(hex=raw)
+        return uuid.UUID(hex=str(raw))
     if kind == "complex":
         return complex(raw[0], raw[1])
     if kind == "set":
@@ -84,9 +84,9 @@ def _decode_builtin(info: dict[str, Any], namespace: dict[str, Any]) -> Any:
         # instantiated on this platform.
         cls = _PATH_CLASSES.get(info.get("cls", ""), pathlib.PurePath)
         try:
-            return cls(raw)
+            return cls(str(raw))
         except (NotImplementedError, TypeError):
-            return pathlib.PurePath(raw)
+            return pathlib.PurePath(str(raw))
     raise ValueError(f"Unknown builtin sentinel type: {kind!r}")
 
 
