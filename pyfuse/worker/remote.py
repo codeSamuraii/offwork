@@ -572,7 +572,18 @@ async def _handle_task(
     # If the client cancelled mid-execution, it already stored a cancelled
     # result envelope (via Result.cancel) which the client reads first.
     await flush()
-    await backend.send_result(task.task_id, envelope.to_json())
+    try:
+        result_json = envelope.to_json()
+    except Exception as exc:
+        # Result serialization failed (e.g. unsupported return type).
+        # Surface the failure as an error envelope rather than letting
+        # the task hang forever from the client's point of view.
+        logger.exception(
+            "Failed to serialize result for task %s", task.task_id,
+        )
+        envelope = ResultEnvelope.failure(task.task_id, exc)
+        result_json = envelope.to_json()
+    await backend.send_result(task.task_id, result_json)
     await backend.notify_result(task.task_id)
 
     _log_task_result(task, envelope, elapsed_ms, worker)

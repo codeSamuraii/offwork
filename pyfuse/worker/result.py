@@ -9,6 +9,7 @@ from typing import Any, Self
 from dataclasses import dataclass
 from collections.abc import Generator
 
+from pyfuse.core.task import _TaskEncoder, _resolve
 from pyfuse.core.errors import RemoteError, TaskStalled, TaskCancelled, ThrottleError
 from pyfuse.core.progress import ProgressInfo
 from pyfuse.worker.backends.base import Backend
@@ -58,7 +59,12 @@ class ResultEnvelope:
         )
 
     def to_json(self) -> str:
-        """Serialize to JSON string."""
+        """Serialize to JSON string.
+
+        Result payloads are encoded with the same sentinel-based encoder
+        used for task arguments, so ``bytes``, ``datetime``, ``Decimal``,
+        ``Path`` etc. round-trip transparently.
+        """
         d: dict[str, Any] = {
             "task_id": self.task_id,
             "status": self.status,
@@ -69,16 +75,17 @@ class ResultEnvelope:
             d["error_type"] = self.error_type
             d["error_message"] = self.error_message
             d["error_traceback"] = self.error_traceback
-        return json.dumps(d)
+        return json.dumps(d, cls=_TaskEncoder)
 
     @classmethod
     def from_json(cls, raw: str | bytes) -> Self:
         """Deserialize from a JSON string or bytes."""
         data = json.loads(raw)
+        result = _resolve(data.get("result"), {}) if data.get("status") == "ok" else None
         return cls(
             task_id=data["task_id"],
             status=data["status"],
-            result=data.get("result"),
+            result=result,
             error_type=data.get("error_type"),
             error_message=data.get("error_message"),
             error_traceback=data.get("error_traceback"),
