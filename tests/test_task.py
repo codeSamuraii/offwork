@@ -321,3 +321,218 @@ class TestBuiltinTypeSerialization:
         assert out == v
         assert all(isinstance(s, set) for s in out)
 
+
+class TestExtendedTypeSerialization:
+    """Tuples, NamedTuples, enums, ranges, fractions, collections, ipaddress."""
+
+    @staticmethod
+    def _roundtrip(value: object, namespace: dict[str, object] | None = None) -> object:
+        task = Task(graph_json="{}", function_name="f", args=(value,))
+        restored = Task.from_json(task.to_json())
+        args, _ = resolve_args(restored.args, restored.kwargs, namespace or {})
+        return args[0]
+
+    def test_tuple_preserves_type(self) -> None:
+        v = (1, 2, "three")
+        out = self._roundtrip(v)
+        assert out == v
+        assert isinstance(out, tuple)
+
+    def test_nested_tuple(self) -> None:
+        v = (1, (2, 3), [4, (5, 6)])
+        out = self._roundtrip(v)
+        assert out == v
+        assert isinstance(out, tuple)
+        assert isinstance(out[1], tuple)
+        assert isinstance(out[2][1], tuple)
+
+    def test_empty_tuple(self) -> None:
+        out = self._roundtrip(())
+        assert out == ()
+        assert isinstance(out, tuple)
+
+    def test_namedtuple_roundtrip(self) -> None:
+        from collections import namedtuple
+        Point = namedtuple("Point", ["x", "y"])
+        p = Point(3, 4)
+        out = self._roundtrip(p, {"Point": Point})
+        assert isinstance(out, Point)
+        assert out.x == 3 and out.y == 4
+
+    def test_namedtuple_falls_back_to_tuple(self) -> None:
+        from collections import namedtuple
+        Pair = namedtuple("Pair", ["a", "b"])
+        out = self._roundtrip(Pair(1, 2))  # no namespace -> plain tuple
+        assert out == (1, 2)
+        assert type(out) is tuple
+
+    def test_dict_with_int_keys(self) -> None:
+        v = {1: "a", 2: "b"}
+        out = self._roundtrip(v)
+        assert out == v
+        assert all(isinstance(k, int) for k in out)
+
+    def test_dict_with_tuple_keys(self) -> None:
+        v = {(1, 2): "x", (3, 4): "y"}
+        out = self._roundtrip(v)
+        assert out == v
+
+    def test_dict_string_keys_unchanged(self) -> None:
+        v = {"a": 1, "b": 2}
+        task = Task(graph_json="{}", function_name="f", args=(v,))
+        # JSON should still use the natural object form for str-keyed dicts
+        raw = task.to_json()
+        assert "__pyfuse_dict__" not in raw
+        out = self._roundtrip(v)
+        assert out == v
+
+    def test_enum(self) -> None:
+        import enum
+
+        class Color(enum.Enum):
+            RED = 1
+            GREEN = 2
+
+        out = self._roundtrip(Color.RED, {"Color": Color})
+        assert out is Color.RED
+
+    def test_int_enum(self) -> None:
+        import enum
+
+        class Mode(enum.IntEnum):
+            ON = 1
+            OFF = 0
+
+        out = self._roundtrip(Mode.ON, {"Mode": Mode})
+        assert out is Mode.ON
+        assert isinstance(out, Mode)
+
+    def test_enum_unknown_class_falls_back_to_value(self) -> None:
+        import enum
+
+        class Color(enum.Enum):
+            RED = 1
+
+        out = self._roundtrip(Color.RED)
+        assert out == 1
+
+    def test_range(self) -> None:
+        v = range(0, 10, 2)
+        out = self._roundtrip(v)
+        assert out == v
+        assert isinstance(out, range)
+
+    def test_fraction(self) -> None:
+        from fractions import Fraction
+        v = Fraction(22, 7)
+        out = self._roundtrip(v)
+        assert out == v
+        assert isinstance(out, Fraction)
+
+    def test_counter(self) -> None:
+        from collections import Counter
+        v = Counter({"a": 3, "b": 2, "c": 1})
+        out = self._roundtrip(v)
+        assert out == v
+        assert isinstance(out, Counter)
+
+    def test_ordered_dict(self) -> None:
+        from collections import OrderedDict
+        v = OrderedDict([("a", 1), ("b", 2), ("c", 3)])
+        out = self._roundtrip(v)
+        assert out == v
+        assert isinstance(out, OrderedDict)
+        assert list(out.keys()) == ["a", "b", "c"]
+
+    def test_defaultdict(self) -> None:
+        from collections import defaultdict
+        v = defaultdict(list)
+        v["a"].append(1)
+        v["b"].append(2)
+        out = self._roundtrip(v)
+        assert isinstance(out, defaultdict)
+        assert dict(out) == {"a": [1], "b": [2]}
+        assert out.default_factory is list
+
+    def test_deque(self) -> None:
+        from collections import deque
+        v = deque([1, 2, 3], maxlen=5)
+        out = self._roundtrip(v)
+        assert isinstance(out, deque)
+        assert list(out) == [1, 2, 3]
+        assert out.maxlen == 5
+
+    def test_ipv4_address(self) -> None:
+        import ipaddress
+        v = ipaddress.IPv4Address("192.168.1.1")
+        out = self._roundtrip(v)
+        assert out == v
+        assert isinstance(out, ipaddress.IPv4Address)
+
+    def test_ipv6_network(self) -> None:
+        import ipaddress
+        v = ipaddress.IPv6Network("2001:db8::/32")
+        out = self._roundtrip(v)
+        assert out == v
+        assert isinstance(out, ipaddress.IPv6Network)
+
+    def test_memoryview(self) -> None:
+        v = memoryview(b"hello world")
+        out = self._roundtrip(v)
+        assert isinstance(out, memoryview)
+        assert bytes(out) == b"hello world"
+
+    def test_pickle_fallback(self) -> None:
+        import re
+        # re.Pattern has neither __dict__ nor __slots__, but pickles fine.
+        v = re.compile(r"\d+", re.IGNORECASE)
+        out = self._roundtrip(v)
+        assert isinstance(out, re.Pattern)
+        assert out.pattern == r"\d+"
+        assert out.flags == v.flags
+
+    def test_unserializable_raises(self) -> None:
+        # generators are not picklable and have no state extractable
+        gen = (x for x in range(3))
+        with pytest.raises(TypeError):
+            self._roundtrip(gen)
+
+
+class TestRoundTripCombined:
+    """End-to-end tests combining many types in one envelope."""
+
+    def test_kitchen_sink(self) -> None:
+        import datetime
+        from collections import Counter, OrderedDict, deque
+        from decimal import Decimal
+        from fractions import Fraction
+
+        payload: dict[str, object] = {
+            "tup": (1, (2, 3)),
+            "set": {1, 2, 3},
+            "bytes": b"\x00\xff",
+            "dt": datetime.datetime(2026, 4, 27, 12),
+            "amount": Decimal("9.99"),
+            "frac": Fraction(1, 3),
+            "rng": range(5),
+            "counter": Counter("aabbbc"),
+            "od": OrderedDict([("a", 1)]),
+            "dq": deque([10, 20]),
+            "intkeys": {1: "x", 2: "y"},
+        }
+        task = Task(graph_json="{}", function_name="f", kwargs=payload)
+        restored = Task.from_json(task.to_json())
+        _, kwargs = resolve_args(restored.args, restored.kwargs, {})
+
+        assert kwargs["tup"] == (1, (2, 3))
+        assert isinstance(kwargs["tup"], tuple)
+        assert kwargs["set"] == {1, 2, 3}
+        assert kwargs["bytes"] == b"\x00\xff"
+        assert kwargs["dt"] == datetime.datetime(2026, 4, 27, 12)
+        assert kwargs["amount"] == Decimal("9.99")
+        assert kwargs["frac"] == Fraction(1, 3)
+        assert kwargs["rng"] == range(5)
+        assert kwargs["counter"] == Counter("aabbbc")
+        assert kwargs["od"] == OrderedDict([("a", 1)])
+        assert list(kwargs["dq"]) == [10, 20]
+        assert kwargs["intkeys"] == {1: "x", 2: "y"}

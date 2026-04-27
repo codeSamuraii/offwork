@@ -27,6 +27,7 @@ from pathlib import Path
 from collections.abc import Callable
 
 from pyfuse.core.errors import WorkerError
+from pyfuse.core.task import _resolve, _to_jsonable
 from pyfuse.core.progress import _progress_callback
 from pyfuse.worker.sandbox._protocol import async_recv, async_send
 
@@ -136,8 +137,8 @@ class DockerSandbox:
         request: dict[str, Any] = {
             "source": source,
             "function_name": function_name,
-            "args": list(args),
-            "kwargs": kwargs,
+            "args": [_to_jsonable(a) for a in args],
+            "kwargs": {k: _to_jsonable(v) for k, v in kwargs.items()},
         }
         if owner_class is not None:
             request["owner_class"] = owner_class
@@ -167,7 +168,10 @@ class DockerSandbox:
                 f"Sandbox error — {response.get('error_type', 'Unknown')}: "
                 f"{response.get('error_message', '')}"
             )
-        return response.get("result")
+        # Return values from the guest agent travel through the same
+        # sentinel encoding so non-JSON-native types (tuples, datetimes,
+        # custom classes, etc.) round-trip transparently.
+        return _resolve(response.get("result"), {})
 
     async def start(self) -> None:
         """Build the image (if needed), start the container, connect."""
