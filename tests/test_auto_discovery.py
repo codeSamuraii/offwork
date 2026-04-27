@@ -939,3 +939,113 @@ def test_class_docstring_captured(tmp_path: Path) -> None:
     )
     source = reconstruct(serialize(), "method")
     assert "A documented class" in source
+
+# ---------------------------------------------------------------------------
+# Feature 5: Bare class call without user-defined ``__init__``
+# ---------------------------------------------------------------------------
+
+
+def test_bare_class_no_init_chained(tmp_path: Path) -> None:
+    """``Tag().label()`` works when ``Tag`` has no user-defined ``__init__``."""
+    create_module(
+        tmp_path,
+        "adbarenoinit",
+        (
+            "from pyfuse import trace\n\n"
+            "class Tag:\n"
+            "    def label(self):\n"
+            "        return 'tag'\n\n"
+            "@trace\n"
+            "def construct_tag():\n"
+            "    return Tag().label()\n"
+        ),
+    )
+    source = reconstruct(serialize(), "construct_tag")
+    assert "class Tag" in source
+    assert "def label" in source
+
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    assert ns["construct_tag"]() == "tag"  # type: ignore[operator]
+
+
+# ---------------------------------------------------------------------------
+# Feature 6: ``__init_subclass__`` registry pattern
+# ---------------------------------------------------------------------------
+
+
+def test_init_subclass_registry_pulls_subclasses(tmp_path: Path) -> None:
+    """Subclasses of registry-style parents survive serialization."""
+    create_module(
+        tmp_path,
+        "adsubregistry",
+        (
+            "from pyfuse import trace\n\n"
+            "class Plugin:\n"
+            "    _registry = {}\n"
+            "    def __init__(self):\n"
+            "        pass\n"
+            "    def __init_subclass__(cls, name=None, **kwargs):\n"
+            "        super().__init_subclass__(**kwargs)\n"
+            "        if name is not None:\n"
+            "            Plugin._registry[name] = cls\n"
+            "    def run(self, payload):\n"
+            "        raise NotImplementedError\n\n"
+            "class GreetPlugin(Plugin, name='greet'):\n"
+            "    def run(self, payload):\n"
+            "        return f'hello, {payload}!'\n\n"
+            "@trace\n"
+            "def dispatch(plugin_name, payload):\n"
+            "    Plugin()\n"
+            "    cls = Plugin._registry[plugin_name]\n"
+            "    return cls().run(payload)\n"
+        ),
+    )
+    source = reconstruct(serialize(), "dispatch")
+    assert "class Plugin" in source
+    assert "class GreetPlugin(Plugin, name='greet'):" in source
+
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    assert ns["dispatch"]("greet", "world") == "hello, world!"  # type: ignore[operator]
+
+
+# ---------------------------------------------------------------------------
+# Feature 7: Class-level descriptor (user class referenced in class body)
+# ---------------------------------------------------------------------------
+
+
+def test_class_level_descriptor_registered(tmp_path: Path) -> None:
+    """A user class referenced from a class body (``field = Doubler()``) is captured."""
+    create_module(
+        tmp_path,
+        "addescriptor",
+        (
+            "from pyfuse import trace\n\n"
+            "class Doubler:\n"
+            "    def __set_name__(self, owner, name):\n"
+            "        self._attr = f'_{name}'\n"
+            "    def __get__(self, obj, objtype=None):\n"
+            "        if obj is None:\n"
+            "            return self\n"
+            "        return getattr(obj, self._attr) * 2\n"
+            "    def __set__(self, obj, value):\n"
+            "        setattr(obj, self._attr, value)\n\n"
+            "class Counter:\n"
+            "    value = Doubler()\n"
+            "    def __init__(self, start):\n"
+            "        self.value = start\n\n"
+            "@trace\n"
+            "def doubled(start):\n"
+            "    c = Counter(start)\n"
+            "    return c.value\n"
+        ),
+    )
+    source = reconstruct(serialize(), "doubled")
+    assert "class Doubler" in source
+    assert "class Counter" in source
+    assert "value = Doubler()" in source
+
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    assert ns["doubled"](5) == 10  # type: ignore[operator]

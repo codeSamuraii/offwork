@@ -237,9 +237,11 @@ When a traced function calls an untraced user-defined function, pyfuse automatic
 
 Cross-module imports (e.g., `from utils import helper`) are converted from import statements to inline dependency edges, so the reconstructed code is self-contained.
 
-Class constructors (`MyClass()`) are auto-discovered: pyfuse registers all user-defined methods of the class. `@staticmethod` and `@classmethod` descriptors are unwrapped and registered correctly. When a method uses `super()`, base classes and their methods are discovered recursively, and `class Foo(Base):` headers are emitted in reconstructed source.
+Class constructors (`MyClass()`) are auto-discovered: pyfuse registers all user-defined methods of the class, even when the class relies on the implicit `object.__init__`. `@staticmethod` and `@classmethod` descriptors are unwrapped and registered correctly. Base classes and their methods are pulled in via `__mro__` walking (independent of `super()` usage), and `class Foo(Base):` headers are emitted in reconstructed source.
 
-Class-level attributes (assignments, annotated assignments, docstrings) are extracted from the class source AST and emitted in reconstructed class blocks. Class decorators (e.g., `@dataclass`) are captured and emitted above the class header. Metaclass keywords (e.g., `metaclass=ABCMeta`) and other class keywords are extracted from the class definition and included in the reconstructed header.
+Classes that hook `__init_subclass__` are treated as registries: every user-defined subclass is auto-registered so its definition fires the parent hook on the worker. The same path catches subclasses looked up indirectly (e.g., by name from a registry dict) without requiring an explicit reference in the traced body.
+
+Class-level attributes (assignments, annotated assignments, docstrings) are extracted from the class source AST and emitted in reconstructed class blocks. User classes referenced from class-body RHS expressions (e.g., descriptors installed via `field = Doubler()`) are auto-registered transitively. Class decorators (e.g., `@dataclass`) are captured and emitted above the class header. Metaclass keywords (e.g., `metaclass=ABCMeta`) and other class keywords are extracted from the class definition and included in the reconstructed header.
 
 Module-level constants and variables referenced by traced functions (e.g., `MAX_RETRIES = 5`) are captured and emitted in reconstructed source.
 
@@ -670,8 +672,7 @@ Environment variables `PYFUSE_SANDBOX_DOCKER_IMAGE` and `PYFUSE_SANDBOX_DOCKER_C
 - Aliased cross-module imports (`from utils import helper as h`) are skipped to avoid name mismatches.
 
 ### Classes
-- Metaclasses and `__init_subclass__` hooks are replayed when the parent class is in the dependency tree (i.e., referenced via `super()` or constructor call).
-- Class-level attributes defined via complex descriptors or external decorators (beyond simple assignments) may not be captured.
+- Class-level attributes are captured verbatim from the class source AST. User classes referenced from class-body expressions (e.g., descriptor instances assigned to class attributes) are auto-registered along with the owning class. External decorators applied to attributes via more dynamic patterns may still be missed.
 
 ## CLI reference
 

@@ -291,6 +291,8 @@ class Graph(TracingMixin):
         )
         self._runtime_deps: dict[str, set[str]] = {}
         self._lock: threading.Lock = threading.Lock()
+        self._classes_in_progress: set[str] = set()
+        self._inclusion_deps: dict[str, set[str]] = {}
 
     @classmethod
     def default(cls) -> "Graph":
@@ -499,23 +501,39 @@ class Graph(TracingMixin):
         """Auto-register all user-defined methods of a class into the graph."""
         class_name = cls.__name__
         module_name = cls.__module__
+        cls_key = f"{module_name}.{cls.__qualname__}"
+        if cls_key in self._classes_in_progress:
+            return
+        self._classes_in_progress.add(cls_key)
+        try:
+            for attr_name, raw in cls.__dict__.items():
+                if isinstance(raw, (classmethod, staticmethod)):
+                    func = raw.__func__
+                elif inspect.isfunction(raw):
+                    func = raw
+                else:
+                    continue
+                if not _is_user_function(func):
+                    continue
+                qname = f"{module_name}.{class_name}.{attr_name}"
+                if qname in self._nodes:
+                    continue
+                self._auto_register(func)
 
-        for attr_name, raw in cls.__dict__.items():
-            if isinstance(raw, (classmethod, staticmethod)):
-                func = raw.__func__
-            elif inspect.isfunction(raw):
-                func = raw
-            else:
-                continue
-            if not _is_user_function(func):
-                continue
-            qname = f"{module_name}.{class_name}.{attr_name}"
-            if qname in self._nodes:
-                continue
-            self._auto_register(func)
+            self._set_class_metadata(cls)
+            self._resolve_class_bases(cls)
 
-        self._set_class_metadata(cls)
-        self._resolve_class_bases(cls)
+            # Subclass registry pattern: classes that hook ``__init_subclass__``
+            # populate registries from subclass definitions. The traced source
+            # may look subclasses up indirectly (e.g. by name); to make that
+            # work on the worker, pull every user-defined subclass into the
+            # graph so its definition fires the parent hook on reconstruct.
+            if "__init_subclass__" in cls.__dict__:
+                for sub in cls.__subclasses__():
+                    if _is_user_class(sub):
+                        self._auto_register_class(sub)
+        finally:
+            self._classes_in_progress.discard(cls_key)
 
     def _set_class_metadata(self, cls: type) -> None:
         """Capture class-level attributes and decorators onto method nodes."""
@@ -532,10 +550,18 @@ class Graph(TracingMixin):
         for deco_src in decorators:
             extra_names |= get_used_names(deco_src)
 
+        # User classes referenced from class-body RHS (e.g. descriptors like
+        # ``field = Doubler()``) are not visible to bare-call discovery on
+        # function bodies; register them here so they survive reconstruction.
+        ref_method_qnames = self._register_class_attr_refs(cls, extra_names)
+
         for node in self._nodes.values():
             if node.owner_class == class_name and node.module == module_name:
                 node.class_attrs = attrs
                 node.class_decorators = decorators
+                for ref_qname in ref_method_qnames:
+                    if ref_qname != node.qualified_name:
+                        self._inclusion_deps.setdefault(node.qualified_name, set()).add(ref_qname)
                 if extra_names:
                     existing_names = {imp.bound_name for imp in node.imports}
                     try:
@@ -550,6 +576,38 @@ class Graph(TracingMixin):
                                 existing_names.add(imp.bound_name)
                     except StopIteration:
                         pass
+
+    def _register_class_attr_refs(
+        self, cls: type, extra_names: set[str]
+    ) -> list[str]:
+        """Auto-register user classes referenced from the class body.
+
+        Returns the qualified names of one method per referenced class so
+        callers can wire dependency edges that keep them in the subgraph.
+        """
+        if not extra_names:
+            return []
+        module_obj = sys.modules.get(cls.__module__)
+        if module_obj is None:
+            return []
+
+        ref_method_qnames: list[str] = []
+        for name in extra_names:
+            if name in _BUILTIN_NAMES:
+                continue
+            obj = getattr(module_obj, name, None)
+            if obj is None or obj is cls:
+                continue
+            if not (inspect.isclass(obj) and _is_user_class(obj)):
+                continue
+            self._auto_register_class(obj)
+            for ref_node in self._nodes.values():
+                if (
+                    ref_node.owner_class == obj.__name__
+                    and ref_node.module == obj.__module__
+                ):
+                    ref_method_qnames.append(ref_node.qualified_name)
+        return ref_method_qnames
 
     def _resolve_class_bases(self, cls: type) -> None:
         """Detect class bases and store them on method nodes.
@@ -592,6 +650,36 @@ class Graph(TracingMixin):
             if _is_user_class(base_cls):
                 self._auto_register_class(base_cls)
 
+        # Add ordering edges from child methods to every parent method per
+        # direct user base, so the topological reconstruction emits parents
+        # first when the subclass is included via the registry pattern
+        # (without relying on ``super()`` being present in the subclass body).
+        for base_cls in cls.__bases__:
+            if base_cls is object or not _is_user_class(base_cls):
+                continue
+            parent_method_qnames = [
+                parent_node.qualified_name
+                for parent_node in self._nodes.values()
+                if (
+                    parent_node.owner_class == base_cls.__name__
+                    and parent_node.module == base_cls.__module__
+                )
+            ]
+            if not parent_method_qnames:
+                continue
+            for child_node in self._nodes.values():
+                if (
+                    child_node.owner_class != class_name
+                    or child_node.module != module_name
+                ):
+                    continue
+                bucket = self._inclusion_deps.setdefault(
+                    child_node.qualified_name, set()
+                )
+                for parent_qname in parent_method_qnames:
+                    if parent_qname != child_node.qualified_name:
+                        bucket.add(parent_qname)
+
     def _discover_untraced_deps(
         self, module_name: str, node: FunctionNode
     ) -> None:
@@ -609,6 +697,7 @@ class Graph(TracingMixin):
         self._discover_bare_call_deps(node, module_obj)
         if node.owner_class:
             self._discover_self_call_deps(node, module_obj, module_name)
+        self._discover_init_subclass_deps(node, module_obj)
 
     def _discover_bare_call_deps(
         self,
@@ -675,6 +764,51 @@ class Graph(TracingMixin):
             self._set_class_metadata(cls_obj)
             self._resolve_class_bases(cls_obj)
 
+    def _discover_init_subclass_deps(
+        self,
+        node: FunctionNode,
+        module_obj: object,
+    ) -> None:
+        """Pull subclasses of registry-style parents into the caller's deps.
+
+        When the traced source references a class with a user-defined
+        ``__init_subclass__``, its subclasses participate by being defined --
+        not by being named in the source.  Add inclusion edges from this
+        node to one method of each user subclass so the subgraph keeps them.
+        """
+        for name in find_bare_calls(node.source) | get_used_names(node.source):
+            if name in _BUILTIN_NAMES:
+                continue
+            obj = getattr(module_obj, name, None)
+            if obj is None or not inspect.isclass(obj):
+                continue
+            if "__init_subclass__" not in obj.__dict__:
+                continue
+            # Skip when this node is itself a method of obj or an ancestor;
+            # adding child-class edges from a parent method causes cycles
+            # via the parent ordering edges added in ``_resolve_class_bases``.
+            if node.owner_class is not None:
+                node_cls = getattr(module_obj, node.owner_class.rsplit(".", 1)[-1], None)
+                if (
+                    inspect.isclass(node_cls)
+                    and node_cls is not None
+                    and (node_cls is obj or issubclass(obj, node_cls))
+                ):
+                    continue
+            for sub in obj.__subclasses__():
+                if not _is_user_class(sub):
+                    continue
+                self._auto_register_class(sub)
+                for sub_node in self._nodes.values():
+                    if (
+                        sub_node.owner_class == sub.__name__
+                        and sub_node.module == sub.__module__
+                        and sub_node.qualified_name != node.qualified_name
+                    ):
+                        self._inclusion_deps.setdefault(
+                            node.qualified_name, set()
+                        ).add(sub_node.qualified_name)
+
     # -- Refresh & dependency merging ------------------------------------------
 
     def refresh(self) -> None:
@@ -693,6 +827,9 @@ class Graph(TracingMixin):
             for ref_qname in node.closure_func_refs.values():
                 if ref_qname != qname and ref_qname not in deps:
                     deps.append(ref_qname)
+            for incl_qname in self._inclusion_deps.get(qname, set()):
+                if incl_qname in self._nodes and incl_qname not in deps:
+                    deps.append(incl_qname)
             node.dependencies = deps
 
     def _add_super_deps(self) -> None:

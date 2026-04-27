@@ -515,6 +515,16 @@ def _resolve_bare_calls(
             chosen = _prefer_same_module(init_matches, func_module)
             logger.debug("Constructor call %s() -> %s", called, chosen.qualified_name)
             deps.append(chosen.qualified_name)
+            continue
+        # Class with no user-defined ``__init__`` (inherits ``object.__init__``):
+        # link to every registered method so the whole class block is emitted.
+        method_matches = [
+            node for node in registry.values() if node.owner_class == called
+        ]
+        if method_matches:
+            for node in method_matches:
+                logger.debug("Bare class call %s() -> %s", called, node.qualified_name)
+                deps.append(node.qualified_name)
     return deps
 
 
