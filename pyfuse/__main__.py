@@ -20,6 +20,7 @@ import asyncio
 import logging
 import argparse
 import importlib
+import importlib.machinery
 from pathlib import Path
 from collections.abc import Callable
 from importlib.metadata import version as pkg_version
@@ -200,13 +201,24 @@ def _parse_script(script: str) -> tuple[str, ast.Module | None]:
 
 
 def _is_local_package(module_name: str, script_dir: str) -> bool:
-    """Return True if *module_name* resolves to a local directory or .py file."""
-    for base in (Path(script_dir), Path.cwd()):
-        if (base / module_name).is_dir():
-            return True
-        if (base / f"{module_name}.py").is_file():
-            return True
-    return False
+    """Return True if *module_name* is importable from the script's runtime path.
+
+    The script will be launched with ``cwd`` and its own directory on
+    ``sys.path`` (see ``_build_script_env``); we ask Python's path-based finder
+    whether the name resolves on exactly that list. We do not mutate
+    ``sys.path`` or ``sys.modules``.
+
+    If the module isn't found, we leave it alone and let the script fail at
+    runtime with the standard ``ModuleNotFoundError`` — that error names the
+    missing module and is the clearest signal to the user that their layout or
+    invocation directory is wrong.
+    """
+    search_path = [script_dir, str(Path.cwd())]
+    try:
+        spec = importlib.machinery.PathFinder.find_spec(module_name, search_path)
+    except (ImportError, ValueError):
+        return False
+    return spec is not None
 
 
 def _extract_top_modules(node: ast.AST) -> list[str]:

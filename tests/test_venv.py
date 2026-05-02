@@ -184,6 +184,49 @@ class TestDetectScriptPackages:
         assert "requests" in packages
         assert "helpers" not in packages
 
+    def test_skips_local_package_reachable_via_cwd(
+        self, tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A sibling package importable from cwd is treated as local.
+
+        Mirrors ``pyfuse run examples/foo.py`` invoked from the project root,
+        where ``foo.py`` imports a package living at that root.
+        """
+        sibling_pkg = tmp_path / "mypkg"  # type: ignore[operator]
+        sibling_pkg.mkdir()
+        (sibling_pkg / "__init__.py").write_text("")
+
+        scripts_dir = tmp_path / "scripts"  # type: ignore[operator]
+        scripts_dir.mkdir()
+        script = scripts_dir / "run.py"
+        script.write_text("from mypkg import thing\nimport requests\n")
+
+        monkeypatch.chdir(tmp_path)
+        packages = _detect_script_packages(str(script))
+        assert "requests" in packages
+        assert "mypkg" not in packages
+
+    def test_treats_unreachable_package_as_third_party(
+        self, tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """If a module isn't importable from cwd or the script dir, leave it alone:
+        the script will fail at runtime with a clear ImportError, and the user is
+        responsible for fixing their layout (we don't silently rewrite imports)."""
+        # ``mypkg`` lives one level up from cwd and isn't on sys.path.
+        sibling_pkg = tmp_path / "mypkg"  # type: ignore[operator]
+        sibling_pkg.mkdir()
+        (sibling_pkg / "__init__.py").write_text("")
+
+        scripts_dir = tmp_path / "scripts"  # type: ignore[operator]
+        scripts_dir.mkdir()
+        script = scripts_dir / "run.py"
+        script.write_text("from mypkg import thing\n")
+
+        monkeypatch.chdir(scripts_dir)
+        packages = _detect_script_packages(str(script))
+        # mypkg can't be imported from cwd or script_dir → treated as third-party.
+        assert "mypkg" in packages
+
     def test_install_package_as(self, tmp_path: pytest.TempPathFactory) -> None:
         script = tmp_path / "test_ipa.py"  # type: ignore[operator]
         script.write_text(

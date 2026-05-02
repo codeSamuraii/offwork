@@ -81,7 +81,9 @@ def progress(
     if cb is None:
         return
 
-    if _total is not None:
+    if isinstance(_total, (int, float)):
+        if _total <= 0:
+            raise ValueError("Progress total must be a positive number.")
         # current / total form
         cb(_value, _total, message)
     else:
