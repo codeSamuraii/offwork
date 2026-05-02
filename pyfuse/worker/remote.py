@@ -62,9 +62,13 @@ def _create_backend(url: str, **kwargs: Any) -> Backend:
         from pyfuse.worker.backends.rabbitmq import RabbitMQBackend
 
         return RabbitMQBackend(url, **kwargs)
+    if scheme in ("http", "https"):
+        from pyfuse.worker.backends.http import HttpBackend
+
+        return HttpBackend(url)
     raise ValueError(
         f"Unknown backend scheme: {scheme!r}. "
-        f"Supported: redis://, rediss://, local://, amqp://, amqps://"
+        f"Supported: redis://, rediss://, local://, amqp://, amqps://, http://, https://"
     )
 
 
@@ -79,6 +83,7 @@ def connect(url: str | None = None, **kwargs: Any) -> Backend:
         - ``redis://`` / ``rediss://`` -- :class:`RedisBackend`
         - ``local://`` -- :class:`LocalBackend` (same-machine IPC)
         - ``amqp://`` / ``amqps://`` -- :class:`RabbitMQBackend`
+        - ``http://`` / ``https://`` -- :class:`HttpBackend`
 
         When *None*, the ``PYFUSE_BACKEND`` environment variable is used.
 
@@ -134,7 +139,7 @@ def get_backend() -> Backend:
             connect(env_url)
         else:
             raise RuntimeError(
-                "No backend connected. Call pyfuse.connect('redis://...') "
+                "No backend connected. Call pyfuse.connect('redis://...') or pyfuse.connect('https://...') "
                 f"or set the {_ENV_VAR} environment variable."
             )
     return _active_backend  # type: ignore[return-value]

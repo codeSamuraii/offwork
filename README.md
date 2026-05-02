@@ -43,7 +43,7 @@ pyfuse worker --backend local://localhost:9748 --tmp   # start a worker
 python my_script.py                                    # → 5.0
 ```
 
-For multi-machine, swap `local://` for `redis://`. That's it.
+For multi-machine, swap `local://` for `redis://` or an `https://` managed broker URL. That's it.
 
 ## Sandbox
 
@@ -86,7 +86,7 @@ After setup, tasks are signed automatically. No client-side code changes. See [S
 | **Progress & cancellation** | `pyfuse.progress(3, 10)` inside tasks; `await future.cancel()` on client |
 | **Heartbeat & stall detection** | Workers heartbeat; clients raise `TaskStalled` on silence |
 | **Content-hash caching** | Same code = cache hit, regardless of client |
-| **Pluggable backends** | `local://` (same-machine TCP), `redis://`, `amqp://` (RabbitMQ) |
+| **Pluggable backends** | `local://` (same-machine TCP), `redis://`, `amqp://` (RabbitMQ), `http://`/`https://` (hosted broker API) |
 | **Docker sandbox** | Container isolation, transparent to clients |
 | **Signed execution** | Pre-shared token or PIN pairing + HMAC-SHA256 task authentication |
 | **Graceful shutdown** | Ctrl+C drains in-flight tasks; second Ctrl+C force-quits |
@@ -99,6 +99,7 @@ After setup, tasks are signed automatically. No client-side code changes. See [S
 | **[Technical Overview](docs/TECHNICAL_OVERVIEW.md)** | Architecture, serialization format, internals |
 | **[Signing & Pairing](docs/SIGNING.md)** | Cryptographic task signing protocol |
 | **[Sandbox](docs/SANDBOX.md)** | Docker container isolation |
+| **[Cloud POC](docs/CLOUD_POC.md)** | Local FastAPI + MongoDB + Kubernetes + React prototype for managed hosting |
 
 ## Examples
 
