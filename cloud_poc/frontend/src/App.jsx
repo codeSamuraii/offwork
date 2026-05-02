@@ -22,7 +22,7 @@ function SummaryCard({ label, value }) {
 
 export default function App() {
   const [registration, setRegistration] = useState({ email: '', password: '' })
-  const [apiKey, setApiKey] = useState(localStorage.getItem('pyfuse-cloud-api-key') ?? '')
+  const [apiKey, setApiKey] = useState('')
   const [brokerUrl, setBrokerUrl] = useState('')
   const [summary, setSummary] = useState(null)
   const [tasks, setTasks] = useState([])
@@ -35,7 +35,6 @@ export default function App() {
     if (!apiKey) {
       return
     }
-    localStorage.setItem('pyfuse-cloud-api-key', apiKey)
     const load = async () => {
       try {
         const [me, usage, recentTasks] = await Promise.all([

@@ -4,6 +4,8 @@ import time
 import asyncio
 from typing import Any
 from datetime import datetime, timezone, timedelta
+from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
 
 from fastapi import Body, FastAPI, HTTPException, Request, Response, status
 from pymongo import ASCENDING, DESCENDING, MongoClient, ReturnDocument
@@ -18,7 +20,6 @@ from .security import generate_api_key, hash_password, require_api_key, require_
 from .orchestrator import WorkerOrchestrator
 
 settings = Settings()
-app = FastAPI(title="pyfuse cloud proof-of-concept", version="0.1.0")
 
 
 class _DB:
@@ -62,45 +63,32 @@ async def mark_user_active(user: dict[str, Any]) -> None:
     )
 
 
-@app.on_event("startup")
-async def startup() -> None:
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     client: MongoClient[Any] = MongoClient(settings.mongodb_uri)
-    app.state.mongo_client = client
-    app.state.db = _DB(client, settings.mongodb_database)
-    app.state.db.ensure_indexes()
-    app.state.orchestrator = WorkerOrchestrator(settings)
-    app.state.reaper = asyncio.create_task(worker_reaper())
+    _app.state.mongo_client = client
+    _app.state.db = _DB(client, settings.mongodb_database)
+    _app.state.db.ensure_indexes()
+    _app.state.orchestrator = WorkerOrchestrator(settings)
+    _app.state.reaper = asyncio.create_task(worker_reaper())
+    try:
+        yield
+    finally:
+        reaper = getattr(_app.state, "reaper", None)
+        if reaper is not None:
+            reaper.cancel()
+            try:
+                await reaper
+            except asyncio.CancelledError:
+                pass
+        _app.state.mongo_client.close()
 
 
-@app.on_event("shutdown")
-async def shutdown() -> None:
-    reaper = getattr(app.state, "reaper", None)
-    if reaper is not None:
-        reaper.cancel()
-        try:
-            await reaper
-        except asyncio.CancelledError:
-            pass
-    app.state.mongo_client.close()
-
-
-async def worker_reaper() -> None:
-    while True:
-        await asyncio.sleep(15)
-        now = utc_now()
-        users = list(app.state.db.users.find({}, {"_id": 1, "last_worker_activity_at": 1, "created_at": 1}))
-        for user in users:
-            user_id = str(user["_id"])
-            activity_at = user.get("last_worker_activity_at") or user.get("created_at") or now
-            queued = app.state.db.tasks.count_documents({"user_id": user_id, "status": {"$in": ["queued", "running"]}})
-            if queued:
-                continue
-            if (now - activity_at).total_seconds() >= settings.worker_idle_seconds:
-                await asyncio.to_thread(
-                    app.state.orchestrator.scale_worker,
-                    deployment_name_for(user_id),
-                    0,
-                )
+app = FastAPI(
+    title="pyfuse cloud proof-of-concept",
+    version="0.1.0",
+    lifespan=lifespan,
+)
 
 
 @app.get("/api/v1/health")
