@@ -19,9 +19,9 @@ from pathlib import Path
 
 # Make ``tests.fixtures.stress_test_module`` importable when running this
 # script directly from a checkout, without needing PYTHONPATH gymnastics.
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+# _REPO_ROOT = Path(__file__).resolve().parent.parent
+# if str(_REPO_ROOT) not in sys.path:
+#     sys.path.insert(0, str(_REPO_ROOT))
 
 import pyfuse
 from pyfuse import trace
@@ -59,7 +59,7 @@ def full_sensor_report(sensor_count: int, readings_per_sensor: int, seed: int = 
 
 
 async def main() -> None:
-    pyfuse.connect("redis://localhost:6379")
+    pyfuse.connect("local://localhost:9748")
     report = await full_sensor_report.run(3, 50, seed=42)
     print(report)
 

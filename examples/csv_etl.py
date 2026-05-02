@@ -24,7 +24,7 @@ import pandas as pd
 import pyfuse
 from pyfuse import trace
 
-pyfuse.connect("redis://localhost:6379")
+pyfuse.connect("local://localhost:9748")
 
 
 # --- helpers (auto-discovered) --------------------------------------------

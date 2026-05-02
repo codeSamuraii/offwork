@@ -83,7 +83,7 @@ class ReportRequest(BaseModel):
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    pyfuse.connect("redis://localhost:6379")
+    pyfuse.connect("local://localhost:9748")
     try:
         yield
     finally:
