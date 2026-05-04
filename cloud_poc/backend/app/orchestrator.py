@@ -1,5 +1,6 @@
 """Kubernetes worker orchestration helpers for the local proof-of-concept."""
 
+import time
 import logging
 import subprocess
 from textwrap import dedent
@@ -7,6 +8,9 @@ from textwrap import dedent
 from .config import Settings
 
 logger = logging.getLogger(__name__)
+
+# Cache for recent scale_worker(replicas=1) calls to avoid kubectl spam.
+_SCALE_CACHE_TTL_SECONDS = 30.0
 
 _BLOCKED_CONTEXTS = frozenset({"aks-ani-staging", "aks-ani-prod"})
 _LOCAL_CONTEXT_NAMES = frozenset({"docker-desktop", "minikube", "rancher-desktop"})
@@ -16,6 +20,10 @@ _LOCAL_CONTEXT_PREFIXES = ("kind-", "k3d-")
 class WorkerOrchestrator:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
+        # Per-deployment cache of (replicas, monotonic timestamp) for the last
+        # successfully applied scale. We avoid re-issuing a kubectl scale call
+        # if we recently set the same replica count.
+        self._scale_cache: dict[str, tuple[int, float]] = {}
         logger.info(
             "orchestrator init  context=%s namespace=%s image=%s kubectl_enabled=%s",
             settings.kubernetes_context,
@@ -66,10 +74,20 @@ class WorkerOrchestrator:
         self._run_kubectl("apply", "-f", "-", input_text=f"{manifest}\n")
 
     def ensure_worker(self, deployment_name: str, api_key: str) -> None:
+        """Create the user's worker Deployment if it does not already exist.
+
+        Idempotent: if the Deployment already exists with the right shape we
+        leave it untouched. ``replicas`` is intentionally omitted from the
+        manifest so subsequent applies never reset the live replica count
+        managed by :meth:`scale_worker`.
+        """
         if not self._settings.kubectl_enabled:
             logger.debug("ensure_worker(%s) skipped (kubectl disabled)", deployment_name)
             return
-        logger.info("ensure_worker(%s) applying deployment manifest", deployment_name)
+        if self._deployment_exists(deployment_name):
+            logger.debug("ensure_worker(%s) already exists", deployment_name)
+            return
+        logger.info("ensure_worker(%s) creating deployment", deployment_name)
         self._ensure_namespace()
         manifest = dedent(
             f"""
@@ -82,7 +100,6 @@ class WorkerOrchestrator:
                 app: pyfuse-cloud-worker
                 pyfuse-user: {deployment_name}
             spec:
-              replicas: 0
               selector:
                 matchLabels:
                   app: pyfuse-cloud-worker
@@ -125,9 +142,25 @@ class WorkerOrchestrator:
         self._run_kubectl("apply", "-f", "-", input_text=f"{manifest}\n")
 
     def scale_worker(self, deployment_name: str, replicas: int) -> None:
+        """Scale the user's deployment to ``replicas``.
+
+        Coalesces repeated calls with the same target within
+        ``_SCALE_CACHE_TTL_SECONDS`` so a burst of submissions only issues a
+        single ``kubectl scale``. Pass any other ``replicas`` value to
+        invalidate the cache (e.g. the reaper scaling to 0).
+        """
         if not self._settings.kubectl_enabled:
             logger.debug("scale_worker(%s, %d) skipped (kubectl disabled)", deployment_name, replicas)
             return
+        cached = self._scale_cache.get(deployment_name)
+        now = time.monotonic()
+        if cached is not None:
+            cached_replicas, cached_at = cached
+            if cached_replicas == replicas and (now - cached_at) < _SCALE_CACHE_TTL_SECONDS:
+                logger.debug(
+                    "scale_worker(%s) -> replicas=%d (cached)", deployment_name, replicas,
+                )
+                return
         logger.info("scale_worker(%s) -> replicas=%d", deployment_name, replicas)
         self._run_kubectl(
             "scale",
@@ -137,3 +170,20 @@ class WorkerOrchestrator:
             f"--replicas={replicas}",
             ignore_not_found=replicas == 0,
         )
+        self._scale_cache[deployment_name] = (replicas, now)
+
+    def _deployment_exists(self, deployment_name: str) -> bool:
+        completed = subprocess.run(
+            self._kubectl_command(
+                "get",
+                f"deployment/{deployment_name}",
+                "-n",
+                self._settings.kubernetes_namespace,
+                "-o",
+                "name",
+            ),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        return completed.returncode == 0 and bool(completed.stdout.strip())

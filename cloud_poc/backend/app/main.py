@@ -328,6 +328,11 @@ async def submit_task(request: Request, payload: dict[str, str] = Body(...)) -> 
         "submit user=%s task=%s fn=%s bytes=%d",
         user["id"], task.task_id, task.function_name, len(task_json.encode("utf-8")),
     )
+    # Wake the worker. ``ensure_worker`` is a cheap "get + maybe create"; it
+    # never re-applies the manifest if the deployment already exists, so a
+    # running pod is never restarted by submission. ``scale_worker`` coalesces
+    # repeated calls so a burst of submissions only issues a single kubectl
+    # scale.
     await asyncio.to_thread(
         app.state.orchestrator.ensure_worker,
         deployment_name_for(user["id"]),
