@@ -1,13 +1,22 @@
 """FastAPI app for the local pyfuse cloud proof-of-concept."""
 
+import os
 import time
+import logging
 import asyncio
 from typing import Any
 from datetime import datetime, timezone, timedelta
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 
+logging.basicConfig(
+    level=os.environ.get("PYFUSE_CLOUD_LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)-7s %(name)s  %(message)s",
+    datefmt="%H:%M:%S",
+)
+
 from fastapi import Body, FastAPI, HTTPException, Request, Response, status
+from fastapi.middleware.cors import CORSMiddleware
 from pymongo import ASCENDING, DESCENDING, MongoClient, ReturnDocument
 from pymongo.collection import Collection
 from pymongo.errors import DuplicateKeyError
@@ -16,10 +25,11 @@ from pyfuse.core.task import Task
 from pyfuse.worker.result import ResultEnvelope
 
 from .config import Settings
-from .security import generate_api_key, hash_password, require_api_key, require_user
+from .security import generate_api_key, hash_password, require_api_key, require_user, verify_password
 from .orchestrator import WorkerOrchestrator
 
 settings = Settings()
+logger = logging.getLogger(__name__)
 
 
 class _DB:
@@ -63,17 +73,64 @@ async def mark_user_active(user: dict[str, Any]) -> None:
     )
 
 
+async def worker_reaper() -> None:
+    logger.info("reaper started  idle_threshold=%ds", settings.worker_idle_seconds)
+    while True:
+        cutoff = utc_now() - timedelta(seconds=settings.worker_idle_seconds)
+        idle_users = list(
+            app.state.db.users.find(
+                {
+                    "last_worker_activity_at": {"$lt": cutoff},
+                    "$expr": {
+                        "$gt": [
+                            {"$ifNull": ["$last_worker_activity_at", 0]},
+                            {"$ifNull": ["$reaped_at", 0]},
+                        ]
+                    },
+                },
+                {"_id": 1},
+            )
+        )
+        if idle_users:
+            logger.info("reaper found %d idle user(s)", len(idle_users))
+        for user in idle_users:
+            user_id = str(user["_id"])
+            try:
+                await asyncio.to_thread(
+                    app.state.orchestrator.scale_worker,
+                    deployment_name_for(user_id),
+                    0,
+                )
+                app.state.db.users.update_one(
+                    {"_id": user["_id"]},
+                    {"$set": {"reaped_at": utc_now()}},
+                )
+                logger.info("reaper scaled user=%s to 0", user_id)
+            except RuntimeError:
+                logger.warning("reaper failed to scale user=%s", user_id, exc_info=True)
+        await asyncio.sleep(max(settings.task_poll_interval, 1.0))
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    client: MongoClient[Any] = MongoClient(settings.mongodb_uri)
+    logger.info(
+        "control-plane starting  mongo=%s db=%s public_url=%s internal_url=%s",
+        settings.mongodb_uri,
+        settings.mongodb_database,
+        settings.broker_public_base_url,
+        settings.broker_internal_base_url,
+    )
+    client: MongoClient[Any] = MongoClient(settings.mongodb_uri, tz_aware=True)
     _app.state.mongo_client = client
     _app.state.db = _DB(client, settings.mongodb_database)
     _app.state.db.ensure_indexes()
     _app.state.orchestrator = WorkerOrchestrator(settings)
     _app.state.reaper = asyncio.create_task(worker_reaper())
+    logger.info("control-plane ready")
     try:
         yield
     finally:
+        logger.info("control-plane shutting down")
         reaper = getattr(_app.state, "reaper", None)
         if reaper is not None:
             reaper.cancel()
@@ -88,6 +145,14 @@ app = FastAPI(
     title="pyfuse cloud proof-of-concept",
     version="0.1.0",
     lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -121,11 +186,36 @@ async def register_user(payload: dict[str, str] = Body(...)) -> dict[str, Any]:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="email already registered") from exc
 
     user_id = str(result.inserted_id)
+    logger.info("register user=%s id=%s", email, user_id)
     await asyncio.to_thread(
         app.state.orchestrator.ensure_worker,
         deployment_name_for(user_id),
         api_key,
     )
+    return {
+        "user_id": user_id,
+        "email": email,
+        "api_key": api_key,
+        "broker_url": broker_url(api_key),
+    }
+
+
+@app.post("/api/v1/users/login")
+async def login_user(payload: dict[str, str] = Body(...)) -> dict[str, Any]:
+    email = payload.get("email", "").strip().lower()
+    password = payload.get("password", "")
+    if not email or not password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="email and password are required",
+        )
+    user = app.state.db.users.find_one({"email": email})
+    if user is None or not verify_password(password, str(user["password_hash"])):
+        logger.info("login failed user=%s", email)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid credentials")
+    user_id = str(user["_id"])
+    api_key = str(user["api_key"])
+    logger.info("login user=%s id=%s", email, user_id)
     return {
         "user_id": user_id,
         "email": email,
@@ -234,6 +324,10 @@ async def submit_task(request: Request, payload: dict[str, str] = Body(...)) -> 
         upsert=True,
     )
     await mark_user_active(user)
+    logger.info(
+        "submit user=%s task=%s fn=%s bytes=%d",
+        user["id"], task.task_id, task.function_name, len(task_json.encode("utf-8")),
+    )
     await asyncio.to_thread(
         app.state.orchestrator.ensure_worker,
         deployment_name_for(user["id"]),
@@ -251,7 +345,7 @@ async def submit_task(request: Request, payload: dict[str, str] = Body(...)) -> 
 async def claim_task(
     request: Request,
     payload: dict[str, float] = Body(default_factory=dict),
-) -> Response | dict[str, str]:
+) -> Response:
     user = await authenticated_user(request)
     deadline = time.monotonic() + float(payload.get("wait_seconds", 0.0))
     while True:
@@ -264,6 +358,10 @@ async def claim_task(
         )
         if doc is not None:
             await mark_user_active(user)
+            logger.info(
+                "claim user=%s task=%s fn=%s",
+                user["id"], doc["task_id"], doc.get("function_name"),
+            )
             return {"task_json": doc["task_json"]}
         if time.monotonic() >= deadline:
             return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -299,6 +397,10 @@ async def put_result(
         },
     )
     await mark_user_active(user)
+    logger.info(
+        "result user=%s task=%s status=%s bytes=%d",
+        user["id"], task_id, status_name, len(result_json.encode("utf-8")),
+    )
     return {"ok": True}
 
 
@@ -307,7 +409,7 @@ async def get_result(
     task_id: str,
     request: Request,
     wait_seconds: float = 0.0,
-) -> Response | dict[str, str]:
+) -> Response:
     user = await authenticated_user(request)
     deadline = time.monotonic() + wait_seconds
     while True:
@@ -335,7 +437,7 @@ async def put_heartbeat(task_id: str, request: Request) -> dict[str, bool]:
 
 
 @app.get("/api/v1/broker/tasks/{task_id}/heartbeat")
-async def get_heartbeat(task_id: str, request: Request) -> Response | dict[str, float]:
+async def get_heartbeat(task_id: str, request: Request) -> Response:
     user = await authenticated_user(request)
     doc = app.state.db.tasks.find_one(
         {"task_id": task_id, "user_id": user["id"]},
@@ -363,6 +465,7 @@ async def cancel_task(task_id: str, request: Request) -> dict[str, bool]:
         },
         upsert=True,
     )
+    logger.info("cancel user=%s task=%s", user["id"], task_id)
     return {"cancelled": True}
 
 
@@ -393,7 +496,7 @@ async def put_progress(
 
 
 @app.get("/api/v1/broker/tasks/{task_id}/progress")
-async def get_progress(task_id: str, request: Request) -> Response | dict[str, str]:
+async def get_progress(task_id: str, request: Request) -> Response:
     user = await authenticated_user(request)
     doc = app.state.db.tasks.find_one(
         {"task_id": task_id, "user_id": user["id"]},
