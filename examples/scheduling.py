@@ -1,4 +1,4 @@
-"""Task scheduling with pyfuse.
+"""Task scheduling with away.
 
 Demonstrates:
 - run_in(delay)   — execute after a delay
@@ -7,19 +7,19 @@ Demonstrates:
 
 Usage:
     # Terminal 1 -- start a worker
-    pyfuse worker --backend redis://localhost:6379 --tmp
+    away worker --backend redis://localhost:6379 --tmp
 
     # Terminal 2 -- run this script
-    pyfuse run examples/scheduling.py
+    away run examples/scheduling.py
 """
 
 import asyncio
 from datetime import datetime, timedelta
 
-import pyfuse
-from pyfuse import trace
+import away
+from away import trace
 
-pyfuse.connect("local://localhost:9748")
+away.connect("local://localhost:9748")
 
 
 @trace

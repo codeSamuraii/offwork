@@ -1,23 +1,23 @@
-"""Progress reporting with pyfuse.
+"""Progress reporting with away.
 
 Demonstrates how a long-running task can report progress
 back to the client in real time.
 
 Usage:
     # Terminal 1 -- start a worker
-    pyfuse worker --backend redis://localhost:6379 --tmp
+    away worker --backend redis://localhost:6379 --tmp
 
     # Terminal 2 -- run this script
-    pyfuse run examples/progress_reporting.py
+    away run examples/progress_reporting.py
 """
 
 import asyncio
 import time
 
-import pyfuse
-from pyfuse import trace, progress
+import away
+from away import trace, progress
 
-pyfuse.connect("local://localhost:9748")
+away.connect("local://localhost:9748")
 
 
 def process_item(item: str) -> str:

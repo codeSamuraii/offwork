@@ -2,15 +2,15 @@ import json
 
 import pytest
 
-from pyfuse.core.errors import SignatureError
-from pyfuse.core.signing import (
+from away.core.errors import SignatureError
+from away.core.signing import (
     compute_signature,
     derive_key,
     sign_json,
     verify_and_load_json,
     verify_signature,
 )
-from pyfuse.core.task import Task
+from away.core.task import Task
 
 
 class TestComputeSignature:

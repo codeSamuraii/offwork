@@ -6,12 +6,12 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from pyfuse import pack, trace
-from pyfuse.core.task import Task
-from pyfuse.worker.backends.local import LocalBackend
-from pyfuse.worker.result import ResultEnvelope
-from pyfuse.worker.worker import Worker
-import pyfuse.worker.remote as _remote
+from away import pack, trace
+from away.core.task import Task
+from away.worker.backends.local import LocalBackend
+from away.worker.result import ResultEnvelope
+from away.worker.worker import Worker
+import away.worker.remote as _remote
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-"""Async remote execution with pyfuse.
+"""Async remote execution with away.
 
 Demonstrates:
 - Awaiting a single remote task with .run()
@@ -9,10 +9,10 @@ Demonstrates:
 import asyncio
 import math
 
-import pyfuse
-from pyfuse import trace
+import away
+from away import trace
 
-pyfuse.connect("local://localhost:9748")
+away.connect("local://localhost:9748")
 
 async def add(a: float, b: float) -> float:
     return a + b

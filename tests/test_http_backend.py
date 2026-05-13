@@ -13,8 +13,8 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from pyfuse.worker.backends.http import HttpBackend
-import pyfuse.worker.remote as _remote
+from away.worker.backends.http import HttpBackend
+import away.worker.remote as _remote
 
 
 class _BrokerState:
@@ -61,7 +61,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _record_header(self) -> None:
         with self.state.lock:
-            self.state.headers.append(self.headers.get("X-Pyfuse-API-Key"))
+            self.state.headers.append(self.headers.get("X-Away-API-Key"))
 
     def do_POST(self) -> None:  # noqa: N802
         self._record_header()

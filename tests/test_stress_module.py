@@ -1,4 +1,4 @@
-"""Stress-test pyfuse with a multi-file module (47 nodes, 3 classes, 7 files).
+"""Stress-test away with a multi-file module (47 nodes, 3 classes, 7 files).
 
 Tests serialize → reconstruct → Worker.run for each entry point, verifying
 that the reconstructed code is self-contained and produces correct results.
@@ -9,8 +9,8 @@ import json
 
 import pytest
 
-from pyfuse import Graph, pack, reconstruct, serialize
-from pyfuse.worker.worker import Worker
+from away import Graph, pack, reconstruct, serialize
+from away.worker.worker import Worker
 from tests.fixtures.stress_test_module.transformers import clean_measurements
 
 import tests.fixtures.stress_test_module.validators as _validators_mod
@@ -49,7 +49,7 @@ def _exec_source(source: str) -> dict:
     return ns
 
 
-# ── Phase 1: module works without pyfuse ─────────────────────────────
+# ── Phase 1: module works without away ─────────────────────────────
 
 
 class TestStandaloneModule:

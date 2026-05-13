@@ -1,4 +1,4 @@
-"""Throttling and retry with pyfuse.
+"""Throttling and retry with away.
 
 Demonstrates:
 - @trace(throttle=timedelta) — rate-limit executions
@@ -7,20 +7,20 @@ Demonstrates:
 
 Usage:
     # Terminal 1 -- start a worker
-    pyfuse worker --backend redis://localhost:6379 --tmp
+    away worker --backend redis://localhost:6379 --tmp
 
     # Terminal 2 -- run this script
-    pyfuse run examples/throttling_and_retry.py
+    away run examples/throttling_and_retry.py
 """
 
 import asyncio
 import random
 from datetime import timedelta
 
-import pyfuse
-from pyfuse import trace, ThrottleError
+import away
+from away import trace, ThrottleError
 
-pyfuse.connect("local://localhost:9748")
+away.connect("local://localhost:9748")
 
 
 # --- Throttling: at most once every 5 seconds ---
