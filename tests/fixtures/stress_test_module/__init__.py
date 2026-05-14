@@ -1,1 +1,1 @@
-"""Large example module for stress-testing pyfuse auto-discovery."""
+"""Large example module for stress-testing away auto-discovery."""

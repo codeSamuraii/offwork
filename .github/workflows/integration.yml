@@ -24,7 +24,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install pyfuse + dev deps
+      - name: Install away + dev deps
         run: |
           pip install -e ".[redis,rabbitmq]"
           pip install pytest pytest-asyncio
@@ -80,7 +80,7 @@ jobs:
           python-version: "3.13"
 
       # --- Install --------------------------------------------------------
-      - name: Install pyfuse + backend extras
+      - name: Install away + backend extras
         run: |
           pip install -e ".[${{ matrix.backend.extras }}]"
           pip install pytest pytest-asyncio pytest-timeout
@@ -94,15 +94,15 @@ jobs:
       - name: Generate signing token
         if: matrix.signing
         run: |
-          TOKEN=$(python -c "from pyfuse.core.token import generate_token; print(generate_token())")
-          echo "PYFUSE_SIGNING_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+          TOKEN=$(python -c "from away.core.token import generate_token; print(generate_token())")
+          echo "AWAY_SIGNING_TOKEN=$TOKEN" >> "$GITHUB_ENV"
 
       # --- Run e2e tests --------------------------------------------------
       - name: Run end-to-end tests
         env:
-          PYFUSE_TEST_BACKEND: ${{ matrix.backend.url }}
-          PYFUSE_TEST_SIGNING: ${{ matrix.signing && '1' || '0' }}
-          PYFUSE_TEST_SANDBOX: ${{ matrix.sandbox && '1' || '0' }}
+          AWAY_TEST_BACKEND: ${{ matrix.backend.url }}
+          AWAY_TEST_SIGNING: ${{ matrix.signing && '1' || '0' }}
+          AWAY_TEST_SANDBOX: ${{ matrix.sandbox && '1' || '0' }}
         run: pytest tests/test_e2e.py -x -v --timeout=120
 
       # --- Dump worker logs on failure ------------------------------------
@@ -111,7 +111,7 @@ jobs:
         run: |
           echo "=== Worker process logs ==="
           # Collected by the test fixtures via subprocess
-          cat /tmp/pyfuse-worker-*.log 2>/dev/null || echo "(no log files)"
+          cat /tmp/away-worker-*.log 2>/dev/null || echo "(no log files)"
 
   # -----------------------------------------------------------------------
   # Mypy type checking
@@ -124,10 +124,10 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install pyfuse + dev deps
+      - name: Install away + dev deps
         run: |
           pip install -e ".[redis,rabbitmq]"
           pip install mypy pytest pytest-asyncio
 
       - name: Run mypy
-        run: mypy pyfuse/
+        run: mypy away/

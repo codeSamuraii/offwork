@@ -1,21 +1,21 @@
-"""Task cancellation with pyfuse.
+"""Task cancellation with away.
 
 Demonstrates cancelling a pending or in-progress task.
 
 Usage:
     # Terminal 1 -- start a worker
-    pyfuse worker --backend redis://localhost:6379 --tmp
+    away worker --backend redis://localhost:6379 --tmp
 
     # Terminal 2 -- run this script
-    pyfuse run examples/cancellation.py
+    away run examples/cancellation.py
 """
 
 import asyncio
 
-import pyfuse
-from pyfuse import trace, TaskCancelled
+import away
+from away import trace, TaskCancelled
 
-pyfuse.connect("local://localhost:9748")
+away.connect("local://localhost:9748")
 
 
 @trace

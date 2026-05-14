@@ -6,12 +6,12 @@ bytes in, dict out.
 
 The traced entry point ``summarize_chunk`` calls three plain helpers
 (``_load``, ``_clean``, ``_aggregate``).  None of them are decorated;
-pyfuse picks them up by walking the call graph of the entry point and
+away picks them up by walking the call graph of the entry point and
 sends them along with the task.
 
 Usage:
-    pyfuse worker --backend redis://localhost:6379 --tmp
-    python -m pyfuse run --tmp examples/csv_etl.py
+    away worker --backend redis://localhost:6379 --tmp
+    python -m away run --tmp examples/csv_etl.py
 """
 
 import asyncio
@@ -21,10 +21,10 @@ import random
 
 import pandas as pd
 
-import pyfuse
-from pyfuse import trace
+import away
+from away import trace
 
-pyfuse.connect("local://localhost:9748")
+away.connect("local://localhost:9748")
 
 
 # --- helpers (auto-discovered) --------------------------------------------

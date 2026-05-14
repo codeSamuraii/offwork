@@ -3,22 +3,22 @@
 ## Install
 
 ```bash
-pip install pyfuse
-pip install pyfuse[redis]      # Redis backend (multi-machine)
-pip install pyfuse[rabbitmq]   # RabbitMQ backend (multi-machine, AMQP)
+pip install away
+pip install away[redis]      # Redis backend (multi-machine)
+pip install away[rabbitmq]   # RabbitMQ backend (multi-machine, AMQP)
 ```
 
-pyfuse itself has zero runtime dependencies. Backend extras are only needed when you actually use the corresponding URL scheme.
+away itself has zero runtime dependencies. Backend extras are only needed when you actually use the corresponding URL scheme.
 
 ## Remote execution
 
 Add `@trace` to the entry point. Everything it calls is captured automatically.
 
 ```python
-import asyncio, math, pyfuse
-from pyfuse import trace
+import asyncio, math, away
+from away import trace
 
-pyfuse.connect("local://localhost:9748")
+away.connect("local://localhost:9748")
 
 def add(a, b):
     return a + b
@@ -34,7 +34,7 @@ asyncio.run(main())
 ```
 
 ```bash
-pyfuse worker --backend local://localhost:9748 --tmp   # Terminal 1
+away worker --backend local://localhost:9748 --tmp   # Terminal 1
 python my_script.py                                    # Terminal 2 → 5.0
 ```
 
@@ -99,7 +99,7 @@ If a task arrives during the cooldown window, the worker returns a `ThrottleErro
 Workers auto-install missing packages. When the import name differs from the pip package:
 
 ```python
-from pyfuse import install_package_as
+from away import install_package_as
 
 with install_package_as("PyYAML"):
     import yaml
@@ -112,7 +112,7 @@ Common mappings (`cv2` → `opencv-python`, `PIL` → `Pillow`, etc.) are built 
 Skip installing packages locally — the worker installs them on demand:
 
 ```python
-from pyfuse import worker_only_import
+from away import worker_only_import
 
 with worker_only_import():
     import requests
@@ -128,7 +128,7 @@ Only the names imported literally inside the `with` block are stubbed — real i
 ## Progress, cancellation, and results
 
 ```python
-from pyfuse import progress, TaskCancelled, RemoteError, TaskStalled
+from away import progress, TaskCancelled, RemoteError, TaskStalled
 
 # Inside a task — report progress (no-op when called locally)
 @trace
@@ -158,8 +158,8 @@ except RemoteError as e: print(e)       # includes remote traceback
 Run tasks inside Docker containers — transparent to clients:
 
 ```bash
-pyfuse sandbox setup                                      # build image (once)
-pyfuse worker --backend redis://localhost:6379 --sandbox   # run with isolation
+away sandbox setup                                      # build image (once)
+away worker --backend redis://localhost:6379 --sandbox   # run with isolation
 ```
 
 See [Sandbox](SANDBOX.md) for configuration and management.
@@ -170,13 +170,13 @@ Pre-shared token or PIN-based pairing + HMAC-SHA256 — workers reject untrusted
 
 ```bash
 # Token-based (recommended for CI/CD)
-pyfuse token generate                                       # generate once
-export PYFUSE_SIGNING_TOKEN=<token>                         # set on client & worker
-pyfuse worker --backend redis://localhost:6379 --require-signing
+away token generate                                       # generate once
+export AWAY_SIGNING_TOKEN=<token>                         # set on client & worker
+away worker --backend redis://localhost:6379 --require-signing
 
 # PIN-based pairing (interactive)
-pyfuse worker --backend redis://localhost:6379 --pair       # displays a 6-digit PIN
-pyfuse pair --backend redis://localhost:6379                # on client: enter the PIN
+away worker --backend redis://localhost:6379 --pair       # displays a 6-digit PIN
+away pair --backend redis://localhost:6379                # on client: enter the PIN
 ```
 
 After setup, tasks are signed automatically. No client-side code changes. See [Signing & Pairing](SIGNING.md) for details.
@@ -186,39 +186,39 @@ After setup, tasks are signed automatically. No client-side code changes. See [S
 | Backend | URL | Install | Use case |
 |---------|-----|---------|----------|
 | Local | `local://host:port` | (built-in) | Same-machine IPC (async TCP, no deps) |
-| Redis | `redis://host:port` | `pip install pyfuse[redis]` | Multi-machine production |
-| RabbitMQ | `amqp://host:port` | `pip install pyfuse[rabbitmq]` | Multi-machine production with AMQP |
+| Redis | `redis://host:port` | `pip install away[redis]` | Multi-machine production |
+| RabbitMQ | `amqp://host:port` | `pip install away[rabbitmq]` | Multi-machine production with AMQP |
 
 ```python
-pyfuse.connect("local://localhost:9748")
-pyfuse.connect("redis://localhost:6379")
-pyfuse.connect("amqp://guest:guest@localhost/")
+away.connect("local://localhost:9748")
+away.connect("redis://localhost:6379")
+away.connect("amqp://guest:guest@localhost/")
 ```
 
-Or: `export PYFUSE_BACKEND=redis://localhost:6379`
+Or: `export AWAY_BACKEND=redis://localhost:6379`
 
 ## Worker options
 
 ```bash
-pyfuse worker --backend redis://localhost:6379 -c 4              # 4 concurrent tasks
-pyfuse worker --backend redis://localhost:6379 --no-auto-install  # skip pip installs
-pyfuse worker --backend redis://localhost:6379 --sandbox --pair   # Docker + signing
+away worker --backend redis://localhost:6379 -c 4              # 4 concurrent tasks
+away worker --backend redis://localhost:6379 --no-auto-install  # skip pip installs
+away worker --backend redis://localhost:6379 --sandbox --pair   # Docker + signing
 ```
 
 Programmatic:
 
 ```python
-await pyfuse.serve("redis://localhost:6379", concurrency=4, sandbox=True)
+await away.serve("redis://localhost:6379", concurrency=4, sandbox=True)
 ```
 
 ## Running scripts
 
 ```bash
-pyfuse worker --backend local://localhost:9748 --tmp   # Terminal 1
-pyfuse run examples/remote_execution.py                # Terminal 2
+away worker --backend local://localhost:9748 --tmp   # Terminal 1
+away run examples/remote_execution.py                # Terminal 2
 ```
 
-`pyfuse run` creates a temporary venv, auto-detects dependencies, installs them, and runs the script.
+`away run` creates a temporary venv, auto-detects dependencies, installs them, and runs the script.
 
 ## Next steps
 

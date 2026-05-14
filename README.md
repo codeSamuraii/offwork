@@ -1,4 +1,4 @@
-# pyfuse
+# away
 
 **Run any Python function on a remote worker — zero setup, zero deployment.**
 
@@ -7,21 +7,21 @@
 [![Typed](https://img.shields.io/badge/typing-strict%20mypy-blue)](https://mypy-lang.org/)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)]()
 
-Add `@trace` to a function. pyfuse captures its source, dependencies, and imports automatically.
+Add `@trace` to a function. away captures its source, dependencies, and imports automatically.
 Workers reconstruct and execute everything from scratch — no shared filesystem, no deployment pipeline.
 Missing packages are installed on the fly.
 
 ## Quick start
 
 ```bash
-pip install pyfuse
+pip install away
 ```
 
 ```python
-import asyncio, math, pyfuse
-from pyfuse import trace
+import asyncio, math, away
+from away import trace
 
-pyfuse.connect("local://localhost:9748")
+away.connect("local://localhost:9748")
 
 def add(a, b):
     return a + b
@@ -39,19 +39,19 @@ asyncio.run(main())
 Only the entry point needs `@trace` — everything it calls is captured automatically.
 
 ```bash
-pyfuse worker --backend local://localhost:9748 --tmp   # start a worker
+away worker --backend local://localhost:9748 --tmp   # start a worker
 python my_script.py                                    # → 5.0
 ```
 
-For multi-machine, swap `local://` for `redis://`. That's it.
+For multi-machine, swap `local://` for `redis://` or an `https://` managed broker URL. That's it.
 
 ## Sandbox
 
 Run tasks inside Docker containers for isolation — transparent to clients:
 
 ```bash
-pyfuse sandbox setup                                      # build image (once)
-pyfuse worker --backend redis://localhost:6379 --sandbox  # run with isolation
+away sandbox setup                                      # build image (once)
+away worker --backend redis://localhost:6379 --sandbox  # run with isolation
 ```
 
 See [Sandbox](docs/SANDBOX.md) for configuration and management.
@@ -62,13 +62,13 @@ Pre-shared token or PIN-based pairing + HMAC-SHA256 — workers reject untrusted
 
 ```bash
 # Token-based (recommended for CI/CD)
-pyfuse token generate                                       # generate once
-export PYFUSE_SIGNING_TOKEN=<token>                         # set on client & worker
-pyfuse worker --backend redis://localhost:6379 --require-signing
+away token generate                                       # generate once
+export AWAY_SIGNING_TOKEN=<token>                         # set on client & worker
+away worker --backend redis://localhost:6379 --require-signing
 
 # PIN-based pairing (interactive)
-pyfuse worker --backend redis://localhost:6379 --pair       # displays a 6-digit PIN
-pyfuse pair --backend redis://localhost:6379                # on client: enter the PIN
+away worker --backend redis://localhost:6379 --pair       # displays a 6-digit PIN
+away pair --backend redis://localhost:6379                # on client: enter the PIN
 ```
 
 After setup, tasks are signed automatically. No client-side code changes. See [Signing & Pairing](docs/SIGNING.md) for details.
@@ -83,10 +83,10 @@ After setup, tasks are signed automatically. No client-side code changes. See [S
 | **Retry & timeout** | `@trace(timeout=30, retries=3)` with exponential backoff |
 | **Scheduling** | `.run_in(delay)`, `.run_at(datetime)`, `.run_every(freq)` with cancellation |
 | **Throttling** | `@trace(throttle=timedelta(hours=24)/50)` — rate-limit executions |
-| **Progress & cancellation** | `pyfuse.progress(3, 10)` inside tasks; `await future.cancel()` on client |
+| **Progress & cancellation** | `away.progress(3, 10)` inside tasks; `await future.cancel()` on client |
 | **Heartbeat & stall detection** | Workers heartbeat; clients raise `TaskStalled` on silence |
 | **Content-hash caching** | Same code = cache hit, regardless of client |
-| **Pluggable backends** | `local://` (same-machine TCP), `redis://`, `amqp://` (RabbitMQ) |
+| **Pluggable backends** | `local://` (same-machine TCP), `redis://`, `amqp://` (RabbitMQ), `http://`/`https://` (hosted broker API) |
 | **Docker sandbox** | Container isolation, transparent to clients |
 | **Signed execution** | Pre-shared token or PIN pairing + HMAC-SHA256 task authentication |
 | **Graceful shutdown** | Ctrl+C drains in-flight tasks; second Ctrl+C force-quits |
@@ -99,12 +99,13 @@ After setup, tasks are signed automatically. No client-side code changes. See [S
 | **[Technical Overview](docs/TECHNICAL_OVERVIEW.md)** | Architecture, serialization format, internals |
 | **[Signing & Pairing](docs/SIGNING.md)** | Cryptographic task signing protocol |
 | **[Sandbox](docs/SANDBOX.md)** | Docker container isolation |
+| **[Cloud POC](docs/CLOUD_POC.md)** | Local FastAPI + MongoDB + Kubernetes + React prototype for managed hosting |
 
 ## Examples
 
 ```bash
-pyfuse worker --backend local://localhost:9748 --tmp
-pyfuse run examples/remote_execution.py
+away worker --backend local://localhost:9748 --tmp
+away run examples/remote_execution.py
 ```
 
 [`remote_execution.py`](examples/remote_execution.py) · [`async_execution.py`](examples/async_execution.py) · [`package_installation.py`](examples/package_installation.py) · [`progress_reporting.py`](examples/progress_reporting.py) · [`cancellation.py`](examples/cancellation.py) · [`scheduling.py`](examples/scheduling.py) · [`throttling_and_retry.py`](examples/throttling_and_retry.py) · [`large_module.py`](examples/large_module.py)

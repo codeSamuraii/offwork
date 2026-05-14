@@ -1,5 +1,5 @@
 [project]
-name = "pyfuse"
+name = "away"
 version = "0.4.0"
 description = "Distributed Python task execution via automatic function serialization"
 readme = "README.md"
@@ -25,10 +25,10 @@ classifiers = [
 keywords = ["distributed", "remote-execution", "serialization", "task-queue"]
 
 [project.urls]
-Repository = "https://github.com/codeSamuraii/pyfuse"
+Repository = "https://github.com/codeSamuraii/away"
 
 [project.scripts]
-pyfuse = "pyfuse.__main__:main"
+away = "away.__main__:main"
 
 [project.optional-dependencies]
 redis = ["redis>=5.0"]
@@ -48,7 +48,7 @@ asyncio_mode = "auto"
 
 [tool.mypy]
 strict = true
-files = ["pyfuse"]
+files = ["away"]
 
 [tool.isort]
 profile = "black"

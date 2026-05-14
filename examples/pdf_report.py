@@ -1,4 +1,4 @@
-"""FastAPI endpoint that offloads PDF rendering to a pyfuse worker.
+"""FastAPI endpoint that offloads PDF rendering to a away worker.
 
 Generating a PDF is the textbook "offload" workload: it pulls in a heavy
 dependency (``reportlab``), uses a chunk of CPU, and the request handler
@@ -6,7 +6,7 @@ just wants bytes back.  The web app stays light; the worker pool absorbs
 the load and can be scaled independently.
 
 Only the entry point is decorated with ``@trace``.  The two helpers
-(``_styled_table``, ``_build_pdf``) are plain functions; pyfuse walks
+(``_styled_table``, ``_build_pdf``) are plain functions; away walks
 the AST of ``render_report``, sees the calls, and ships their source
 along automatically.
 
@@ -14,11 +14,11 @@ Endpoints:
     POST /reports   -- accept JSON, return application/pdf
 
 Usage:
-    pyfuse worker --backend redis://localhost:6379 --tmp
+    away worker --backend redis://localhost:6379 --tmp
     python examples/pdf_report.py
 
 The script starts the FastAPI app in-process, posts a sample report,
-prints the resulting PDF size (and writes it to ``/tmp/pyfuse_report.pdf``),
+prints the resulting PDF size (and writes it to ``/tmp/away_report.pdf``),
 and exits.
 """
 
@@ -38,8 +38,8 @@ from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
 from reportlab.lib.styles import getSampleStyleSheet
 
-import pyfuse
-from pyfuse import trace
+import away
+from away import trace
 
 
 # --- helpers (no @trace -- auto-discovered) -------------------------------
@@ -83,14 +83,14 @@ class ReportRequest(BaseModel):
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    pyfuse.connect("local://localhost:9748")
+    away.connect("local://localhost:9748")
     try:
         yield
     finally:
-        await pyfuse.disconnect()
+        await away.disconnect()
 
 
-app = FastAPI(title="pyfuse PDF service", lifespan=lifespan)
+app = FastAPI(title="away PDF service", lifespan=lifespan)
 
 
 @app.post("/reports")
@@ -121,7 +121,7 @@ async def _demo() -> None:
         async with httpx.AsyncClient(base_url="http://127.0.0.1:8080") as client:
             resp = await client.post("/reports", json=payload, timeout=60.0)
             resp.raise_for_status()
-            out = Path("/tmp/pyfuse_report.pdf")
+            out = Path("/tmp/away_report.pdf")
             out.write_bytes(resp.content)
             print(f"PDF: {len(resp.content)} bytes -> {out}")
     finally:

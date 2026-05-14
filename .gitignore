@@ -12,3 +12,5 @@ dist/
 build/
 .DS_Store
 .claudeignore
+node_modules/
+cloud_poc/frontend/dist/
