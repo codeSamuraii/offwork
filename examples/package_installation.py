@@ -32,7 +32,7 @@ from away import install_package_as, worker_only_import
 #   import PIL        -> pip install Pillow
 #
 # Common mappings are built-in. For others, use install_package_as:
-with install_package_as("PyYAML"):
+with worker_only_import("PyYAML"):
     import yaml
 
 # `worker_only_import` skips the local install entirely. The package only
