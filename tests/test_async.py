@@ -10,15 +10,15 @@ from typing import Any
 
 import pytest
 
-from away import pack, trace
-from away.core.errors import RemoteError, TaskStalled
-from away.core.models import FunctionNode, ImportInfo
-from away.core.task import Task
-from away.graph.store import Store
-from away.worker.backends.base import Backend
-from away.worker.result import Result, ResultEnvelope
-from away.worker.worker import Worker
-import away.worker.remote as _remote
+from seeya import pack, trace
+from seeya.core.errors import RemoteError, TaskStalled
+from seeya.core.models import FunctionNode, ImportInfo
+from seeya.core.task import Task
+from seeya.graph.store import Store
+from seeya.worker.backends.base import Backend
+from seeya.worker.result import Result, ResultEnvelope
+from seeya.worker.worker import Worker
+import seeya.worker.remote as _remote
 
 
 # ---------------------------------------------------------------------------

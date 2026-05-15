@@ -2,15 +2,15 @@ import json
 
 import pytest
 
-from away.core.errors import SignatureError
-from away.core.signing import (
+from seeya.core.errors import SignatureError
+from seeya.core.signing import (
     compute_signature,
     derive_key,
     sign_json,
     verify_and_load_json,
     verify_signature,
 )
-from away.core.task import Task
+from seeya.core.task import Task
 
 
 class TestComputeSignature:

@@ -4,7 +4,7 @@ import datetime
 import re
 import statistics
 
-from away import trace
+from seeya import trace
 
 VALID_UNITS = frozenset({"celsius", "fahrenheit", "psi", "bar", "rpm", "kwh"})
 SENSOR_ID_PATTERN = re.compile(r"^[A-Z]{4}-\d{4}-[0-9a-f]{4}$")

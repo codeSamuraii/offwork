@@ -2,10 +2,10 @@ import asyncio
 import math
 from typing import overload
 
-import away
-from away import trace
+import seeya
+from seeya import trace
 
-away.connect("local://localhost:9748")
+seeya.connect("local://localhost:9748")
 
 @overload
 def add(a: int, b: int) -> int: ...

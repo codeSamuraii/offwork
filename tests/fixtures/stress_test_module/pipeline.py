@@ -2,7 +2,7 @@
 
 import json
 
-from away import trace
+from seeya import trace
 
 from tests.fixtures.stress_test_module.analyzers import (
     analyze_measurements,

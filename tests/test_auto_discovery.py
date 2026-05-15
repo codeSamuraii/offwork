@@ -3,9 +3,9 @@ import os
 import warnings
 from pathlib import Path
 
-from away import reconstruct, serialize
-from away.graph.analyzer import find_bare_calls
-from away.graph.graph import Graph
+from seeya import reconstruct, serialize
+from seeya.graph.analyzer import find_bare_calls
+from seeya.graph.graph import Graph
 from tests.conftest import create_module
 
 
@@ -43,7 +43,7 @@ def test_auto_discover_same_module(tmp_path: Path) -> None:
         tmp_path,
         "adbasic",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "def normalize(text):\n"
             "    return text.strip().lower()\n\n"
             "@trace\n"
@@ -64,7 +64,7 @@ def test_auto_discover_transitive(tmp_path: Path) -> None:
         tmp_path,
         "adtrans",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "def step_c(x):\n"
             "    return x\n\n"
             "def step_b(x):\n"
@@ -89,7 +89,7 @@ def test_auto_discover_with_imports(tmp_path: Path) -> None:
         "adimports",
         (
             "import csv\n\n"
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "def parse(data):\n"
             "    return list(csv.reader(data.splitlines()))\n\n"
             "@trace\n"
@@ -109,7 +109,7 @@ def test_auto_discover_skips_builtins(tmp_path: Path) -> None:
         tmp_path,
         "adbuiltins",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "@trace\n"
             "def run(items):\n"
             "    print(len(items))\n"
@@ -130,7 +130,7 @@ def test_auto_discover_class_no_init(tmp_path: Path) -> None:
         tmp_path,
         "adclass",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "class MyClass:\n"
             "    pass\n\n"
             "@trace\n"
@@ -148,7 +148,7 @@ def test_auto_discover_no_duplicate(tmp_path: Path) -> None:
         tmp_path,
         "adnodup",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "def helper(x):\n"
             "    return x + 1\n\n"
             "@trace\n"
@@ -182,7 +182,7 @@ def test_auto_discover_cross_module(tmp_path: Path) -> None:
         "adcross",
         (
             "from adutils import helper\n\n"
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "@trace\n"
             "def run(x):\n"
             "    return helper(x)\n"
@@ -203,7 +203,7 @@ def test_auto_discover_preserves_stdlib_imports(tmp_path: Path) -> None:
         "adstdlib",
         (
             "import json\n\n"
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "@trace\n"
             "def run(data):\n"
             "    return json.dumps(data)\n"
@@ -229,7 +229,7 @@ def test_auto_discover_skips_aliased_imports(tmp_path: Path) -> None:
         "adalias",
         (
             "from adutils2 import helper as h\n\n"
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "@trace\n"
             "def run(x):\n"
             "    return h(x)\n"
@@ -255,7 +255,7 @@ def test_untraced_dep_end_to_end(tmp_path: Path) -> None:
         "ade2e",
         (
             "import csv\n\n"
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "def normalize(text):\n"
             "    return text.strip().lower()\n\n"
             "@trace\n"
@@ -292,7 +292,7 @@ def test_untraced_dep_chain_reconstruction(tmp_path: Path) -> None:
         tmp_path,
         "adchain",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "def step_c(x):\n"
             "    return x * 2\n\n"
             "def step_b(x):\n"
@@ -326,7 +326,7 @@ def test_auto_discover_cross_module_reconstruction(tmp_path: Path) -> None:
         "adxmain",
         (
             "from adxutils import double\n\n"
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "@trace\n"
             "def run(x):\n"
             "    return double(x) + 1\n"
@@ -357,7 +357,7 @@ def test_auto_register_warns_on_source_unavailable(tmp_path: Path) -> None:
             "adwarn",
             (
                 "import posixpath\n\n"
-                "from away import trace\n\n"
+                "from seeya import trace\n\n"
                 "# Rebind a stdlib function under a new name to bypass stdlib check\n"
                 "helper = type(lambda: None)(\n"
                 "    posixpath.join.__code__,\n"
@@ -385,7 +385,7 @@ def test_auto_discover_no_warning_for_local_variables(tmp_path: Path) -> None:
             tmp_path,
             "adnolocal",
             (
-                "from away import trace\n\n"
+                "from seeya import trace\n\n"
                 "@trace\n"
                 "def run(callback, items):\n"
                 "    result = callback(items)\n"
@@ -394,11 +394,11 @@ def test_auto_discover_no_warning_for_local_variables(tmp_path: Path) -> None:
         )
 
     # 'callback' is a parameter used as a function call — no warning expected
-    away_warnings = [
+    seeya_warnings = [
         w for w in caught
-        if "away" in str(w.filename) and "callback" in str(w.message)
+        if "seeya" in str(w.filename) and "callback" in str(w.message)
     ]
-    assert away_warnings == []
+    assert seeya_warnings == []
 
 
 def test_auto_discover_staticmethod(tmp_path: Path) -> None:
@@ -407,7 +407,7 @@ def test_auto_discover_staticmethod(tmp_path: Path) -> None:
         tmp_path,
         "adstaticmethod",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "class Calc:\n"
             "    @trace\n"
             "    def run(self, x):\n"
@@ -434,7 +434,7 @@ def test_auto_discover_classmethod(tmp_path: Path) -> None:
         tmp_path,
         "adclassmethod",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "class MyClass:\n"
             "    @trace\n"
             "    def run(cls):\n"
@@ -462,7 +462,7 @@ def test_auto_discover_no_warning_for_closure_vars(tmp_path: Path) -> None:
             tmp_path,
             "adnoclosure",
             (
-                "from away import trace\n\n"
+                "from seeya import trace\n\n"
                 "@trace\n"
                 "def helper(x):\n"
                 "    return x + 1\n\n"
@@ -475,11 +475,11 @@ def test_auto_discover_no_warning_for_closure_vars(tmp_path: Path) -> None:
             ),
         )
 
-    away_warnings = [
+    seeya_warnings = [
         w for w in caught
-        if "away" in str(w.filename) and "fn" in str(w.message)
+        if "seeya" in str(w.filename) and "fn" in str(w.message)
     ]
-    assert away_warnings == []
+    assert seeya_warnings == []
 
 
 # ---------------------------------------------------------------------------
@@ -493,7 +493,7 @@ def test_auto_discover_class_constructor(tmp_path: Path) -> None:
         tmp_path,
         "adctor",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "class Processor:\n"
             "    def __init__(self, scale):\n"
             "        self.scale = scale\n\n"
@@ -521,7 +521,7 @@ def test_auto_discover_class_init_with_deps(tmp_path: Path) -> None:
         tmp_path,
         "adctordeps",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "class Builder:\n"
             "    def __init__(self, data):\n"
             "        self.result = self.transform(data)\n\n"
@@ -550,7 +550,7 @@ def test_auto_discover_class_skips_stdlib_classes(tmp_path: Path) -> None:
         "adstdclass",
         (
             "from collections import OrderedDict\n"
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "@trace\n"
             "def run():\n"
             "    return OrderedDict(a=1)\n"
@@ -574,7 +574,7 @@ def test_module_constant_int(tmp_path: Path) -> None:
         tmp_path,
         "adconst_int",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "MAX_RETRIES = 5\n\n"
             "@trace\n"
             "def get_retries():\n"
@@ -596,7 +596,7 @@ def test_module_constant_dict(tmp_path: Path) -> None:
         tmp_path,
         "adconst_dict",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "CONFIG = {'debug': True, 'workers': 4}\n\n"
             "@trace\n"
             "def get_config():\n"
@@ -620,7 +620,7 @@ def test_module_constant_with_import(tmp_path: Path) -> None:
         "adconst_import",
         (
             "import os\n"
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "SEP = os.sep\n\n"
             "@trace\n"
             "def get_sep():\n"
@@ -642,7 +642,7 @@ def test_module_constant_skips_dunders(tmp_path: Path) -> None:
         tmp_path,
         "adconst_dunder",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "__version__ = '1.0'\n"
             "VALUE = 42\n\n"
             "@trace\n"
@@ -661,7 +661,7 @@ def test_module_constant_type_alias(tmp_path: Path) -> None:
         tmp_path,
         "adconst_alias",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "Multiplier: int = 10\n\n"
             "@trace\n"
             "def scale(x):\n"
@@ -687,7 +687,7 @@ def test_super_init_call(tmp_path: Path) -> None:
         tmp_path,
         "adsuper",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "class Base:\n"
             "    def __init__(self, x):\n"
             "        self.x = x\n\n"
@@ -719,7 +719,7 @@ def test_super_method_call(tmp_path: Path) -> None:
         tmp_path,
         "adsupermethod",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "class Base:\n"
             "    def greet(self):\n"
             "        return 'hello'\n\n"
@@ -744,7 +744,7 @@ def test_class_inheriting_stdlib(tmp_path: Path) -> None:
         tmp_path,
         "adstdbase",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "class MyList(list):\n"
             "    @trace\n"
             "    def first(self):\n"
@@ -772,7 +772,7 @@ def test_metaclass_reconstructed(tmp_path: Path) -> None:
         "admeta",
         (
             "from abc import ABCMeta, abstractmethod\n"
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "class Animal(metaclass=ABCMeta):\n"
             "    @abstractmethod\n"
             "    def speak(self):\n"
@@ -800,7 +800,7 @@ def test_metaclass_with_bases(tmp_path: Path) -> None:
         "admetabases",
         (
             "from abc import ABCMeta\n"
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "class Base(metaclass=ABCMeta):\n"
             "    def value(self):\n"
             "        return 42\n\n"
@@ -825,7 +825,7 @@ def test_init_subclass_replayed(tmp_path: Path) -> None:
         tmp_path,
         "adinitsubclass",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "class Registry:\n"
             "    _registry = []\n"
             "    def __init_subclass__(cls, **kwargs):\n"
@@ -858,7 +858,7 @@ def test_class_attrs_captured(tmp_path: Path) -> None:
         tmp_path,
         "adclsattrs",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "class Config:\n"
             "    MAX = 10\n"
             "    name = 'default'\n\n"
@@ -882,7 +882,7 @@ def test_class_annotated_attrs_captured(tmp_path: Path) -> None:
         tmp_path,
         "adclsann",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "class Item:\n"
             "    count: int = 0\n\n"
             "    @trace\n"
@@ -902,7 +902,7 @@ def test_class_decorator_captured(tmp_path: Path) -> None:
         "adclsdeco",
         (
             "from dataclasses import dataclass\n"
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "@dataclass\n"
             "class Point:\n"
             "    x: float\n"
@@ -929,7 +929,7 @@ def test_class_docstring_captured(tmp_path: Path) -> None:
         tmp_path,
         "adclsdoc",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "class Documented:\n"
             '    """A documented class."""\n\n'
             "    @trace\n"
@@ -951,7 +951,7 @@ def test_bare_class_no_init_chained(tmp_path: Path) -> None:
         tmp_path,
         "adbarenoinit",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "class Tag:\n"
             "    def label(self):\n"
             "        return 'tag'\n\n"
@@ -980,7 +980,7 @@ def test_init_subclass_registry_pulls_subclasses(tmp_path: Path) -> None:
         tmp_path,
         "adsubregistry",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "class Plugin:\n"
             "    _registry = {}\n"
             "    def __init__(self):\n"
@@ -1021,7 +1021,7 @@ def test_class_level_descriptor_registered(tmp_path: Path) -> None:
         tmp_path,
         "addescriptor",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "class Doubler:\n"
             "    def __set_name__(self, owner, name):\n"
             "        self._attr = f'_{name}'\n"

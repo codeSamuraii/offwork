@@ -3,22 +3,22 @@
 ## Install
 
 ```bash
-pip install away
-pip install away[redis]      # Redis backend (multi-machine)
-pip install away[rabbitmq]   # RabbitMQ backend (multi-machine, AMQP)
+pip install seeya
+pip install seeya[redis]      # Redis backend (multi-machine)
+pip install seeya[rabbitmq]   # RabbitMQ backend (multi-machine, AMQP)
 ```
 
-away itself has zero runtime dependencies. Backend extras are only needed when you actually use the corresponding URL scheme.
+seeya itself has zero runtime dependencies. Backend extras are only needed when you actually use the corresponding URL scheme.
 
 ## Remote execution
 
 Add `@trace` to the entry point. Everything it calls is captured automatically.
 
 ```python
-import asyncio, math, away
-from away import trace
+import asyncio, math, seeya
+from seeya import trace
 
-away.connect("local://localhost:9748")
+seeya.connect("local://localhost:9748")
 
 def add(a, b):
     return a + b
@@ -34,7 +34,7 @@ asyncio.run(main())
 ```
 
 ```bash
-away worker --backend local://localhost:9748 --tmp   # Terminal 1
+seeya worker --backend local://localhost:9748 --tmp   # Terminal 1
 python my_script.py                                    # Terminal 2 → 5.0
 ```
 
@@ -99,7 +99,7 @@ If a task arrives during the cooldown window, the worker returns a `ThrottleErro
 Workers auto-install missing packages. When the import name differs from the pip package:
 
 ```python
-from away import install_package_as
+from seeya import install_package_as
 
 with install_package_as("PyYAML"):
     import yaml
@@ -112,7 +112,7 @@ Common mappings (`cv2` → `opencv-python`, `PIL` → `Pillow`, etc.) are built 
 Skip installing packages locally — the worker installs them on demand:
 
 ```python
-from away import worker_only_import
+from seeya import worker_only_import
 
 with worker_only_import():
     import requests
@@ -128,7 +128,7 @@ Only the names imported literally inside the `with` block are stubbed — real i
 ## Progress, cancellation, and results
 
 ```python
-from away import progress, TaskCancelled, RemoteError, TaskStalled
+from seeya import progress, TaskCancelled, RemoteError, TaskStalled
 
 # Inside a task — report progress (no-op when called locally)
 @trace
@@ -158,8 +158,8 @@ except RemoteError as e: print(e)       # includes remote traceback
 Run tasks inside Docker containers — transparent to clients:
 
 ```bash
-away sandbox setup                                      # build image (once)
-away worker --backend redis://localhost:6379 --sandbox   # run with isolation
+seeya sandbox setup                                      # build image (once)
+seeya worker --backend redis://localhost:6379 --sandbox   # run with isolation
 ```
 
 See [Sandbox](SANDBOX.md) for configuration and management.
@@ -170,13 +170,13 @@ Pre-shared token or PIN-based pairing + HMAC-SHA256 — workers reject untrusted
 
 ```bash
 # Token-based (recommended for CI/CD)
-away token generate                                       # generate once
-export AWAY_SIGNING_TOKEN=<token>                         # set on client & worker
-away worker --backend redis://localhost:6379 --require-signing
+seeya token generate                                       # generate once
+export SEEYA_SIGNING_TOKEN=<token>                         # set on client & worker
+seeya worker --backend redis://localhost:6379 --require-signing
 
 # PIN-based pairing (interactive)
-away worker --backend redis://localhost:6379 --pair       # displays a 6-digit PIN
-away pair --backend redis://localhost:6379                # on client: enter the PIN
+seeya worker --backend redis://localhost:6379 --pair       # displays a 6-digit PIN
+seeya pair --backend redis://localhost:6379                # on client: enter the PIN
 ```
 
 After setup, tasks are signed automatically. No client-side code changes. See [Signing & Pairing](SIGNING.md) for details.
@@ -186,39 +186,39 @@ After setup, tasks are signed automatically. No client-side code changes. See [S
 | Backend | URL | Install | Use case |
 |---------|-----|---------|----------|
 | Local | `local://host:port` | (built-in) | Same-machine IPC (async TCP, no deps) |
-| Redis | `redis://host:port` | `pip install away[redis]` | Multi-machine production |
-| RabbitMQ | `amqp://host:port` | `pip install away[rabbitmq]` | Multi-machine production with AMQP |
+| Redis | `redis://host:port` | `pip install seeya[redis]` | Multi-machine production |
+| RabbitMQ | `amqp://host:port` | `pip install seeya[rabbitmq]` | Multi-machine production with AMQP |
 
 ```python
-away.connect("local://localhost:9748")
-away.connect("redis://localhost:6379")
-away.connect("amqp://guest:guest@localhost/")
+seeya.connect("local://localhost:9748")
+seeya.connect("redis://localhost:6379")
+seeya.connect("amqp://guest:guest@localhost/")
 ```
 
-Or: `export AWAY_BACKEND=redis://localhost:6379`
+Or: `export SEEYA_BACKEND=redis://localhost:6379`
 
 ## Worker options
 
 ```bash
-away worker --backend redis://localhost:6379 -c 4              # 4 concurrent tasks
-away worker --backend redis://localhost:6379 --no-auto-install  # skip pip installs
-away worker --backend redis://localhost:6379 --sandbox --pair   # Docker + signing
+seeya worker --backend redis://localhost:6379 -c 4              # 4 concurrent tasks
+seeya worker --backend redis://localhost:6379 --no-auto-install  # skip pip installs
+seeya worker --backend redis://localhost:6379 --sandbox --pair   # Docker + signing
 ```
 
 Programmatic:
 
 ```python
-await away.serve("redis://localhost:6379", concurrency=4, sandbox=True)
+await seeya.serve("redis://localhost:6379", concurrency=4, sandbox=True)
 ```
 
 ## Running scripts
 
 ```bash
-away worker --backend local://localhost:9748 --tmp   # Terminal 1
-away run examples/remote_execution.py                # Terminal 2
+seeya worker --backend local://localhost:9748 --tmp   # Terminal 1
+seeya run examples/remote_execution.py                # Terminal 2
 ```
 
-`away run` creates a temporary venv, auto-detects dependencies, installs them, and runs the script.
+`seeya run` creates a temporary venv, auto-detects dependencies, installs them, and runs the script.
 
 ## Next steps
 

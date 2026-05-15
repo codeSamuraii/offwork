@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from away.core.errors import Error
-from away.core.models import FunctionNode
-from away.graph.graph import Graph
+from seeya.core.errors import Error
+from seeya.core.models import FunctionNode
+from seeya.graph.graph import Graph
 from tests.conftest import create_module
 
 
@@ -17,7 +17,7 @@ def _make_graph(tmp_path: Path) -> Graph:
         "gmod",
         (
             "import csv\nimport json as js\n\n"
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "@trace\n"
             "def parse(data):\n"
             "    return csv.reader(data)\n\n"
@@ -113,7 +113,7 @@ def test_reconstruct_deduplicates_imports(tmp_path: Path) -> None:
         "dedup",
         (
             "import csv\n\n"
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "@trace\n"
             "def a(x):\n    return csv.reader(x)\n\n"
             "@trace\n"
@@ -155,7 +155,7 @@ def test_auto_refresh_on_register(tmp_path: Path) -> None:
         tmp_path,
         "autoref",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "@trace\n"
             "def caller():\n    return callee()\n\n"
             "@trace\n"
@@ -171,7 +171,7 @@ def test_class_method_registration(tmp_path: Path) -> None:
         tmp_path,
         "clsreg",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "class Parser:\n"
             "    @trace\n"
             "    def parse(self, data):\n"
@@ -190,7 +190,7 @@ def test_class_method_reconstruction(tmp_path: Path) -> None:
         "clsrecon",
         (
             "import csv\n\n"
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "class Parser:\n"
             "    @trace\n"
             "    def helper(self, data):\n"
@@ -216,7 +216,7 @@ def test_nested_function_closure_captured(tmp_path: Path) -> None:
         tmp_path,
         "closure_mod",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "def outer():\n"
             "    x = 10\n"
             "    @trace\n"
@@ -256,7 +256,7 @@ def test_to_mermaid_class_methods(tmp_path: Path) -> None:
         tmp_path,
         "mermcls",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "class Pipeline:\n"
             "    @trace\n"
             "    def step_a(self, x):\n"
@@ -325,7 +325,7 @@ def test_deduplication_shared_dep(tmp_path: Path) -> None:
         tmp_path,
         "dedup_shared",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "@trace\n"
             "def shared():\n    return 1\n\n"
             "@trace\n"

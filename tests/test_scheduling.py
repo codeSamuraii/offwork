@@ -5,10 +5,10 @@ import time
 
 import pytest
 
-from away.core.task import Task
-from away.worker.schedule import ScheduleHandle
-from away.worker.result import ResultEnvelope
-from away.worker.backends.local import _Broker
+from seeya.core.task import Task
+from seeya.worker.schedule import ScheduleHandle
+from seeya.worker.result import ResultEnvelope
+from seeya.worker.backends.local import _Broker
 
 
 class TestTaskSchedulingFields:

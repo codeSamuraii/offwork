@@ -1,9 +1,9 @@
 from pathlib import Path
 
-from away import reconstruct, serialize
-from away.worker.deps import _collect_package_hints
-from away.graph.graph import Graph
-from away.graph.store import Store
+from seeya import reconstruct, serialize
+from seeya.worker.deps import _collect_package_hints
+from seeya.graph.graph import Graph
+from seeya.graph.store import Store
 from tests.conftest import create_module
 
 
@@ -16,7 +16,7 @@ def test_csv_requests_example(tmp_path: Path) -> None:
         "example",
         (
             "import csv\nimport requests\n\n"
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "@trace\n"
             "def parse_csv(csv_data: str) -> dict:\n"
             '    """Parses CSV data."""\n'
@@ -59,7 +59,7 @@ def test_three_level_chain(tmp_path: Path) -> None:
         "chain",
         (
             "import csv\nimport json\nimport os\n\n"
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "@trace\n"
             "def step_a(x):\n    return csv.reader(x)\n\n"
             "@trace\n"
@@ -88,7 +88,7 @@ def test_diamond_dependency(tmp_path: Path) -> None:
         "diamond",
         (
             "import csv\nimport json\n\n"
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "@trace\n"
             "def base(x):\n    return csv.reader(x)\n\n"
             "@trace\n"
@@ -119,7 +119,7 @@ def test_independent_functions(tmp_path: Path) -> None:
         "indep",
         (
             "import csv\nimport json\n\n"
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "@trace\n"
             "def func_a(x):\n    return csv.reader(x)\n\n"
             "@trace\n"
@@ -145,7 +145,7 @@ def test_order_independent_registration(tmp_path: Path) -> None:
         tmp_path,
         "late",
         (
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "@trace\n"
             "def caller():\n    return callee()\n\n"
             "@trace\n"
@@ -165,7 +165,7 @@ def test_class_methods_end_to_end(tmp_path: Path) -> None:
         "clse2e",
         (
             "import csv\n\n"
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "class DataProcessor:\n"
             "    @trace\n"
             "    def read(self, data):\n"
@@ -193,7 +193,7 @@ def test_star_import_end_to_end(tmp_path: Path) -> None:
         "stare2e",
         (
             "from os.path import *\n\n"
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "@trace\n"
             "def build_path():\n"
             "    return join('a', 'b')\n"
@@ -214,7 +214,7 @@ def test_mixed_class_and_standalone(tmp_path: Path) -> None:
         "mixed",
         (
             "import csv\n\n"
-            "from away import trace\n\n"
+            "from seeya import trace\n\n"
             "@trace\n"
             "def helper(data):\n"
             "    return csv.reader(data)\n\n"
@@ -243,7 +243,7 @@ def test_install_package_as_end_to_end(tmp_path: Path) -> None:
         tmp_path,
         "vision",
         (
-            "from away import trace, install_package_as\n\n"
+            "from seeya import trace, install_package_as\n\n"
             "with install_package_as('opencv-python'):\n"
             "    import cv2\n\n"
             "@trace\n"

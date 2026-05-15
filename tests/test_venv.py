@@ -11,12 +11,12 @@ from pathlib import Path
 
 import pytest
 
-from away.__main__ import (
-    _detect_away_extras,
+from seeya.__main__ import (
+    _detect_seeya_extras,
     _detect_script_packages,
     main,
 )
-from away._venv import (
+from seeya._venv import (
     TempVenv,
     _DEFAULT_PREFIX,
     _find_project_root,
@@ -32,16 +32,16 @@ class TestFindProjectRoot:
         assert root is not None
         assert (root / "pyproject.toml").exists()
 
-    def test_root_contains_away(self) -> None:
+    def test_root_contains_seeya(self) -> None:
         root = _find_project_root()
         assert root is not None
-        assert (root / "away").is_dir()
+        assert (root / "seeya").is_dir()
 
 
 class TestTempVenv:
     @pytest.mark.asyncio
     async def test_creates_and_cleans_up(self) -> None:
-        async with temp_venv(install_away=False) as venv:
+        async with temp_venv(install_seeya=False) as venv:
             assert venv.venv_dir.exists()
             assert venv.python.exists()
             venv_dir = venv.venv_dir
@@ -51,7 +51,7 @@ class TestTempVenv:
 
     @pytest.mark.asyncio
     async def test_python_is_functional(self) -> None:
-        async with temp_venv(install_away=False) as venv:
+        async with temp_venv(install_seeya=False) as venv:
             result = subprocess.run(
                 [str(venv.python), "-c", "import sys; print(sys.prefix)"],
                 capture_output=True,
@@ -64,7 +64,7 @@ class TestTempVenv:
     async def test_cleanup_on_error(self) -> None:
         tmpdir_path: str | None = None
         with pytest.raises(RuntimeError, match="deliberate"):
-            async with temp_venv(install_away=False) as venv:
+            async with temp_venv(install_seeya=False) as venv:
                 tmpdir_path = str(venv.venv_dir.parent)
                 assert venv.venv_dir.exists()
                 raise RuntimeError("deliberate")
@@ -75,7 +75,7 @@ class TestTempVenv:
     async def test_cleanup_on_systemexit(self) -> None:
         tmpdir_path: str | None = None
         with pytest.raises(SystemExit):
-            async with temp_venv(install_away=False) as venv:
+            async with temp_venv(install_seeya=False) as venv:
                 tmpdir_path = str(venv.venv_dir.parent)
                 raise SystemExit(1)
         assert tmpdir_path is not None
@@ -83,7 +83,7 @@ class TestTempVenv:
 
     @pytest.mark.asyncio
     async def test_pip_install(self) -> None:
-        async with temp_venv(install_away=False) as venv:
+        async with temp_venv(install_seeya=False) as venv:
             await venv.pip_install("six")
             result = subprocess.run(
                 [str(venv.python), "-c", "import six; print(six.__version__)"],
@@ -93,10 +93,10 @@ class TestTempVenv:
             assert result.returncode == 0
 
     @pytest.mark.asyncio
-    async def test_installs_away(self) -> None:
-        async with temp_venv(install_away=True) as venv:
+    async def test_installs_seeya(self) -> None:
+        async with temp_venv(install_seeya=True) as venv:
             result = subprocess.run(
-                [str(venv.python), "-c", "import away; print(away.serialize)"],
+                [str(venv.python), "-c", "import seeya; print(seeya.serialize)"],
                 capture_output=True,
                 text=True,
             )
@@ -105,7 +105,7 @@ class TestTempVenv:
 
 class TestCleanupStaleVenvs:
     def test_removes_old_dirs(self) -> None:
-        prefix = "away-test-stale-"
+        prefix = "seeya-test-stale-"
         stale = tempfile.mkdtemp(prefix=prefix)
         # Backdate mtime to 2 days ago
         old_time = time.time() - 2 * 86400
@@ -116,7 +116,7 @@ class TestCleanupStaleVenvs:
         assert not os.path.exists(stale)
 
     def test_keeps_recent_dirs(self) -> None:
-        prefix = "away-test-recent-"
+        prefix = "seeya-test-recent-"
         recent = tempfile.mkdtemp(prefix=prefix)
         try:
             removed = cleanup_stale_venvs(prefix=prefix, max_age_secs=86400)
@@ -189,7 +189,7 @@ class TestDetectScriptPackages:
     ) -> None:
         """A sibling package importable from cwd is treated as local.
 
-        Mirrors ``away run examples/foo.py`` invoked from the project root,
+        Mirrors ``seeya run examples/foo.py`` invoked from the project root,
         where ``foo.py`` imports a package living at that root.
         """
         sibling_pkg = tmp_path / "mypkg"  # type: ignore[operator]
@@ -230,7 +230,7 @@ class TestDetectScriptPackages:
     def test_install_package_as(self, tmp_path: pytest.TempPathFactory) -> None:
         script = tmp_path / "test_ipa.py"  # type: ignore[operator]
         script.write_text(
-            "from away import install_package_as\n"
+            "from seeya import install_package_as\n"
             "import requests\n"
             'with install_package_as("PyYAML"):\n'
             "    import yaml\n"
@@ -248,11 +248,11 @@ class TestDetectScriptPackages:
     def test_install_package_as_attribute_form(
         self, tmp_path: pytest.TempPathFactory,
     ) -> None:
-        """``with away.install_package_as(...)`` is also recognized."""
+        """``with seeya.install_package_as(...)`` is also recognized."""
         script = tmp_path / "test_ipa_attr.py"  # type: ignore[operator]
         script.write_text(
-            "import away\n"
-            'with away.install_package_as("python-multipart"):\n'
+            "import seeya\n"
+            'with seeya.install_package_as("python-multipart"):\n'
             "    import multipart\n"
         )
         packages = _detect_script_packages(str(script))
@@ -260,36 +260,36 @@ class TestDetectScriptPackages:
         assert "multipart" not in packages
 
 
-class TestDetectAwayExtras:
+class TestDetectSeeyaExtras:
     def test_connect_redis(self, tmp_path: pytest.TempPathFactory) -> None:
         script = tmp_path / "conn.py"  # type: ignore[operator]
-        script.write_text('import away\naway.connect("redis://localhost:6379")\n')
-        assert "redis" in _detect_away_extras(str(script))
+        script.write_text('import seeya\nseeya.connect("redis://localhost:6379")\n')
+        assert "redis" in _detect_seeya_extras(str(script))
 
     def test_serve_redis(self, tmp_path: pytest.TempPathFactory) -> None:
         script = tmp_path / "srv.py"  # type: ignore[operator]
-        script.write_text('import away\naway.serve("rediss://host:6380")\n')
-        assert "redis" in _detect_away_extras(str(script))
+        script.write_text('import seeya\nseeya.serve("rediss://host:6380")\n')
+        assert "redis" in _detect_seeya_extras(str(script))
 
     def test_bare_connect(self, tmp_path: pytest.TempPathFactory) -> None:
         script = tmp_path / "bare.py"  # type: ignore[operator]
-        script.write_text('from away import connect\nconnect("redis://localhost")\n')
-        assert "redis" in _detect_away_extras(str(script))
+        script.write_text('from seeya import connect\nconnect("redis://localhost")\n')
+        assert "redis" in _detect_seeya_extras(str(script))
 
     def test_local_no_redis(self, tmp_path: pytest.TempPathFactory) -> None:
         script = tmp_path / "local.py"  # type: ignore[operator]
-        script.write_text('import away\naway.connect("local://localhost:9748")\n')
-        assert _detect_away_extras(str(script)) == []
+        script.write_text('import seeya\nseeya.connect("local://localhost:9748")\n')
+        assert _detect_seeya_extras(str(script)) == []
 
     def test_no_connect_calls(self, tmp_path: pytest.TempPathFactory) -> None:
         script = tmp_path / "none.py"  # type: ignore[operator]
-        script.write_text('import away\nx = 1\n')
-        assert _detect_away_extras(str(script)) == []
+        script.write_text('import seeya\nx = 1\n')
+        assert _detect_seeya_extras(str(script)) == []
 
     def test_variable_arg_ignored(self, tmp_path: pytest.TempPathFactory) -> None:
         script = tmp_path / "var.py"  # type: ignore[operator]
-        script.write_text('import away\nurl = "redis://localhost"\naway.connect(url)\n')
-        assert _detect_away_extras(str(script)) == []
+        script.write_text('import seeya\nurl = "redis://localhost"\nseeya.connect(url)\n')
+        assert _detect_seeya_extras(str(script)) == []
 
 
 class TestCLIParsing:

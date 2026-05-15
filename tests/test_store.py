@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from away.graph.graph import Graph
-from away.core.models import FunctionNode, ImportInfo
-from away.graph.store import Store, MergeResult
+from seeya.graph.graph import Graph
+from seeya.core.models import FunctionNode, ImportInfo
+from seeya.graph.store import Store, MergeResult
 from tests.conftest import create_module
 
 
@@ -415,7 +415,7 @@ class TestReconstruction:
             "store_recon",
             (
                 "import csv\nimport json as js\n\n"
-                "from away import trace\n\n"
+                "from seeya import trace\n\n"
                 "@trace\n"
                 "def parse(data):\n"
                 "    return csv.reader(data)\n\n"
@@ -440,7 +440,7 @@ class TestToStore:
             tmp_path,
             "tostore",
             (
-                "from away import trace\n\n"
+                "from seeya import trace\n\n"
                 "@trace\n"
                 "def leaf():\n    return 1\n\n"
                 "@trace\n"
@@ -462,7 +462,7 @@ class TestToStore:
             tmp_path,
             "tostoresub",
             (
-                "from away import trace\n\n"
+                "from seeya import trace\n\n"
                 "@trace\n"
                 "def a():\n    return 1\n\n"
                 "@trace\n"

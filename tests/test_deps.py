@@ -2,7 +2,7 @@ import ast
 
 import pytest
 
-from away.worker.deps import (
+from seeya.worker.deps import (
     DEFAULT_IMPORT_TO_PACKAGE,
     InstallResult,
     _collect_package_hints,
@@ -11,9 +11,9 @@ from away.worker.deps import (
     install_package_as,
     is_installed,
 )
-from away.graph.analyzer import _parse_install_package_as
-from away.core.models import FunctionNode, ImportInfo
-from away.graph.store import Store
+from seeya.graph.analyzer import _parse_install_package_as
+from seeya.core.models import FunctionNode, ImportInfo
+from seeya.graph.store import Store
 
 
 # -- Helpers -----------------------------------------------------------------
@@ -172,9 +172,9 @@ class TestParseInstallPackageAs:
         assert self._parse('with install_package_as("PyYAML"):\n    pass\n') == "PyYAML"
 
     def test_attribute_form(self) -> None:
-        """``with away.install_package_as(...)`` is also recognized."""
+        """``with seeya.install_package_as(...)`` is also recognized."""
         assert (
-            self._parse('with away.install_package_as("python-multipart"):\n    pass\n')
+            self._parse('with seeya.install_package_as("python-multipart"):\n    pass\n')
             == "python-multipart"
         )
 

@@ -5,9 +5,9 @@ RabbitMQ) and exercise the full client → backend → worker → result path.
 
 Environment variables
 ---------------------
-AWAY_TEST_BACKEND     Backend URL (required).  e.g. redis://localhost:6379
-AWAY_TEST_SIGNING     Set to "1" to enable HMAC-SHA256 task signing.
-AWAY_TEST_SANDBOX     Set to "1" to run workers with Docker sandbox.
+SEEYA_TEST_BACKEND     Backend URL (required).  e.g. redis://localhost:6379
+SEEYA_TEST_SIGNING     Set to "1" to enable HMAC-SHA256 task signing.
+SEEYA_TEST_SANDBOX     Set to "1" to run workers with Docker sandbox.
 
 The worker is launched as a subprocess so that client and worker live in
 completely separate Python processes (no shared state).
@@ -26,21 +26,21 @@ from typing import Any
 
 import pytest
 
-import away
-from away import trace, progress, TaskCancelled, ThrottleError
-from away.core.token import generate_token
-from away.graph.graph import Graph
+import seeya
+from seeya import trace, progress, TaskCancelled, ThrottleError
+from seeya.core.token import generate_token
+from seeya.graph.graph import Graph
 
 
 # ---------------------------------------------------------------------------
 # Configuration from environment
 # ---------------------------------------------------------------------------
 
-BACKEND_URL = os.environ.get("AWAY_TEST_BACKEND", "")
-USE_SIGNING = os.environ.get("AWAY_TEST_SIGNING", "") == "1"
-USE_SANDBOX = os.environ.get("AWAY_TEST_SANDBOX", "") == "1"
+BACKEND_URL = os.environ.get("SEEYA_TEST_BACKEND", "")
+USE_SIGNING = os.environ.get("SEEYA_TEST_SIGNING", "") == "1"
+USE_SANDBOX = os.environ.get("SEEYA_TEST_SANDBOX", "") == "1"
 
-pytestmark = pytest.mark.skipif(not BACKEND_URL, reason="AWAY_TEST_BACKEND not set")
+pytestmark = pytest.mark.skipif(not BACKEND_URL, reason="SEEYA_TEST_BACKEND not set")
 
 
 # ---------------------------------------------------------------------------
@@ -56,23 +56,23 @@ def _start_worker(
     signing_token: str | None = None,
     sandbox: bool = False,
 ) -> subprocess.Popen[bytes]:
-    """Launch ``python -m away worker`` in a subprocess.
+    """Launch ``python -m seeya worker`` in a subprocess.
 
     Waits for the worker to print its "Listening for tasks" log line
     before returning, so the caller knows it is actually ready.
     """
-    cmd = [sys.executable, "-m", "away", "worker", "--backend", backend]
+    cmd = [sys.executable, "-m", "seeya", "worker", "--backend", backend]
     if signing_token:
         cmd.append("--require-signing")
     if sandbox:
         cmd.append("--sandbox")
-    log_level = os.environ.get("AWAY_LOG_LEVEL", "")
+    log_level = os.environ.get("SEEYA_LOG_LEVEL", "")
     if log_level:
         cmd.extend(["--log-level", log_level])
 
     env = os.environ.copy()
     if signing_token:
-        env["AWAY_SIGNING_TOKEN"] = signing_token
+        env["SEEYA_SIGNING_TOKEN"] = signing_token
 
     proc = subprocess.Popen(
         cmd,
@@ -155,8 +155,8 @@ def _connect_backend(signing_token: str | None) -> None:
     """Connect the client to the backend before each test."""
     env = os.environ.copy()
     if signing_token:
-        os.environ["AWAY_SIGNING_TOKEN"] = signing_token
-    away.connect(BACKEND_URL)
+        os.environ["SEEYA_SIGNING_TOKEN"] = signing_token
+    seeya.connect(BACKEND_URL)
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +287,7 @@ class TestRetryAndTimeout:
         # whichever filesystem actually runs the function -- the host
         # worker's /tmp, or the sandbox container's /tmp.
         import uuid
-        counter_path = f"/tmp/away-retry-{uuid.uuid4().hex}.txt"
+        counter_path = f"/tmp/seeya-retry-{uuid.uuid4().hex}.txt"
 
         @trace(retries=3, retry_delay=0.1)
         def fails_then_succeeds(path: str, fail_until: int) -> str:
@@ -349,7 +349,7 @@ class TestErrorHandling:
         def bad_func() -> None:
             raise ValueError("intentional error")
 
-        from away.core.errors import RemoteError
+        from seeya.core.errors import RemoteError
         with pytest.raises(RemoteError, match="intentional error"):
             await bad_func.run()
 
@@ -396,13 +396,13 @@ if __name__ == "__main__":
     import itertools
 
     def _flush_backend(backend_url: str) -> None:
-        """Remove leftover away state so permutations don't interfere."""
+        """Remove leftover seeya state so permutations don't interfere."""
         scheme = backend_url.split("://", 1)[0].lower()
         if scheme in ("redis", "rediss"):
             try:
                 import redis as _redis
                 r = _redis.Redis.from_url(backend_url)
-                for key in r.scan_iter("away:*"):
+                for key in r.scan_iter("seeya:*"):
                     r.delete(key)
                 r.close()
             except Exception:
@@ -432,13 +432,13 @@ if __name__ == "__main__":
         print(f"{'=' * 60}\n")
 
         env = os.environ.copy()
-        env["AWAY_TEST_BACKEND"] = backend_url
-        env["AWAY_TEST_SIGNING"] = "1" if signing else "0"
-        env["AWAY_TEST_SANDBOX"] = "1" if sandbox else "0"
+        env["SEEYA_TEST_BACKEND"] = backend_url
+        env["SEEYA_TEST_SIGNING"] = "1" if signing else "0"
+        env["SEEYA_TEST_SANDBOX"] = "1" if sandbox else "0"
 
         if signing:
             token = generate_token()
-            env["AWAY_SIGNING_TOKEN"] = token
+            env["SEEYA_SIGNING_TOKEN"] = token
 
         cmd = [sys.executable, "-m", "pytest", __file__, "--tb=short", "-p", "no:warnings", "--no-header"] + extra_pytest_args
         print(f"Running command: python {' '.join(cmd[1:])}")

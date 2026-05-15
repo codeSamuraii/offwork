@@ -5,7 +5,7 @@ Start RabbitMQ before running::
     docker run -d --name rabbitmq -p 5672:5672 rabbitmq:3
     pytest tests/test_rabbitmq_backend.py
 
-Override the URL with ``AWAY_TEST_RABBITMQ_URL``.
+Override the URL with ``SEEYA_TEST_RABBITMQ_URL``.
 """
 
 import asyncio
@@ -15,11 +15,11 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from away import pack, trace
-from away.core.task import Task
-from away.worker.result import ResultEnvelope
-from away.worker.worker import Worker
-import away.worker.remote as _remote
+from seeya import pack, trace
+from seeya.core.task import Task
+from seeya.worker.result import ResultEnvelope
+from seeya.worker.worker import Worker
+import seeya.worker.remote as _remote
 
 try:
     import aio_pika
@@ -33,7 +33,7 @@ pytestmark = pytest.mark.skipif(
     not _HAS_AIO_PIKA, reason="aio-pika not installed",
 )
 
-RABBITMQ_URL = os.environ.get("AWAY_TEST_RABBITMQ_URL", "amqp://localhost")
+RABBITMQ_URL = os.environ.get("SEEYA_TEST_RABBITMQ_URL", "amqp://localhost")
 
 
 async def _rabbitmq_available() -> bool:
@@ -49,19 +49,19 @@ async def _rabbitmq_available() -> bool:
 async def backend() -> AsyncIterator["RabbitMQBackend"]:
     if not await _rabbitmq_available():
         pytest.skip("RabbitMQ not available")
-    from away.worker.backends.rabbitmq import RabbitMQBackend
+    from seeya.worker.backends.rabbitmq import RabbitMQBackend
 
     suffix = uuid.uuid4().hex[:8]
     b = RabbitMQBackend(
         RABBITMQ_URL,
-        task_queue=f"away.test.tasks.{suffix}",
+        task_queue=f"seeya.test.tasks.{suffix}",
     )
     yield b
     await b.close()
 
 
 if _HAS_AIO_PIKA:
-    from away.worker.backends.rabbitmq import RabbitMQBackend
+    from seeya.worker.backends.rabbitmq import RabbitMQBackend
 
 
 # ---------------------------------------------------------------------------
@@ -205,11 +205,11 @@ class TestEndToEnd:
         suffix = uuid.uuid4().hex[:8]
         client = RabbitMQBackend(
             RABBITMQ_URL,
-            task_queue=f"away.test.e2e.{suffix}",
+            task_queue=f"seeya.test.e2e.{suffix}",
         )
         worker_backend = RabbitMQBackend(
             RABBITMQ_URL,
-            task_queue=f"away.test.e2e.{suffix}",
+            task_queue=f"seeya.test.e2e.{suffix}",
         )
 
         try:

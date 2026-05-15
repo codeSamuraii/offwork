@@ -1,4 +1,4 @@
-"""Async remote execution with away.
+"""Async remote execution with seeya.
 
 Demonstrates:
 - Awaiting a single remote task with .run()
@@ -9,10 +9,10 @@ Demonstrates:
 import asyncio
 import math
 
-import away
-from away import trace
+import seeya
+from seeya import trace
 
-away.connect("local://localhost:9748")
+seeya.connect("local://localhost:9748")
 
 async def add(a: float, b: float) -> float:
     return a + b

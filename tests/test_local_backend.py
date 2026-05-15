@@ -6,12 +6,12 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from away import pack, trace
-from away.core.task import Task
-from away.worker.backends.local import LocalBackend
-from away.worker.result import ResultEnvelope
-from away.worker.worker import Worker
-import away.worker.remote as _remote
+from seeya import pack, trace
+from seeya.core.task import Task
+from seeya.worker.backends.local import LocalBackend
+from seeya.worker.result import ResultEnvelope
+from seeya.worker.worker import Worker
+import seeya.worker.remote as _remote
 
 
 # ---------------------------------------------------------------------------

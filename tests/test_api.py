@@ -1,11 +1,11 @@
-"""Tests for the top-level away API additions: get_graph(), graph, pack()."""
+"""Tests for the top-level seeya API additions: get_graph(), graph, pack()."""
 
 import warnings
 
 import pytest
 
-import away
-from away import Graph, Task, get_graph, pack, trace
+import seeya
+from seeya import Graph, Task, get_graph, pack, trace
 
 
 # -- get_graph() / graph ----------------------------------------------------
@@ -17,8 +17,8 @@ class TestGraph:
         assert g is Graph.default()
 
     def test_graph_subpackage_accessible(self) -> None:
-        assert hasattr(away.graph, 'Graph')
-        assert away.graph.Graph is Graph
+        assert hasattr(seeya.graph, 'Graph')
+        assert seeya.graph.Graph is Graph
 
 
 # -- pack() -----------------------------------------------------------------
@@ -66,7 +66,7 @@ class TestPack:
     async def test_task_is_executable(self) -> None:
         double, _ = self._make_traced()
         task = pack(double, 21)
-        result = await away.execute(task)
+        result = await seeya.execute(task)
         assert result == 42
 
     def test_auto_generated_task_id(self) -> None:
@@ -80,5 +80,5 @@ class TestPack:
         _, add_then_double = self._make_traced()
         task = pack(add_then_double, 3, 4)
         restored = Task.from_json(task.to_json())
-        result = await away.execute(restored)
+        result = await seeya.execute(restored)
         assert result == 14  # (3 + 4) * 2

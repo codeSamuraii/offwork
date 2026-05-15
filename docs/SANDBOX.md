@@ -14,10 +14,10 @@ By default, workers execute tasks in the host process. With `--sandbox`, executi
 ## Setup
 
 ```bash
-away sandbox setup
+seeya sandbox setup
 ```
 
-This builds the `away-sandbox` Docker image from the bundled Dockerfile. The image is based on `python:3.12-slim` and contains only the stdlib-only guest agent -- no away installation needed inside the container.
+This builds the `seeya-sandbox` Docker image from the bundled Dockerfile. The image is based on `python:3.12-slim` and contains only the stdlib-only guest agent -- no seeya installation needed inside the container.
 
 You can also build manually:
 
@@ -30,7 +30,7 @@ Or let the worker build automatically on first use (the image is built lazily if
 ## Start a sandboxed worker
 
 ```bash
-away worker --backend redis://localhost:6379 --sandbox
+seeya worker --backend redis://localhost:6379 --sandbox
 ```
 
 The worker starts a container on first task, keeps it running for the worker's lifetime, and stops it on shutdown.
@@ -40,34 +40,34 @@ The worker starts a container on first task, keeps it running for the worker's l
 Override the image and container names via environment variables:
 
 ```bash
-export AWAY_SANDBOX_DOCKER_IMAGE=my-custom-image
-export AWAY_SANDBOX_DOCKER_CONTAINER=my-sandbox
-away worker --backend redis://localhost:6379 --sandbox
+export SEEYA_SANDBOX_DOCKER_IMAGE=my-custom-image
+export SEEYA_SANDBOX_DOCKER_CONTAINER=my-sandbox
+seeya worker --backend redis://localhost:6379 --sandbox
 ```
 
 ## Management commands
 
 ```bash
 # Check sandbox status
-away sandbox status
+seeya sandbox status
 
 # Remove the Docker container and image
-away sandbox teardown
+seeya sandbox teardown
 ```
 
-Example `away sandbox status` output:
+Example `seeya sandbox status` output:
 
 ```
 Docker:
   docker: installed
-  Image 'away-sandbox': exists
-  Container 'away-sandbox': not found
+  Image 'seeya-sandbox': exists
+  Container 'seeya-sandbox': not found
 ```
 
 ## Programmatic usage
 
 ```python
-from away.worker.sandbox import DockerSandbox
+from seeya.worker.sandbox import DockerSandbox
 
 async with DockerSandbox() as sandbox:
     result = await sandbox.execute(source, "my_func", (arg1,), {})
@@ -76,16 +76,16 @@ async with DockerSandbox() as sandbox:
 Pass `sandbox=True` to `serve()`:
 
 ```python
-await away.serve("redis://localhost:6379", sandbox=True)
+await seeya.serve("redis://localhost:6379", sandbox=True)
 ```
 
 Or provide a `DockerSandbox` instance for custom settings:
 
 ```python
-from away.worker.sandbox import DockerSandbox
+from seeya.worker.sandbox import DockerSandbox
 
 sandbox = DockerSandbox(cpus=4, memory_gb=4)
-await away.serve("redis://localhost:6379", sandbox=sandbox)
+await seeya.serve("redis://localhost:6379", sandbox=sandbox)
 ```
 
 ## Configuration reference
@@ -94,8 +94,8 @@ await away.serve("redis://localhost:6379", sandbox=sandbox)
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `image` | `"away-sandbox"` | Docker image name |
-| `container_name` | `"away-sandbox"` | Container name |
+| `image` | `"seeya-sandbox"` | Docker image name |
+| `container_name` | `"seeya-sandbox"` | Container name |
 | `guest_port` | `9749` | TCP port the guest agent listens on |
 | `cpus` | `2` | vCPUs allocated to the container |
 | `memory_gb` | `2` | RAM (GB) allocated to the container |

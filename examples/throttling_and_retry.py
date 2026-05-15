@@ -1,4 +1,4 @@
-"""Throttling and retry with away.
+"""Throttling and retry with seeya.
 
 Demonstrates:
 - @trace(throttle=timedelta) — rate-limit executions
@@ -7,20 +7,20 @@ Demonstrates:
 
 Usage:
     # Terminal 1 -- start a worker
-    away worker --backend redis://localhost:6379 --tmp
+    seeya worker --backend redis://localhost:6379 --tmp
 
     # Terminal 2 -- run this script
-    away run examples/throttling_and_retry.py
+    seeya run examples/throttling_and_retry.py
 """
 
 import asyncio
 import random
 from datetime import timedelta
 
-import away
-from away import trace, ThrottleError
+import seeya
+from seeya import trace, ThrottleError
 
-away.connect("local://localhost:9748")
+seeya.connect("local://localhost:9748")
 
 
 # --- Throttling: at most once every 5 seconds ---

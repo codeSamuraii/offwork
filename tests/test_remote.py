@@ -10,13 +10,13 @@ from typing import Any
 
 import pytest
 
-from away import pack, trace
-from away.core.errors import RemoteError
-from away.core.task import Task
-from away.worker.backends.base import Backend
-from away.worker.result import Result, ResultEnvelope
-from away.worker.worker import Worker
-import away.worker.remote as _remote
+from seeya import pack, trace
+from seeya.core.errors import RemoteError
+from seeya.core.task import Task
+from seeya.worker.backends.base import Backend
+from seeya.worker.result import Result, ResultEnvelope
+from seeya.worker.worker import Worker
+import seeya.worker.remote as _remote
 
 
 # ---------------------------------------------------------------------------
@@ -330,7 +330,7 @@ class TestHandleTaskOutput:
         await backend.submit(task.to_json())
 
         worker = Worker(auto_install=False)
-        with caplog.at_level(logging.DEBUG, logger="away"):
+        with caplog.at_level(logging.DEBUG, logger="seeya"):
             async for task_json in backend.listen():
                 await _remote._handle_task(worker, backend, task_json)
 
@@ -355,7 +355,7 @@ class TestHandleTaskOutput:
         await backend.submit(task2.to_json())
 
         worker = Worker(auto_install=False)
-        with caplog.at_level(logging.DEBUG, logger="away"):
+        with caplog.at_level(logging.DEBUG, logger="seeya"):
             async for task_json in backend.listen():
                 await _remote._handle_task(worker, backend, task_json)
 
@@ -378,7 +378,7 @@ class TestHandleTaskOutput:
         await backend.submit(task.to_json())
 
         worker = Worker(auto_install=False)
-        with caplog.at_level(logging.DEBUG, logger="away"):
+        with caplog.at_level(logging.DEBUG, logger="seeya"):
             async for task_json in backend.listen():
                 await _remote._handle_task(worker, backend, task_json)
 

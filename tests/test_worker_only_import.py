@@ -5,15 +5,15 @@ from pathlib import Path
 
 import pytest
 
-import away
-from away import WorkerOnlyError, worker_only_import
-from away.core.models import ImportInfo
-from away.graph.analyzer import (
+import seeya
+from seeya import WorkerOnlyError, worker_only_import
+from seeya.core.models import ImportInfo
+from seeya.graph.analyzer import (
     _parse_worker_only_import,
     get_module_imports,
 )
-from away.graph.store import Store
-from away.worker.deps import (
+from seeya.graph.store import Store
+from seeya.worker.deps import (
     _StubAttr,
     _WorkerOnlyFinder,
     _WorkerOnlyStub,
@@ -49,7 +49,7 @@ class TestWorkerOnlyImport:
         with worker_only_import():
             import some_missing_pkg_aaa  # type: ignore[import-not-found]
         assert isinstance(some_missing_pkg_aaa, _WorkerOnlyStub)
-        assert some_missing_pkg_aaa.__away_stub__ is True
+        assert some_missing_pkg_aaa.__seeya_stub__ is True
 
     def test_from_import_yields_stub_attr(self) -> None:
         with worker_only_import():
@@ -147,7 +147,7 @@ class TestParseWorkerOnlyImport:
 
     def test_attribute_form(self) -> None:
         assert (
-            self._parse_with("with away.worker_only_import():\n    pass\n") is True
+            self._parse_with("with seeya.worker_only_import():\n    pass\n") is True
         )
 
     def test_unrelated_with_block(self) -> None:
@@ -165,7 +165,7 @@ class TestGetModuleImports:
             tmp_path,
             "wo_basic",
             (
-                "from away import worker_only_import\n"
+                "from seeya import worker_only_import\n"
                 "import os\n"
                 "with worker_only_import():\n"
                 "    import requests\n"
@@ -185,7 +185,7 @@ class TestGetModuleImports:
             tmp_path,
             "wo_pkg",
             (
-                "from away import worker_only_import\n"
+                "from seeya import worker_only_import\n"
                 "with worker_only_import('opencv-python-headless'):\n"
                 "    import cv2\n"
                 "\n"
@@ -201,7 +201,7 @@ class TestGetModuleImports:
 # -- End-to-end through the dependency-resolution pipeline ------------------
 
 def _node_with(imports: list[ImportInfo]) -> "tuple[Store, str]":
-    from away.core.models import FunctionNode
+    from seeya.core.models import FunctionNode
     node = FunctionNode(
         qualified_name="m.f",
         name="f",
@@ -243,7 +243,7 @@ class TestEndToEnd:
             tmp_path,
             "wo_e2e",
             (
-                "from away import trace, worker_only_import\n"
+                "from seeya import trace, worker_only_import\n"
                 "with worker_only_import():\n"
                 "    import some_missing_pkg_e2e\n"
                 "\n"
@@ -252,7 +252,7 @@ class TestEndToEnd:
                 "    return some_missing_pkg_e2e.compute()\n"
             ),
         )
-        graph_json = away.serialize()
+        graph_json = seeya.serialize()
         store = Store.from_json(graph_json)
         modules = extract_third_party_modules(store, "go")
         assert "some_missing_pkg_e2e" in modules

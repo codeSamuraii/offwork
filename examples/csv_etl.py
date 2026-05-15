@@ -6,12 +6,12 @@ bytes in, dict out.
 
 The traced entry point ``summarize_chunk`` calls three plain helpers
 (``_load``, ``_clean``, ``_aggregate``).  None of them are decorated;
-away picks them up by walking the call graph of the entry point and
+seeya picks them up by walking the call graph of the entry point and
 sends them along with the task.
 
 Usage:
-    away worker --backend redis://localhost:6379 --tmp
-    python -m away run --tmp examples/csv_etl.py
+    seeya worker --backend redis://localhost:6379 --tmp
+    python -m seeya run --tmp examples/csv_etl.py
 """
 
 import asyncio
@@ -21,10 +21,10 @@ import random
 
 import pandas as pd
 
-import away
-from away import trace
+import seeya
+from seeya import trace
 
-away.connect("local://localhost:9748")
+seeya.connect("local://localhost:9748")
 
 
 # --- helpers (auto-discovered) --------------------------------------------

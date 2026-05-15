@@ -10,10 +10,10 @@ try:
 except ModuleNotFoundError:
     import tomli as tomllib  # type: ignore[no-redef]
 
-import away
+import seeya
 import pytest
 
-from away.core.version import _FALLBACK_VERSION, _VERSION
+from seeya.core.version import _FALLBACK_VERSION, _VERSION
 
 
 def _project_root() -> Path:
@@ -31,7 +31,7 @@ def _venv_python(venv_dir: Path) -> str:
 
 
 def _create_venv_and_install(tmp_path: Path) -> str:
-    """Create a venv at *tmp_path*/venv, install away, return python path."""
+    """Create a venv at *tmp_path*/venv, install seeya, return python path."""
     venv_dir = tmp_path / "venv"
     venv.create(str(venv_dir), with_pip=True)
     python = _venv_python(venv_dir)
@@ -54,9 +54,9 @@ class TestVersionConsistency:
         assert _VERSION  # non-empty
 
     def test_init_exports_version(self) -> None:
-        assert hasattr(away, "__version__")
-        assert isinstance(away.__version__, str)
-        assert away.__version__  # non-empty
+        assert hasattr(seeya, "__version__")
+        assert isinstance(seeya.__version__, str)
+        assert seeya.__version__  # non-empty
 
     def test_pyproject_matches_fallback(self) -> None:
         """The fallback version in version.py must match pyproject.toml."""
@@ -67,18 +67,18 @@ class TestVersionConsistency:
 
 
 class TestIsolatedInstallation:
-    """Install away in a temporary venv and verify it works."""
+    """Install seeya in a temporary venv and verify it works."""
 
     def test_install_and_import_no_extras(self, tmp_path: Path) -> None:
         """Package installs and imports without optional dependencies."""
         python = _create_venv_and_install(tmp_path)
 
         script = (
-            "import away\n"
-            "print(away.__version__)\n"
-            "print(away.serialize)\n"
-            "print(away.trace)\n"
-            "print(away.get_graph())\n"
+            "import seeya\n"
+            "print(seeya.__version__)\n"
+            "print(seeya.serialize)\n"
+            "print(seeya.trace)\n"
+            "print(seeya.get_graph())\n"
         )
         result = subprocess.run(
             [python, "-c", script],
@@ -103,7 +103,7 @@ class TestIsolatedInstallation:
             expected_version = tomllib.load(f)["project"]["version"]
 
         result = subprocess.run(
-            [python, "-c", "import away; print(away.__version__)"],
+            [python, "-c", "import seeya; print(seeya.__version__)"],
             capture_output=True,
             text=True,
             timeout=30,
@@ -112,15 +112,15 @@ class TestIsolatedInstallation:
         assert result.stdout.strip() == expected_version
 
     def test_cli_entrypoint(self, tmp_path: Path) -> None:
-        """The ``away`` CLI entry point is installed and functional."""
+        """The ``seeya`` CLI entry point is installed and functional."""
         python = _create_venv_and_install(tmp_path)
 
-        # Run ``away info`` via the entry point
+        # Run ``seeya info`` via the entry point
         result = subprocess.run(
-            [python, "-m", "away", "info"],
+            [python, "-m", "seeya", "info"],
             capture_output=True,
             text=True,
             timeout=30,
         )
         assert result.returncode == 0
-        assert "away" in result.stdout
+        assert "seeya" in result.stdout

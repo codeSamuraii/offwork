@@ -3,7 +3,7 @@
 import math
 import statistics
 
-from away import trace
+from seeya import trace
 
 from tests.fixtures.stress_test_module.transformers import group_by_sensor
 

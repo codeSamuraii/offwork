@@ -7,12 +7,12 @@ from typing import Any
 
 import pytest
 
-from away.graph.graph import Graph
+from seeya.graph.graph import Graph
 
 
 def _configure_client_logging() -> None:
     """Mirror worker logging setup for the pytest process."""
-    level_name = os.environ.get("AWAY_LOG_LEVEL", "")
+    level_name = os.environ.get("SEEYA_LOG_LEVEL", "")
     if not level_name:
         return
     level = getattr(logging, level_name.upper(), None)
@@ -22,10 +22,10 @@ def _configure_client_logging() -> None:
     handler.setFormatter(logging.Formatter(
         "%(asctime)s %(levelname)-7s [client] %(message)s", datefmt="%H:%M:%S",
     ))
-    away_logger = logging.getLogger("away")
-    if not away_logger.handlers:
-        away_logger.setLevel(level)
-        away_logger.addHandler(handler)
+    seeya_logger = logging.getLogger("seeya")
+    if not seeya_logger.handlers:
+        seeya_logger.setLevel(level)
+        seeya_logger.addHandler(handler)
 
 
 _configure_client_logging()

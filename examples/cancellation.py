@@ -1,21 +1,21 @@
-"""Task cancellation with away.
+"""Task cancellation with seeya.
 
 Demonstrates cancelling a pending or in-progress task.
 
 Usage:
     # Terminal 1 -- start a worker
-    away worker --backend redis://localhost:6379 --tmp
+    seeya worker --backend redis://localhost:6379 --tmp
 
     # Terminal 2 -- run this script
-    away run examples/cancellation.py
+    seeya run examples/cancellation.py
 """
 
 import asyncio
 
-import away
-from away import trace, TaskCancelled
+import seeya
+from seeya import trace, TaskCancelled
 
-away.connect("local://localhost:9748")
+seeya.connect("local://localhost:9748")
 
 
 @trace

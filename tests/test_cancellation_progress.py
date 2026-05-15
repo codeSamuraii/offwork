@@ -8,16 +8,16 @@ from typing import Any
 
 import pytest
 
-from away.core.errors import TaskCancelled
-from away.core.models import FunctionNode, ImportInfo
-from away.core.progress import ProgressInfo, _progress_callback, progress
-from away.core.task import Task
-from away.graph.store import Store
-from away.worker import remote as _remote
-from away.worker.backends.base import Backend
-from away.worker.remote import _handle_task
-from away.worker.result import Result, ResultEnvelope
-from away.worker.worker import Worker
+from seeya.core.errors import TaskCancelled
+from seeya.core.models import FunctionNode, ImportInfo
+from seeya.core.progress import ProgressInfo, _progress_callback, progress
+from seeya.core.task import Task
+from seeya.graph.store import Store
+from seeya.worker import remote as _remote
+from seeya.worker.backends.base import Backend
+from seeya.worker.remote import _handle_task
+from seeya.worker.result import Result, ResultEnvelope
+from seeya.worker.worker import Worker
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +149,7 @@ def _progress_store() -> tuple[Store, str]:
     store = Store()
     node = _node("process", (
         "def process(items):\n"
-        "    from away import progress\n"
+        "    from seeya import progress\n"
         "    results = []\n"
         "    for i, item in enumerate(items):\n"
         "        results.append(item.upper())\n"
@@ -157,7 +157,7 @@ def _progress_store() -> tuple[Store, str]:
         "    return results"
     ))
     node.imports = [ImportInfo(
-        statement="from away import progress",
+        statement="from seeya import progress",
         bound_name="progress",
     )]
     h = store.put(node)

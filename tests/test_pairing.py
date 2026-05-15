@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from away.core.errors import PairingError
-from away.core.pairing import (
+from seeya.core.errors import PairingError
+from seeya.core.pairing import (
     PairingResult,
     _derive_intermediate,
     clear_shared_key,
@@ -242,12 +242,12 @@ class TestPairingProtocol:
             await asyncio.sleep(0.1)
             # Respond with wrong PIN
             intermediate = _derive_intermediate("999999")
-            raw = await backend.get_progress("away:pairing")
+            raw = await backend.get_progress("seeya:pairing")
             assert raw is not None
             challenge = parse_challenge_message(raw)
             response = compute_response(intermediate, challenge)
             msg = make_response_message(response)
-            await backend.send_progress("away:pairing:response", msg)
+            await backend.send_progress("seeya:pairing:response", msg)
 
         with pytest.raises(PairingError, match="PIN mismatch"):
             await asyncio.gather(initiator(), responder())

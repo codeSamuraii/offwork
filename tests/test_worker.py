@@ -3,11 +3,11 @@ import json
 
 import pytest
 
-from away.core.errors import WorkerError
-from away.core.models import FunctionNode, ImportInfo
-from away.graph.store import Store
-from away.core.task import Task
-from away.worker.worker import BuildInfo, Worker, _compute_subgraph_key, execute
+from seeya.core.errors import WorkerError
+from seeya.core.models import FunctionNode, ImportInfo
+from seeya.graph.store import Store
+from seeya.core.task import Task
+from seeya.worker.worker import BuildInfo, Worker, _compute_subgraph_key, execute
 
 
 # -- Helpers -----------------------------------------------------------------

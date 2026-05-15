@@ -9,7 +9,7 @@ Both methods use the same underlying HMAC-SHA256 signing — they differ only in
 
 ## Overview
 
-By default, away workers execute any task they receive from the backend. When signing is enabled:
+By default, seeya workers execute any task they receive from the backend. When signing is enabled:
 
 1. A client and worker share a cryptographic key (via **token** or **pairing**).
 2. The client **signs** every task with HMAC-SHA256 before submitting it.
@@ -22,16 +22,16 @@ Tasks with missing or invalid signatures are rejected.
 ### 1. Generate a token
 
 ```bash
-away token generate
+seeya token generate
 ```
 
 ```
-  Token generated and saved to ~/.away/token
+  Token generated and saved to ~/.seeya/token
 
   Token: a1b2c3d4e5f6...
 
   Set this on both client and worker:
-    export AWAY_SIGNING_TOKEN=a1b2c3d4e5f6...
+    export SEEYA_SIGNING_TOKEN=a1b2c3d4e5f6...
 ```
 
 ### 2. Distribute the token
@@ -40,17 +40,17 @@ Copy the token to both the client and worker machines. The recommended method is
 
 ```bash
 # On both client and worker
-export AWAY_SIGNING_TOKEN=a1b2c3d4e5f6...
+export SEEYA_SIGNING_TOKEN=a1b2c3d4e5f6...
 ```
 
-For CI/CD, store the token as a secret in your CI provider (GitHub Actions secrets, GitLab CI variables, etc.) and inject it as `AWAY_SIGNING_TOKEN`.
+For CI/CD, store the token as a secret in your CI provider (GitHub Actions secrets, GitLab CI variables, etc.) and inject it as `SEEYA_SIGNING_TOKEN`.
 
-Alternatively, copy the `~/.away/token` file to both machines.
+Alternatively, copy the `~/.seeya/token` file to both machines.
 
 ### 3. Start the worker with signing
 
 ```bash
-away worker --backend redis://localhost:6379 --require-signing
+seeya worker --backend redis://localhost:6379 --require-signing
 ```
 
 ### 4. Run tasks (no changes needed)
@@ -68,7 +68,7 @@ The client automatically loads the token and signs tasks before submission. No c
 On the **worker** machine:
 
 ```bash
-away worker --backend redis://localhost:6379 --pair
+seeya worker --backend redis://localhost:6379 --pair
 ```
 
 This generates a 6-digit PIN and waits for a client:
@@ -77,7 +77,7 @@ This generates a 6-digit PIN and waits for a client:
   Pairing PIN:  482913
 
   Enter this PIN on the client with:
-    away pair --backend redis://localhost:6379
+    seeya pair --backend redis://localhost:6379
 
   Waiting for client...
 ```
@@ -89,7 +89,7 @@ Once paired, the worker starts automatically with signing enabled.
 On the **client** machine (within 60 seconds):
 
 ```bash
-away pair --backend redis://localhost:6379
+seeya pair --backend redis://localhost:6379
 ```
 
 ```
@@ -98,10 +98,10 @@ away pair --backend redis://localhost:6379
 
   ✓ Paired successfully as 'client'.
     Peer role: worker
-    Key saved to ~/.away/client.key
+    Key saved to ~/.seeya/client.key
 ```
 
-Both machines now share a cryptographic key stored in `~/.away/`.
+Both machines now share a cryptographic key stored in `~/.seeya/`.
 
 ### 3. Run tasks (no changes needed)
 
@@ -109,7 +109,7 @@ Both machines now share a cryptographic key stored in `~/.away/`.
 python examples/remote_execution.py
 ```
 
-The client automatically loads `~/.away/client.key` and signs tasks before submission. No code changes are needed.
+The client automatically loads `~/.seeya/client.key` and signs tasks before submission. No code changes are needed.
 
 ### Alternative: manual pairing and worker start
 
@@ -117,13 +117,13 @@ If you need more control, you can pair and start the worker separately:
 
 ```bash
 # Pair the worker
-away pair --backend redis://localhost:6379 --role worker
+seeya pair --backend redis://localhost:6379 --role worker
 
 # Pair the client (same PIN)
-away pair --backend redis://localhost:6379
+seeya pair --backend redis://localhost:6379
 
 # Start the worker with signing enforcement
-away worker --backend redis://localhost:6379 --require-signing
+seeya worker --backend redis://localhost:6379 --require-signing
 ```
 
 ## How it works
@@ -132,9 +132,9 @@ away worker --backend redis://localhost:6379 --require-signing
 
 When signing is enabled, both client and worker resolve the signing key using the following precedence order:
 
-1. **`AWAY_SIGNING_TOKEN` environment variable** — hex-encoded token (highest priority)
-2. **`~/.away/token` file** — hex-encoded token written by `away token generate`
-3. **`~/.away/{client,worker}.key` file** — raw bytes from PIN-based pairing
+1. **`SEEYA_SIGNING_TOKEN` environment variable** — hex-encoded token (highest priority)
+2. **`~/.seeya/token` file** — hex-encoded token written by `seeya token generate`
+3. **`~/.seeya/{client,worker}.key` file** — raw bytes from PIN-based pairing
 
 This means you can migrate from pairing to tokens without disruption: set the environment variable and it takes precedence over any existing pairing key.
 
@@ -143,10 +143,10 @@ This means you can migrate from pairing to tokens without disruption: set the en
 ```
 Generate (once)                       Distribute
 ──────────────                        ──────────
-away token generate                 Copy token to CI secrets,
+seeya token generate                 Copy token to CI secrets,
     │                                 env vars, or config
     └─→ random 32-byte token          │
-        saved to ~/.away/token       │
+        saved to ~/.seeya/token       │
                                        ▼
 Client                                Worker
 ──────                                ──────
@@ -195,7 +195,7 @@ Enter PIN: 482913                     Enter PIN: 482913
         │                                     ├── derive shared secret
         │                                     │   (same computation)
         │                                     │
-    Save ~/.away/worker.key          Save ~/.away/client.key
+    Save ~/.seeya/worker.key          Save ~/.seeya/client.key
 ```
 
 **Security properties:**
@@ -227,46 +227,46 @@ The signature covers the entire task payload — graph JSON, function name, argu
 
 ## CLI reference
 
-### `away token generate`
+### `seeya token generate`
 
 ```bash
-away token generate [--force]
+seeya token generate [--force]
 ```
 
-Generates a random 32-byte signing token and saves it to `~/.away/token`. Prints the hex-encoded token and usage instructions.
+Generates a random 32-byte signing token and saves it to `~/.seeya/token`. Prints the hex-encoded token and usage instructions.
 
 | Flag | Description |
 |------|-------------|
 | `--force` | Overwrite an existing token |
 
-### `away token show`
+### `seeya token show`
 
 ```bash
-away token show
+seeya token show
 ```
 
 Displays the current token source (environment variable or file) and a truncated preview.
 
-### `away token clear`
+### `seeya token clear`
 
 ```bash
-away token clear
+seeya token clear
 ```
 
-Removes the saved `~/.away/token` file.
+Removes the saved `~/.seeya/token` file.
 
-### `away worker --pair`
+### `seeya worker --pair`
 
 ```bash
-away worker --backend URL --pair
+seeya worker --backend URL --pair
 ```
 
 Generates a PIN, pairs with a client, then starts serving with signing automatically enabled. This is the recommended way to set up a signed worker interactively.
 
-### `away pair`
+### `seeya pair`
 
 ```bash
-away pair --backend URL [--pin PIN] [--timeout SECS] [--force] [--clear]
+seeya pair --backend URL [--pin PIN] [--timeout SECS] [--force] [--clear]
 ```
 
 | Flag | Description |
@@ -276,12 +276,12 @@ away pair --backend URL [--pin PIN] [--timeout SECS] [--force] [--clear]
 | `--timeout` | Seconds to wait for the peer (default: 60) |
 | `--force` | Overwrite an existing shared key |
 | `--clear` | Remove the shared key for this role |
-| `--role` | `client` (default) or `worker` — use `away worker --pair` instead of `--role worker` |
+| `--role` | `client` (default) or `worker` — use `seeya worker --pair` instead of `--role worker` |
 
-### `away worker --require-signing`
+### `seeya worker --require-signing`
 
 ```bash
-away worker --backend URL --require-signing
+seeya worker --backend URL --require-signing
 ```
 
 When `--require-signing` is set, the worker loads signing key material using the standard resolution order (env var → token file → pairing key) and rejects any task that is unsigned or has an invalid signature. If no key material is found, the worker exits with an error.
@@ -291,7 +291,7 @@ When `--require-signing` is set, the worker loads signing key material using the
 ### Signing tasks manually
 
 ```python
-from away.core.signing import derive_key, compute_signature, verify_signature
+from seeya.core.signing import derive_key, compute_signature, verify_signature
 
 # After pairing or with a token, both sides have the same shared_key
 signing_key = derive_key(shared_key)
@@ -306,8 +306,8 @@ is_valid = verify_signature(payload, signature, signing_key)
 ### Using Task signing
 
 ```python
-from away.core.task import Task
-from away.core.signing import derive_key
+from seeya.core.task import Task
+from seeya.core.signing import derive_key
 
 key = derive_key(shared_secret)
 
@@ -322,7 +322,7 @@ task = Task.from_json(signed_json, signing_key=key)  # raises SignatureError on 
 ### Resolving keys programmatically
 
 ```python
-from away.core.token import resolve_signing_key
+from seeya.core.token import resolve_signing_key
 
 # Resolves from env var → token file → pairing key
 key = resolve_signing_key("client")  # or "worker"
@@ -333,7 +333,7 @@ if key is not None:
 ### Token management
 
 ```python
-from away.core.token import generate_token, save_token, load_token, clear_token
+from seeya.core.token import generate_token, save_token, load_token, clear_token
 
 # Generate and save
 token = generate_token()
@@ -349,7 +349,7 @@ clear_token()
 ### Pairing programmatically
 
 ```python
-from away.core.pairing import (
+from seeya.core.pairing import (
     generate_pin,
     initiate_pairing,
     respond_to_pairing,
@@ -370,15 +370,15 @@ save_shared_key(result.shared_key, "client")
 
 | File | Purpose |
 |------|---------|
-| `~/.away/token` | Pre-shared signing token (hex-encoded, 64 chars) |
-| `~/.away/client.key` | Client's pairing key (32 bytes, from `away pair`) |
-| `~/.away/worker.key` | Worker's pairing key (32 bytes, from `away pair`) |
+| `~/.seeya/token` | Pre-shared signing token (hex-encoded, 64 chars) |
+| `~/.seeya/client.key` | Client's pairing key (32 bytes, from `seeya pair`) |
+| `~/.seeya/worker.key` | Worker's pairing key (32 bytes, from `seeya pair`) |
 
 All files are created with `0600` permissions (owner-only read/write).
 
 | Environment variable | Purpose |
 |---------------------|---------|
-| `AWAY_SIGNING_TOKEN` | Hex-encoded signing token (overrides file) |
+| `SEEYA_SIGNING_TOKEN` | Hex-encoded signing token (overrides file) |
 
 ### CI/CD example (GitHub Actions)
 
@@ -388,40 +388,40 @@ jobs:
   run-task:
     runs-on: ubuntu-latest
     env:
-      AWAY_SIGNING_TOKEN: ${{ secrets.AWAY_SIGNING_TOKEN }}
-      AWAY_BACKEND: redis://your-redis-host:6379
+      SEEYA_SIGNING_TOKEN: ${{ secrets.SEEYA_SIGNING_TOKEN }}
+      SEEYA_BACKEND: redis://your-redis-host:6379
     steps:
       - uses: actions/checkout@v4
-      - run: pip install away[redis]
+      - run: pip install seeya[redis]
       - run: python my_task.py
 ```
 
 ### Regenerating tokens
 
 ```bash
-away token generate --force
+seeya token generate --force
 ```
 
-Then update the `AWAY_SIGNING_TOKEN` secret in your CI provider and restart workers.
+Then update the `SEEYA_SIGNING_TOKEN` secret in your CI provider and restart workers.
 
 ### Clearing credentials
 
 ```bash
 # Token
-away token clear
+seeya token clear
 
 # Pairing keys
-away pair --clear
-away pair --role worker --clear
+seeya pair --clear
+seeya pair --role worker --clear
 ```
 
 ## Troubleshooting
 
 **"Signing is enabled but no key material found"**
-- Set `AWAY_SIGNING_TOKEN`, run `away token generate`, or run `away pair` to establish key material.
+- Set `SEEYA_SIGNING_TOKEN`, run `seeya token generate`, or run `seeya pair` to establish key material.
 
 **"Task is unsigned but signing is enabled"**
-- The client is not signing tasks. Ensure the token is set via `AWAY_SIGNING_TOKEN` or `~/.away/token`, or that `~/.away/client.key` exists (from pairing).
+- The client is not signing tasks. Ensure the token is set via `SEEYA_SIGNING_TOKEN` or `~/.seeya/token`, or that `~/.seeya/client.key` exists (from pairing).
 
 **"Task signature verification failed"**
 - The client and worker have different keys. Ensure both sides use the same token or re-pair.
