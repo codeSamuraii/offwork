@@ -429,7 +429,7 @@ class Store:
     # -- Serialization -------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
-        """Export as a dict in v0.4.0 format."""
+        """Export as a dict in v0.1.0 format."""
         qname_to_hash = self._refs
 
         # Build objects with closure_func_refs converted to hashes

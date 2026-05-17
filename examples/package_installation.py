@@ -140,7 +140,7 @@ async def main() -> None:
 
     # Mismatched package names
     print("\n--- PyYAML (install_package_as) ---")
-    result = await to_yaml.run({"framework": "offwork", "version": "0.4.0"})
+    result = await to_yaml.run({"framework": "offwork", "version": "0.1.0"})
     print(f"  YAML output:\n{result}")
 
     print("--- python-dateutil (install_package_as) ---")
