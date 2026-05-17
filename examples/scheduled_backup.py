@@ -2,14 +2,14 @@
 
 The traced function ``snapshot_directory`` is small.  It composes three
 plain helpers -- ``_archive``, ``_compress``, ``_upload`` -- which are
-not themselves decorated.  seeya follows the calls, ships the source
+not themselves decorated.  pyfuse follows the calls, ships the source
 of all three, and the worker executes the whole pipeline as one task.
 
 Replace the ``_upload`` body with real ``boto3`` calls when wiring this
 into production.
 
 Usage:
-    seeya worker --backend redis://localhost:6379 --tmp
+    pyfuse worker --backend redis://localhost:6379 --tmp
     python examples/scheduled_backup.py
 
 The script generates a small directory of fake data in ``/tmp``,
@@ -28,10 +28,10 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-import seeya
-from seeya import trace
+import pyfuse
+from pyfuse import trace
 
-seeya.connect("local://localhost:9748")
+pyfuse.connect("local://localhost:9748")
 
 
 # --- helpers (auto-discovered) --------------------------------------------
@@ -73,7 +73,7 @@ def snapshot_directory(src_dir: str, bucket: str, prefix: str) -> dict[str, Any]
 
 def _populate_sample_dir() -> str:
     """Create a small directory of fake data and return its path."""
-    root = Path(tempfile.mkdtemp(prefix="seeya_backup_"))
+    root = Path(tempfile.mkdtemp(prefix="pyfuse_backup_"))
     (root / "config.yaml").write_text("env: prod\nversion: 1.2.3\n")
     (root / "users.csv").write_text("id,name\n1,alice\n2,bob\n3,carol\n")
     (root / "logs").mkdir()

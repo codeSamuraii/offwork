@@ -1,4 +1,4 @@
-# seeya
+# pyfuse
 
 **Run any Python function on a remote worker — zero setup, zero deployment.**
 
@@ -7,21 +7,21 @@
 [![Typed](https://img.shields.io/badge/typing-strict%20mypy-blue)](https://mypy-lang.org/)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)]()
 
-Add `@trace` to a function. seeya captures its source, dependencies, and imports automatically.
+Add `@trace` to a function. pyfuse captures its source, dependencies, and imports automatically.
 Workers reconstruct and execute everything from scratch — no shared filesystem, no deployment pipeline.
 Missing packages are installed on the fly.
 
 ## Quick start
 
 ```bash
-pip install seeya
+pip install pyfuse
 ```
 
 ```python
-import asyncio, math, seeya
-from seeya import trace
+import asyncio, math, pyfuse
+from pyfuse import trace
 
-seeya.connect("local://localhost:9748")
+pyfuse.connect("local://localhost:9748")
 
 def add(a, b):
     return a + b
@@ -39,7 +39,7 @@ asyncio.run(main())
 Only the entry point needs `@trace` — everything it calls is captured automatically.
 
 ```bash
-seeya worker --backend local://localhost:9748 --tmp   # start a worker
+pyfuse worker --backend local://localhost:9748 --tmp   # start a worker
 python my_script.py                                    # → 5.0
 ```
 
@@ -50,8 +50,8 @@ For multi-machine, swap `local://` for `redis://` or an `https://` managed broke
 Run tasks inside Docker containers for isolation — transparent to clients:
 
 ```bash
-seeya sandbox setup                                      # build image (once)
-seeya worker --backend redis://localhost:6379 --sandbox  # run with isolation
+pyfuse sandbox setup                                      # build image (once)
+pyfuse worker --backend redis://localhost:6379 --sandbox  # run with isolation
 ```
 
 See [Sandbox](docs/SANDBOX.md) for configuration and management.
@@ -62,13 +62,13 @@ Pre-shared token or PIN-based pairing + HMAC-SHA256 — workers reject untrusted
 
 ```bash
 # Token-based (recommended for CI/CD)
-seeya token generate                                       # generate once
-export SEEYA_SIGNING_TOKEN=<token>                         # set on client & worker
-seeya worker --backend redis://localhost:6379 --require-signing
+pyfuse token generate                                       # generate once
+export PYFUSE_SIGNING_TOKEN=<token>                         # set on client & worker
+pyfuse worker --backend redis://localhost:6379 --require-signing
 
 # PIN-based pairing (interactive)
-seeya worker --backend redis://localhost:6379 --pair       # displays a 6-digit PIN
-seeya pair --backend redis://localhost:6379                # on client: enter the PIN
+pyfuse worker --backend redis://localhost:6379 --pair       # displays a 6-digit PIN
+pyfuse pair --backend redis://localhost:6379                # on client: enter the PIN
 ```
 
 After setup, tasks are signed automatically. No client-side code changes. See [Signing & Pairing](docs/SIGNING.md) for details.
@@ -83,7 +83,7 @@ After setup, tasks are signed automatically. No client-side code changes. See [S
 | **Retry & timeout** | `@trace(timeout=30, retries=3)` with exponential backoff |
 | **Scheduling** | `.run_in(delay)`, `.run_at(datetime)`, `.run_every(freq)` with cancellation |
 | **Throttling** | `@trace(throttle=timedelta(hours=24)/50)` — rate-limit executions |
-| **Progress & cancellation** | `seeya.progress(3, 10)` inside tasks; `await future.cancel()` on client |
+| **Progress & cancellation** | `pyfuse.progress(3, 10)` inside tasks; `await future.cancel()` on client |
 | **Heartbeat & stall detection** | Workers heartbeat; clients raise `TaskStalled` on silence |
 | **Content-hash caching** | Same code = cache hit, regardless of client |
 | **Pluggable backends** | `local://` (same-machine TCP), `redis://`, `amqp://` (RabbitMQ), `http://`/`https://` (hosted broker API) |
@@ -104,8 +104,8 @@ After setup, tasks are signed automatically. No client-side code changes. See [S
 ## Examples
 
 ```bash
-seeya worker --backend local://localhost:9748 --tmp
-seeya run examples/remote_execution.py
+pyfuse worker --backend local://localhost:9748 --tmp
+pyfuse run examples/remote_execution.py
 ```
 
 [`remote_execution.py`](examples/remote_execution.py) · [`async_execution.py`](examples/async_execution.py) · [`package_installation.py`](examples/package_installation.py) · [`progress_reporting.py`](examples/progress_reporting.py) · [`cancellation.py`](examples/cancellation.py) · [`scheduling.py`](examples/scheduling.py) · [`throttling_and_retry.py`](examples/throttling_and_retry.py) · [`large_module.py`](examples/large_module.py)

@@ -14,10 +14,10 @@ By default, workers execute tasks in the host process. With `--sandbox`, executi
 ## Setup
 
 ```bash
-seeya sandbox setup
+pyfuse sandbox setup
 ```
 
-This builds the `seeya-sandbox` Docker image from the bundled Dockerfile. The image is based on `python:3.12-slim` and contains only the stdlib-only guest agent -- no seeya installation needed inside the container.
+This builds the `pyfuse-sandbox` Docker image from the bundled Dockerfile. The image is based on `python:3.12-slim` and contains only the stdlib-only guest agent -- no pyfuse installation needed inside the container.
 
 You can also build manually:
 
@@ -30,7 +30,7 @@ Or let the worker build automatically on first use (the image is built lazily if
 ## Start a sandboxed worker
 
 ```bash
-seeya worker --backend redis://localhost:6379 --sandbox
+pyfuse worker --backend redis://localhost:6379 --sandbox
 ```
 
 The worker starts a container on first task, keeps it running for the worker's lifetime, and stops it on shutdown.
@@ -40,34 +40,34 @@ The worker starts a container on first task, keeps it running for the worker's l
 Override the image and container names via environment variables:
 
 ```bash
-export SEEYA_SANDBOX_DOCKER_IMAGE=my-custom-image
-export SEEYA_SANDBOX_DOCKER_CONTAINER=my-sandbox
-seeya worker --backend redis://localhost:6379 --sandbox
+export PYFUSE_SANDBOX_DOCKER_IMAGE=my-custom-image
+export PYFUSE_SANDBOX_DOCKER_CONTAINER=my-sandbox
+pyfuse worker --backend redis://localhost:6379 --sandbox
 ```
 
 ## Management commands
 
 ```bash
 # Check sandbox status
-seeya sandbox status
+pyfuse sandbox status
 
 # Remove the Docker container and image
-seeya sandbox teardown
+pyfuse sandbox teardown
 ```
 
-Example `seeya sandbox status` output:
+Example `pyfuse sandbox status` output:
 
 ```
 Docker:
   docker: installed
-  Image 'seeya-sandbox': exists
-  Container 'seeya-sandbox': not found
+  Image 'pyfuse-sandbox': exists
+  Container 'pyfuse-sandbox': not found
 ```
 
 ## Programmatic usage
 
 ```python
-from seeya.worker.sandbox import DockerSandbox
+from pyfuse.worker.sandbox import DockerSandbox
 
 async with DockerSandbox() as sandbox:
     result = await sandbox.execute(source, "my_func", (arg1,), {})
@@ -76,16 +76,16 @@ async with DockerSandbox() as sandbox:
 Pass `sandbox=True` to `serve()`:
 
 ```python
-await seeya.serve("redis://localhost:6379", sandbox=True)
+await pyfuse.serve("redis://localhost:6379", sandbox=True)
 ```
 
 Or provide a `DockerSandbox` instance for custom settings:
 
 ```python
-from seeya.worker.sandbox import DockerSandbox
+from pyfuse.worker.sandbox import DockerSandbox
 
 sandbox = DockerSandbox(cpus=4, memory_gb=4)
-await seeya.serve("redis://localhost:6379", sandbox=sandbox)
+await pyfuse.serve("redis://localhost:6379", sandbox=sandbox)
 ```
 
 ## Configuration reference
@@ -94,8 +94,8 @@ await seeya.serve("redis://localhost:6379", sandbox=sandbox)
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `image` | `"seeya-sandbox"` | Docker image name |
-| `container_name` | `"seeya-sandbox"` | Container name |
+| `image` | `"pyfuse-sandbox"` | Docker image name |
+| `container_name` | `"pyfuse-sandbox"` | Container name |
 | `guest_port` | `9749` | TCP port the guest agent listens on |
 | `cpus` | `2` | vCPUs allocated to the container |
 | `memory_gb` | `2` | RAM (GB) allocated to the container |

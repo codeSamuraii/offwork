@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from seeya import reconstruct, serialize
-from seeya.graph.analyzer import (
+from pyfuse import reconstruct, serialize
+from pyfuse.graph.analyzer import (
     _resolve_owner_class,
     detect_traced_dependencies,
     filter_imports,
@@ -9,7 +9,7 @@ from seeya.graph.analyzer import (
     get_module_imports,
     get_used_names,
 )
-from seeya.core.models import FunctionNode, ImportInfo
+from pyfuse.core.models import FunctionNode, ImportInfo
 from tests.conftest import create_module
 
 
@@ -17,7 +17,7 @@ def test_get_function_source_strips_trace(tmp_path: Path) -> None:
     mod = create_module(
         tmp_path,
         "src_trace",
-        "from seeya import trace\n\n@trace\ndef foo():\n    return 1\n",
+        "from pyfuse import trace\n\n@trace\ndef foo():\n    return 1\n",
     )
     source = get_function_source(mod.foo)
     assert "@trace" not in source
@@ -30,7 +30,7 @@ def test_get_function_source_strips_multiline_trace(tmp_path: Path) -> None:
         tmp_path,
         "src_multiline",
         (
-            "from seeya import trace\n\n"
+            "from pyfuse import trace\n\n"
             "@trace(\n"
             "    timeout=30,\n"
             "    retries=3,\n"
@@ -52,7 +52,7 @@ def test_get_function_source_strips_multiline_preserves_other(tmp_path: Path) ->
         tmp_path,
         "src_multi_other",
         (
-            "from seeya import trace\n"
+            "from pyfuse import trace\n"
             "def my_dec(f): return f\n\n"
             "@my_dec\n"
             "@trace(\n"
@@ -74,7 +74,7 @@ def test_get_function_source_preserves_other_decorators(tmp_path: Path) -> None:
         tmp_path,
         "src_other_dec",
         (
-            "from seeya import trace\n"
+            "from pyfuse import trace\n"
             "def my_dec(f): return f\n\n"
             "@my_dec\n@trace\ndef bar():\n    return 2\n"
         ),
@@ -461,7 +461,7 @@ def test_detect_typed_obj_method_e2e_reconstruction(tmp_path: Path) -> None:
         tmp_path,
         "typede2e",
         (
-            "from seeya import trace\n\n"
+            "from pyfuse import trace\n\n"
             "class Calculator:\n"
             "    @trace\n"
             "    def add(self, a, b):\n"

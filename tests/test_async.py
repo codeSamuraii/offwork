@@ -10,15 +10,15 @@ from typing import Any
 
 import pytest
 
-from seeya import pack, trace
-from seeya.core.errors import RemoteError, TaskStalled
-from seeya.core.models import FunctionNode, ImportInfo
-from seeya.core.task import Task
-from seeya.graph.store import Store
-from seeya.worker.backends.base import Backend
-from seeya.worker.result import Result, ResultEnvelope
-from seeya.worker.worker import Worker
-import seeya.worker.remote as _remote
+from pyfuse import pack, trace
+from pyfuse.core.errors import RemoteError, TaskStalled
+from pyfuse.core.models import FunctionNode, ImportInfo
+from pyfuse.core.task import Task
+from pyfuse.graph.store import Store
+from pyfuse.worker.backends.base import Backend
+from pyfuse.worker.result import Result, ResultEnvelope
+from pyfuse.worker.worker import Worker
+import pyfuse.worker.remote as _remote
 
 
 # ---------------------------------------------------------------------------

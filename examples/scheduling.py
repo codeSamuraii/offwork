@@ -1,4 +1,4 @@
-"""Task scheduling with seeya.
+"""Task scheduling with pyfuse.
 
 Demonstrates:
 - run_in(delay)   — execute after a delay
@@ -7,19 +7,19 @@ Demonstrates:
 
 Usage:
     # Terminal 1 -- start a worker
-    seeya worker --backend redis://localhost:6379 --tmp
+    pyfuse worker --backend redis://localhost:6379 --tmp
 
     # Terminal 2 -- run this script
-    seeya run examples/scheduling.py
+    pyfuse run examples/scheduling.py
 """
 
 import asyncio
 from datetime import datetime, timedelta
 
-import seeya
-from seeya import trace
+import pyfuse
+from pyfuse import trace
 
-seeya.connect("local://localhost:9748")
+pyfuse.connect("local://localhost:9748")
 
 
 @trace

@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from seeya.core.task import Task, _TaskEncoder, _resolve, resolve_args
+from pyfuse.core.task import Task, _TaskEncoder, _resolve, resolve_args
 
 
 class TestTaskCreation:
@@ -382,7 +382,7 @@ class TestExtendedTypeSerialization:
         task = Task(graph_json="{}", function_name="f", args=(v,))
         # JSON should still use the natural object form for str-keyed dicts
         raw = task.to_json()
-        assert "__seeya_dict__" not in raw
+        assert "__pyfuse_dict__" not in raw
         out = self._roundtrip(v)
         assert out == v
 

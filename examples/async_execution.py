@@ -1,4 +1,4 @@
-"""Async remote execution with seeya.
+"""Async remote execution with pyfuse.
 
 Demonstrates:
 - Awaiting a single remote task with .run()
@@ -9,10 +9,10 @@ Demonstrates:
 import asyncio
 import math
 
-import seeya
-from seeya import trace
+import pyfuse
+from pyfuse import trace
 
-seeya.connect("local://localhost:9748")
+pyfuse.connect("local://localhost:9748")
 
 async def add(a: float, b: float) -> float:
     return a + b

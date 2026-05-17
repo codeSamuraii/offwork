@@ -1,8 +1,8 @@
 """Integration tests for the simplified pairing flow.
 
 Verifies:
-- ``seeya worker --pair`` generates a PIN, pairs, and starts serving with signing
-- ``seeya pair --backend ...`` pairs as a client and can submit signed tasks
+- ``pyfuse worker --pair`` generates a PIN, pairs, and starts serving with signing
+- ``pyfuse pair --backend ...`` pairs as a client and can submit signed tasks
 - End-to-end: pair → submit signed task → receive result
 """
 
@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from seeya import trace
-from seeya.core.pairing import (
+from pyfuse import trace
+from pyfuse.core.pairing import (
     PairingResult,
     generate_pin,
     initiate_pairing,
@@ -22,13 +22,13 @@ from seeya.core.pairing import (
     respond_to_pairing,
     save_shared_key,
 )
-from seeya.core.signing import derive_key
-from seeya.core.task import Task
-from seeya.graph.graph import Graph
-from seeya.worker.backends.local import LocalBackend
-from seeya.worker.remote import _handle_task
-from seeya.worker.result import ResultEnvelope
-from seeya.worker.worker import Worker
+from pyfuse.core.signing import derive_key
+from pyfuse.core.task import Task
+from pyfuse.graph.graph import Graph
+from pyfuse.worker.backends.local import LocalBackend
+from pyfuse.worker.remote import _handle_task
+from pyfuse.worker.result import ResultEnvelope
+from pyfuse.worker.worker import Worker
 
 
 def _free_port() -> int:

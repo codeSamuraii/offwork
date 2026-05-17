@@ -10,13 +10,13 @@ from typing import Any
 
 import pytest
 
-from seeya import pack, trace
-from seeya.core.errors import RemoteError
-from seeya.core.task import Task
-from seeya.worker.backends.base import Backend
-from seeya.worker.result import Result, ResultEnvelope
-from seeya.worker.worker import Worker
-import seeya.worker.remote as _remote
+from pyfuse import pack, trace
+from pyfuse.core.errors import RemoteError
+from pyfuse.core.task import Task
+from pyfuse.worker.backends.base import Backend
+from pyfuse.worker.result import Result, ResultEnvelope
+from pyfuse.worker.worker import Worker
+import pyfuse.worker.remote as _remote
 
 
 # ---------------------------------------------------------------------------
@@ -330,7 +330,7 @@ class TestHandleTaskOutput:
         await backend.submit(task.to_json())
 
         worker = Worker(auto_install=False)
-        with caplog.at_level(logging.DEBUG, logger="seeya"):
+        with caplog.at_level(logging.DEBUG, logger="pyfuse"):
             async for task_json in backend.listen():
                 await _remote._handle_task(worker, backend, task_json)
 
@@ -355,7 +355,7 @@ class TestHandleTaskOutput:
         await backend.submit(task2.to_json())
 
         worker = Worker(auto_install=False)
-        with caplog.at_level(logging.DEBUG, logger="seeya"):
+        with caplog.at_level(logging.DEBUG, logger="pyfuse"):
             async for task_json in backend.listen():
                 await _remote._handle_task(worker, backend, task_json)
 
@@ -378,7 +378,7 @@ class TestHandleTaskOutput:
         await backend.submit(task.to_json())
 
         worker = Worker(auto_install=False)
-        with caplog.at_level(logging.DEBUG, logger="seeya"):
+        with caplog.at_level(logging.DEBUG, logger="pyfuse"):
             async for task_json in backend.listen():
                 await _remote._handle_task(worker, backend, task_json)
 

@@ -6,12 +6,12 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from seeya import pack, trace
-from seeya.core.task import Task
-from seeya.worker.backends.local import LocalBackend
-from seeya.worker.result import ResultEnvelope
-from seeya.worker.worker import Worker
-import seeya.worker.remote as _remote
+from pyfuse import pack, trace
+from pyfuse.core.task import Task
+from pyfuse.worker.backends.local import LocalBackend
+from pyfuse.worker.result import ResultEnvelope
+from pyfuse.worker.worker import Worker
+import pyfuse.worker.remote as _remote
 
 
 # ---------------------------------------------------------------------------

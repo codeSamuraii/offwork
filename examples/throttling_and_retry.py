@@ -1,4 +1,4 @@
-"""Throttling and retry with seeya.
+"""Throttling and retry with pyfuse.
 
 Demonstrates:
 - @trace(throttle=timedelta) — rate-limit executions
@@ -7,20 +7,20 @@ Demonstrates:
 
 Usage:
     # Terminal 1 -- start a worker
-    seeya worker --backend redis://localhost:6379 --tmp
+    pyfuse worker --backend redis://localhost:6379 --tmp
 
     # Terminal 2 -- run this script
-    seeya run examples/throttling_and_retry.py
+    pyfuse run examples/throttling_and_retry.py
 """
 
 import asyncio
 import random
 from datetime import timedelta
 
-import seeya
-from seeya import trace, ThrottleError
+import pyfuse
+from pyfuse import trace, ThrottleError
 
-seeya.connect("local://localhost:9748")
+pyfuse.connect("local://localhost:9748")
 
 
 # --- Throttling: at most once every 5 seconds ---

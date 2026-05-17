@@ -1,21 +1,21 @@
-"""Task cancellation with seeya.
+"""Task cancellation with pyfuse.
 
 Demonstrates cancelling a pending or in-progress task.
 
 Usage:
     # Terminal 1 -- start a worker
-    seeya worker --backend redis://localhost:6379 --tmp
+    pyfuse worker --backend redis://localhost:6379 --tmp
 
     # Terminal 2 -- run this script
-    seeya run examples/cancellation.py
+    pyfuse run examples/cancellation.py
 """
 
 import asyncio
 
-import seeya
-from seeya import trace, TaskCancelled
+import pyfuse
+from pyfuse import trace, TaskCancelled
 
-seeya.connect("local://localhost:9748")
+pyfuse.connect("local://localhost:9748")
 
 
 @trace

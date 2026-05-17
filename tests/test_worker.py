@@ -3,11 +3,11 @@ import json
 
 import pytest
 
-from seeya.core.errors import WorkerError
-from seeya.core.models import FunctionNode, ImportInfo
-from seeya.graph.store import Store
-from seeya.core.task import Task
-from seeya.worker.worker import BuildInfo, Worker, _compute_subgraph_key, execute
+from pyfuse.core.errors import WorkerError
+from pyfuse.core.models import FunctionNode, ImportInfo
+from pyfuse.graph.store import Store
+from pyfuse.core.task import Task
+from pyfuse.worker.worker import BuildInfo, Worker, _compute_subgraph_key, execute
 
 
 # -- Helpers -----------------------------------------------------------------

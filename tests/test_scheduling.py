@@ -5,10 +5,10 @@ import time
 
 import pytest
 
-from seeya.core.task import Task
-from seeya.worker.schedule import ScheduleHandle
-from seeya.worker.result import ResultEnvelope
-from seeya.worker.backends.local import _Broker
+from pyfuse.core.task import Task
+from pyfuse.worker.schedule import ScheduleHandle
+from pyfuse.worker.result import ResultEnvelope
+from pyfuse.worker.backends.local import _Broker
 
 
 class TestTaskSchedulingFields:

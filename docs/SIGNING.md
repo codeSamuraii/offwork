@@ -9,7 +9,7 @@ Both methods use the same underlying HMAC-SHA256 signing — they differ only in
 
 ## Overview
 
-By default, seeya workers execute any task they receive from the backend. When signing is enabled:
+By default, pyfuse workers execute any task they receive from the backend. When signing is enabled:
 
 1. A client and worker share a cryptographic key (via **token** or **pairing**).
 2. The client **signs** every task with HMAC-SHA256 before submitting it.
@@ -22,16 +22,16 @@ Tasks with missing or invalid signatures are rejected.
 ### 1. Generate a token
 
 ```bash
-seeya token generate
+pyfuse token generate
 ```
 
 ```
-  Token generated and saved to ~/.seeya/token
+  Token generated and saved to ~/.pyfuse/token
 
   Token: a1b2c3d4e5f6...
 
   Set this on both client and worker:
-    export SEEYA_SIGNING_TOKEN=a1b2c3d4e5f6...
+    export PYFUSE_SIGNING_TOKEN=a1b2c3d4e5f6...
 ```
 
 ### 2. Distribute the token
@@ -40,17 +40,17 @@ Copy the token to both the client and worker machines. The recommended method is
 
 ```bash
 # On both client and worker
-export SEEYA_SIGNING_TOKEN=a1b2c3d4e5f6...
+export PYFUSE_SIGNING_TOKEN=a1b2c3d4e5f6...
 ```
 
-For CI/CD, store the token as a secret in your CI provider (GitHub Actions secrets, GitLab CI variables, etc.) and inject it as `SEEYA_SIGNING_TOKEN`.
+For CI/CD, store the token as a secret in your CI provider (GitHub Actions secrets, GitLab CI variables, etc.) and inject it as `PYFUSE_SIGNING_TOKEN`.
 
-Alternatively, copy the `~/.seeya/token` file to both machines.
+Alternatively, copy the `~/.pyfuse/token` file to both machines.
 
 ### 3. Start the worker with signing
 
 ```bash
-seeya worker --backend redis://localhost:6379 --require-signing
+pyfuse worker --backend redis://localhost:6379 --require-signing
 ```
 
 ### 4. Run tasks (no changes needed)
@@ -68,7 +68,7 @@ The client automatically loads the token and signs tasks before submission. No c
 On the **worker** machine:
 
 ```bash
-seeya worker --backend redis://localhost:6379 --pair
+pyfuse worker --backend redis://localhost:6379 --pair
 ```
 
 This generates a 6-digit PIN and waits for a client:
@@ -77,7 +77,7 @@ This generates a 6-digit PIN and waits for a client:
   Pairing PIN:  482913
 
   Enter this PIN on the client with:
-    seeya pair --backend redis://localhost:6379
+    pyfuse pair --backend redis://localhost:6379
 
   Waiting for client...
 ```
@@ -89,7 +89,7 @@ Once paired, the worker starts automatically with signing enabled.
 On the **client** machine (within 60 seconds):
 
 ```bash
-seeya pair --backend redis://localhost:6379
+pyfuse pair --backend redis://localhost:6379
 ```
 
 ```
@@ -98,10 +98,10 @@ seeya pair --backend redis://localhost:6379
 
   ✓ Paired successfully as 'client'.
     Peer role: worker
-    Key saved to ~/.seeya/client.key
+    Key saved to ~/.pyfuse/client.key
 ```
 
-Both machines now share a cryptographic key stored in `~/.seeya/`.
+Both machines now share a cryptographic key stored in `~/.pyfuse/`.
 
 ### 3. Run tasks (no changes needed)
 
@@ -109,7 +109,7 @@ Both machines now share a cryptographic key stored in `~/.seeya/`.
 python examples/remote_execution.py
 ```
 
-The client automatically loads `~/.seeya/client.key` and signs tasks before submission. No code changes are needed.
+The client automatically loads `~/.pyfuse/client.key` and signs tasks before submission. No code changes are needed.
 
 ### Alternative: manual pairing and worker start
 
@@ -117,13 +117,13 @@ If you need more control, you can pair and start the worker separately:
 
 ```bash
 # Pair the worker
-seeya pair --backend redis://localhost:6379 --role worker
+pyfuse pair --backend redis://localhost:6379 --role worker
 
 # Pair the client (same PIN)
-seeya pair --backend redis://localhost:6379
+pyfuse pair --backend redis://localhost:6379
 
 # Start the worker with signing enforcement
-seeya worker --backend redis://localhost:6379 --require-signing
+pyfuse worker --backend redis://localhost:6379 --require-signing
 ```
 
 ## How it works
@@ -132,9 +132,9 @@ seeya worker --backend redis://localhost:6379 --require-signing
 
 When signing is enabled, both client and worker resolve the signing key using the following precedence order:
 
-1. **`SEEYA_SIGNING_TOKEN` environment variable** — hex-encoded token (highest priority)
-2. **`~/.seeya/token` file** — hex-encoded token written by `seeya token generate`
-3. **`~/.seeya/{client,worker}.key` file** — raw bytes from PIN-based pairing
+1. **`PYFUSE_SIGNING_TOKEN` environment variable** — hex-encoded token (highest priority)
+2. **`~/.pyfuse/token` file** — hex-encoded token written by `pyfuse token generate`
+3. **`~/.pyfuse/{client,worker}.key` file** — raw bytes from PIN-based pairing
 
 This means you can migrate from pairing to tokens without disruption: set the environment variable and it takes precedence over any existing pairing key.
 
@@ -143,10 +143,10 @@ This means you can migrate from pairing to tokens without disruption: set the en
 ```
 Generate (once)                       Distribute
 ──────────────                        ──────────
-seeya token generate                 Copy token to CI secrets,
+pyfuse token generate                 Copy token to CI secrets,
     │                                 env vars, or config
     └─→ random 32-byte token          │
-        saved to ~/.seeya/token       │
+        saved to ~/.pyfuse/token       │
                                        ▼
 Client                                Worker
 ──────                                ──────
@@ -195,7 +195,7 @@ Enter PIN: 482913                     Enter PIN: 482913
         │                                     ├── derive shared secret
         │                                     │   (same computation)
         │                                     │
-    Save ~/.seeya/worker.key          Save ~/.seeya/client.key
+    Save ~/.pyfuse/worker.key          Save ~/.pyfuse/client.key
 ```
 
 **Security properties:**
@@ -227,46 +227,46 @@ The signature covers the entire task payload — graph JSON, function name, argu
 
 ## CLI reference
 
-### `seeya token generate`
+### `pyfuse token generate`
 
 ```bash
-seeya token generate [--force]
+pyfuse token generate [--force]
 ```
 
-Generates a random 32-byte signing token and saves it to `~/.seeya/token`. Prints the hex-encoded token and usage instructions.
+Generates a random 32-byte signing token and saves it to `~/.pyfuse/token`. Prints the hex-encoded token and usage instructions.
 
 | Flag | Description |
 |------|-------------|
 | `--force` | Overwrite an existing token |
 
-### `seeya token show`
+### `pyfuse token show`
 
 ```bash
-seeya token show
+pyfuse token show
 ```
 
 Displays the current token source (environment variable or file) and a truncated preview.
 
-### `seeya token clear`
+### `pyfuse token clear`
 
 ```bash
-seeya token clear
+pyfuse token clear
 ```
 
-Removes the saved `~/.seeya/token` file.
+Removes the saved `~/.pyfuse/token` file.
 
-### `seeya worker --pair`
+### `pyfuse worker --pair`
 
 ```bash
-seeya worker --backend URL --pair
+pyfuse worker --backend URL --pair
 ```
 
 Generates a PIN, pairs with a client, then starts serving with signing automatically enabled. This is the recommended way to set up a signed worker interactively.
 
-### `seeya pair`
+### `pyfuse pair`
 
 ```bash
-seeya pair --backend URL [--pin PIN] [--timeout SECS] [--force] [--clear]
+pyfuse pair --backend URL [--pin PIN] [--timeout SECS] [--force] [--clear]
 ```
 
 | Flag | Description |
@@ -276,12 +276,12 @@ seeya pair --backend URL [--pin PIN] [--timeout SECS] [--force] [--clear]
 | `--timeout` | Seconds to wait for the peer (default: 60) |
 | `--force` | Overwrite an existing shared key |
 | `--clear` | Remove the shared key for this role |
-| `--role` | `client` (default) or `worker` — use `seeya worker --pair` instead of `--role worker` |
+| `--role` | `client` (default) or `worker` — use `pyfuse worker --pair` instead of `--role worker` |
 
-### `seeya worker --require-signing`
+### `pyfuse worker --require-signing`
 
 ```bash
-seeya worker --backend URL --require-signing
+pyfuse worker --backend URL --require-signing
 ```
 
 When `--require-signing` is set, the worker loads signing key material using the standard resolution order (env var → token file → pairing key) and rejects any task that is unsigned or has an invalid signature. If no key material is found, the worker exits with an error.
@@ -291,7 +291,7 @@ When `--require-signing` is set, the worker loads signing key material using the
 ### Signing tasks manually
 
 ```python
-from seeya.core.signing import derive_key, compute_signature, verify_signature
+from pyfuse.core.signing import derive_key, compute_signature, verify_signature
 
 # After pairing or with a token, both sides have the same shared_key
 signing_key = derive_key(shared_key)
@@ -306,8 +306,8 @@ is_valid = verify_signature(payload, signature, signing_key)
 ### Using Task signing
 
 ```python
-from seeya.core.task import Task
-from seeya.core.signing import derive_key
+from pyfuse.core.task import Task
+from pyfuse.core.signing import derive_key
 
 key = derive_key(shared_secret)
 
@@ -322,7 +322,7 @@ task = Task.from_json(signed_json, signing_key=key)  # raises SignatureError on 
 ### Resolving keys programmatically
 
 ```python
-from seeya.core.token import resolve_signing_key
+from pyfuse.core.token import resolve_signing_key
 
 # Resolves from env var → token file → pairing key
 key = resolve_signing_key("client")  # or "worker"
@@ -333,7 +333,7 @@ if key is not None:
 ### Token management
 
 ```python
-from seeya.core.token import generate_token, save_token, load_token, clear_token
+from pyfuse.core.token import generate_token, save_token, load_token, clear_token
 
 # Generate and save
 token = generate_token()
@@ -349,7 +349,7 @@ clear_token()
 ### Pairing programmatically
 
 ```python
-from seeya.core.pairing import (
+from pyfuse.core.pairing import (
     generate_pin,
     initiate_pairing,
     respond_to_pairing,
@@ -370,15 +370,15 @@ save_shared_key(result.shared_key, "client")
 
 | File | Purpose |
 |------|---------|
-| `~/.seeya/token` | Pre-shared signing token (hex-encoded, 64 chars) |
-| `~/.seeya/client.key` | Client's pairing key (32 bytes, from `seeya pair`) |
-| `~/.seeya/worker.key` | Worker's pairing key (32 bytes, from `seeya pair`) |
+| `~/.pyfuse/token` | Pre-shared signing token (hex-encoded, 64 chars) |
+| `~/.pyfuse/client.key` | Client's pairing key (32 bytes, from `pyfuse pair`) |
+| `~/.pyfuse/worker.key` | Worker's pairing key (32 bytes, from `pyfuse pair`) |
 
 All files are created with `0600` permissions (owner-only read/write).
 
 | Environment variable | Purpose |
 |---------------------|---------|
-| `SEEYA_SIGNING_TOKEN` | Hex-encoded signing token (overrides file) |
+| `PYFUSE_SIGNING_TOKEN` | Hex-encoded signing token (overrides file) |
 
 ### CI/CD example (GitHub Actions)
 
@@ -388,40 +388,40 @@ jobs:
   run-task:
     runs-on: ubuntu-latest
     env:
-      SEEYA_SIGNING_TOKEN: ${{ secrets.SEEYA_SIGNING_TOKEN }}
-      SEEYA_BACKEND: redis://your-redis-host:6379
+      PYFUSE_SIGNING_TOKEN: ${{ secrets.PYFUSE_SIGNING_TOKEN }}
+      PYFUSE_BACKEND: redis://your-redis-host:6379
     steps:
       - uses: actions/checkout@v4
-      - run: pip install seeya[redis]
+      - run: pip install pyfuse[redis]
       - run: python my_task.py
 ```
 
 ### Regenerating tokens
 
 ```bash
-seeya token generate --force
+pyfuse token generate --force
 ```
 
-Then update the `SEEYA_SIGNING_TOKEN` secret in your CI provider and restart workers.
+Then update the `PYFUSE_SIGNING_TOKEN` secret in your CI provider and restart workers.
 
 ### Clearing credentials
 
 ```bash
 # Token
-seeya token clear
+pyfuse token clear
 
 # Pairing keys
-seeya pair --clear
-seeya pair --role worker --clear
+pyfuse pair --clear
+pyfuse pair --role worker --clear
 ```
 
 ## Troubleshooting
 
 **"Signing is enabled but no key material found"**
-- Set `SEEYA_SIGNING_TOKEN`, run `seeya token generate`, or run `seeya pair` to establish key material.
+- Set `PYFUSE_SIGNING_TOKEN`, run `pyfuse token generate`, or run `pyfuse pair` to establish key material.
 
 **"Task is unsigned but signing is enabled"**
-- The client is not signing tasks. Ensure the token is set via `SEEYA_SIGNING_TOKEN` or `~/.seeya/token`, or that `~/.seeya/client.key` exists (from pairing).
+- The client is not signing tasks. Ensure the token is set via `PYFUSE_SIGNING_TOKEN` or `~/.pyfuse/token`, or that `~/.pyfuse/client.key` exists (from pairing).
 
 **"Task signature verification failed"**
 - The client and worker have different keys. Ensure both sides use the same token or re-pair.

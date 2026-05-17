@@ -1,7 +1,7 @@
 """Run functions that depend on third-party packages on a bare worker.
 
 The worker has no packages pre-installed (besides the standard library).
-seeya detects the imports, installs the packages via pip, and executes
+pyfuse detects the imports, installs the packages via pip, and executes
 the function -- all automatically.
 
 This example also demonstrates ``worker_only_import``: the client never
@@ -13,7 +13,7 @@ Requires Redis on localhost:6379.  Install: pip install redis
 
 Usage:
     # Terminal 1 -- start a worker
-    seeya worker --backend redis://localhost:6379
+    pyfuse worker --backend redis://localhost:6379
 
     # Terminal 2 -- run this script
     python examples/package_installation.py
@@ -22,9 +22,9 @@ Usage:
 import asyncio
 from html.parser import HTMLParser
 
-import seeya
-from seeya import trace
-from seeya import install_package_as, worker_only_import
+import pyfuse
+from pyfuse import trace
+from pyfuse import install_package_as, worker_only_import
 
 # Some packages have different import and pip names:
 #   import yaml       -> pip install PyYAML
@@ -131,7 +131,7 @@ def markdown_word_freq(md_text: str) -> str:
 # ---------------------------------------------------------------------------
 
 async def main() -> None:
-    seeya.connect("local://localhost:9748")
+    pyfuse.connect("local://localhost:9748")
 
     # Simple package (import name == pip name)
     print("--- requests (auto-detected) ---")
@@ -140,7 +140,7 @@ async def main() -> None:
 
     # Mismatched package names
     print("\n--- PyYAML (install_package_as) ---")
-    result = await to_yaml.run({"framework": "seeya", "version": "0.4.0"})
+    result = await to_yaml.run({"framework": "pyfuse", "version": "0.4.0"})
     print(f"  YAML output:\n{result}")
 
     print("--- python-dateutil (install_package_as) ---")

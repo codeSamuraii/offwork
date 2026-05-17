@@ -14,12 +14,12 @@ import json
 
 import pytest
 
-from seeya.core.errors import WorkerError
-from seeya.core.task import Task
-from seeya.worker.sandbox import DockerSandbox
-from seeya.worker.sandbox._protocol import encode, decode_header, HEADER_SIZE, async_send, async_recv
-from seeya.worker.sandbox.guest_agent import _execute_request
-from seeya.worker.worker import Worker
+from pyfuse.core.errors import WorkerError
+from pyfuse.core.task import Task
+from pyfuse.worker.sandbox import DockerSandbox
+from pyfuse.worker.sandbox._protocol import encode, decode_header, HEADER_SIZE, async_send, async_recv
+from pyfuse.worker.sandbox.guest_agent import _execute_request
+from pyfuse.worker.worker import Worker
 
 
 # ---------------------------------------------------------------------------
@@ -33,8 +33,8 @@ def _make_source(body: str) -> str:
 
 def _make_store_json(source: str, name: str = "f", module: str = "m") -> str:
     """Build a minimal Store JSON string for a single function."""
-    from seeya.core.models import FunctionNode, ImportInfo
-    from seeya.graph.store import Store
+    from pyfuse.core.models import FunctionNode, ImportInfo
+    from pyfuse.graph.store import Store
 
     node = FunctionNode(
         qualified_name=f"{module}.{name}",
@@ -192,7 +192,7 @@ class TestGuestAgentExecution:
         resp = await _execute_request({
             "source": source,
             "function_name": "greet",
-            "args": [{"__seeya_obj__": {"class": "Greeter", "state": {}}}, "world"],
+            "args": [{"__pyfuse_obj__": {"class": "Greeter", "state": {}}}, "world"],
             "kwargs": {},
             "owner_class": "m.Greeter",
         })
@@ -201,7 +201,7 @@ class TestGuestAgentExecution:
 
     @pytest.mark.asyncio
     async def test_object_resolution(self) -> None:
-        """Test that __seeya_obj__ sentinels in args are resolved."""
+        """Test that __pyfuse_obj__ sentinels in args are resolved."""
         source = (
             "class Point:\n"
             "    pass\n\n"
@@ -211,7 +211,7 @@ class TestGuestAgentExecution:
         resp = await _execute_request({
             "source": source,
             "function_name": "distance",
-            "args": [{"__seeya_obj__": {"class": "Point", "state": {"x": 3, "y": 4}}}],
+            "args": [{"__pyfuse_obj__": {"class": "Point", "state": {"x": 3, "y": 4}}}],
             "kwargs": {},
         })
         assert resp["status"] == "ok"
@@ -234,7 +234,7 @@ class TestGuestAgentServer:
         server.close()
         await server.wait_closed()
 
-        from seeya.worker.sandbox.guest_agent import _handle_client
+        from pyfuse.worker.sandbox.guest_agent import _handle_client
         agent_server = await asyncio.start_server(
             _handle_client, "127.0.0.1", port,
         )
@@ -279,8 +279,8 @@ class TestDockerSandbox:
         # The default tag embeds a content hash of the bundled image
         # assets so changes to the Dockerfile / guest agent invalidate
         # any previously-built image.
-        assert sb.image.startswith("seeya-sandbox:")
-        assert sb.container_name == "seeya-sandbox"
+        assert sb.image.startswith("pyfuse-sandbox:")
+        assert sb.container_name == "pyfuse-sandbox"
         assert sb.guest_port == 9749
         assert sb.cpus == 2
         assert sb.memory_gb == 2
@@ -304,17 +304,17 @@ class TestDockerHelpers:
     """Test Docker CLI helper functions."""
 
     def test_check_docker_available_raises_when_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from seeya.worker.sandbox import docker as docker_mod
+        from pyfuse.worker.sandbox import docker as docker_mod
         monkeypatch.setattr("shutil.which", lambda _cmd: None)
         with pytest.raises(WorkerError, match="docker"):
             docker_mod._check_docker_available()
 
     def test_dockerfile_dir_contains_dockerfile(self) -> None:
-        from seeya.worker.sandbox.docker import _DOCKERFILE_DIR
+        from pyfuse.worker.sandbox.docker import _DOCKERFILE_DIR
         assert (_DOCKERFILE_DIR / "Dockerfile").exists()
 
     def test_dockerfile_dir_contains_guest_agent(self) -> None:
-        from seeya.worker.sandbox.docker import _DOCKERFILE_DIR
+        from pyfuse.worker.sandbox.docker import _DOCKERFILE_DIR
         assert (_DOCKERFILE_DIR / "guest_agent.py").exists()
 
 
@@ -447,14 +447,14 @@ class TestWorkerWithFakeSandbox:
 
 
 class TestGuestAgentProgress:
-    """Test that seeya.progress() calls inside the guest agent produce
+    """Test that pyfuse.progress() calls inside the guest agent produce
     ``{"status": "progress", ...}`` frames on the wire."""
 
     @pytest.mark.asyncio
     async def test_progress_from_sync_function(self) -> None:
-        """Sync function calling seeya.progress() sends progress frames."""
+        """Sync function calling pyfuse.progress() sends progress frames."""
         source = (
-            "from seeya import progress\n\n"
+            "from pyfuse import progress\n\n"
             "def f(n):\n"
             "    for i in range(n):\n"
             "        progress(i + 1, n, message=f'step {i+1}')\n"
@@ -462,7 +462,7 @@ class TestGuestAgentProgress:
         )
 
         # Start the agent on a random port
-        from seeya.worker.sandbox.guest_agent import _handle_client
+        from pyfuse.worker.sandbox.guest_agent import _handle_client
         agent_server = await asyncio.start_server(
             _handle_client, "127.0.0.1", 0,
         )
@@ -500,16 +500,16 @@ class TestGuestAgentProgress:
 
     @pytest.mark.asyncio
     async def test_progress_from_async_function(self) -> None:
-        """Async function calling seeya.progress() sends progress frames."""
+        """Async function calling pyfuse.progress() sends progress frames."""
         source = (
-            "import seeya\n\n"
+            "import pyfuse\n\n"
             "async def af(n):\n"
             "    for i in range(n):\n"
-            "        seeya.progress(i + 1, n)\n"
+            "        pyfuse.progress(i + 1, n)\n"
             "    return n\n"
         )
 
-        from seeya.worker.sandbox.guest_agent import _handle_client
+        from pyfuse.worker.sandbox.guest_agent import _handle_client
         agent_server = await asyncio.start_server(
             _handle_client, "127.0.0.1", 0,
         )
@@ -553,24 +553,24 @@ class TestGuestAgentProgress:
         assert resp == {"status": "ok", "result": 6}
 
     @pytest.mark.asyncio
-    async def test_seeya_shim_cleaned_up(self) -> None:
-        """The fake seeya module is removed after execution."""
+    async def test_pyfuse_shim_cleaned_up(self) -> None:
+        """The fake pyfuse module is removed after execution."""
         import sys
-        had_seeya = "seeya" in sys.modules
-        original = sys.modules.get("seeya")
+        had_pyfuse = "pyfuse" in sys.modules
+        original = sys.modules.get("pyfuse")
 
         await _execute_request({
-            "source": "from seeya import progress\ndef f():\n    return 1\n",
+            "source": "from pyfuse import progress\ndef f():\n    return 1\n",
             "function_name": "f",
             "args": [],
             "kwargs": {},
         })
 
-        if had_seeya:
-            assert sys.modules.get("seeya") is original
-        # seeya IS in sys.modules because the test suite imports it,
+        if had_pyfuse:
+            assert sys.modules.get("pyfuse") is original
+        # pyfuse IS in sys.modules because the test suite imports it,
         # so just verify it's the real one, not a fake
-        assert hasattr(sys.modules["seeya"], "trace")
+        assert hasattr(sys.modules["pyfuse"], "trace")
 
 
 # ===========================================================================
@@ -584,8 +584,8 @@ class TestDockerSandboxProgressForwarding:
     @pytest.mark.asyncio
     async def test_read_response_forwards_progress(self) -> None:
         """_read_response calls progress_cb for each progress frame."""
-        from seeya.worker.sandbox.docker import DockerSandbox
-        from seeya.worker.sandbox._protocol import encode
+        from pyfuse.worker.sandbox.docker import DockerSandbox
+        from pyfuse.worker.sandbox._protocol import encode
 
         progress_calls: list[tuple] = []
 

@@ -2,7 +2,7 @@ import ast
 
 import pytest
 
-from seeya.worker.deps import (
+from pyfuse.worker.deps import (
     DEFAULT_IMPORT_TO_PACKAGE,
     InstallResult,
     _collect_package_hints,
@@ -11,9 +11,9 @@ from seeya.worker.deps import (
     install_package_as,
     is_installed,
 )
-from seeya.graph.analyzer import _parse_install_package_as
-from seeya.core.models import FunctionNode, ImportInfo
-from seeya.graph.store import Store
+from pyfuse.graph.analyzer import _parse_install_package_as
+from pyfuse.core.models import FunctionNode, ImportInfo
+from pyfuse.graph.store import Store
 
 
 # -- Helpers -----------------------------------------------------------------
@@ -172,9 +172,9 @@ class TestParseInstallPackageAs:
         assert self._parse('with install_package_as("PyYAML"):\n    pass\n') == "PyYAML"
 
     def test_attribute_form(self) -> None:
-        """``with seeya.install_package_as(...)`` is also recognized."""
+        """``with pyfuse.install_package_as(...)`` is also recognized."""
         assert (
-            self._parse('with seeya.install_package_as("python-multipart"):\n    pass\n')
+            self._parse('with pyfuse.install_package_as("python-multipart"):\n    pass\n')
             == "python-multipart"
         )
 

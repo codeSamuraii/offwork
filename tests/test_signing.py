@@ -2,15 +2,15 @@ import json
 
 import pytest
 
-from seeya.core.errors import SignatureError
-from seeya.core.signing import (
+from pyfuse.core.errors import SignatureError
+from pyfuse.core.signing import (
     compute_signature,
     derive_key,
     sign_json,
     verify_and_load_json,
     verify_signature,
 )
-from seeya.core.task import Task
+from pyfuse.core.task import Task
 
 
 class TestComputeSignature:

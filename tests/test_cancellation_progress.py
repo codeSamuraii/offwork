@@ -8,16 +8,16 @@ from typing import Any
 
 import pytest
 
-from seeya.core.errors import TaskCancelled
-from seeya.core.models import FunctionNode, ImportInfo
-from seeya.core.progress import ProgressInfo, _progress_callback, progress
-from seeya.core.task import Task
-from seeya.graph.store import Store
-from seeya.worker import remote as _remote
-from seeya.worker.backends.base import Backend
-from seeya.worker.remote import _handle_task
-from seeya.worker.result import Result, ResultEnvelope
-from seeya.worker.worker import Worker
+from pyfuse.core.errors import TaskCancelled
+from pyfuse.core.models import FunctionNode, ImportInfo
+from pyfuse.core.progress import ProgressInfo, _progress_callback, progress
+from pyfuse.core.task import Task
+from pyfuse.graph.store import Store
+from pyfuse.worker import remote as _remote
+from pyfuse.worker.backends.base import Backend
+from pyfuse.worker.remote import _handle_task
+from pyfuse.worker.result import Result, ResultEnvelope
+from pyfuse.worker.worker import Worker
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +149,7 @@ def _progress_store() -> tuple[Store, str]:
     store = Store()
     node = _node("process", (
         "def process(items):\n"
-        "    from seeya import progress\n"
+        "    from pyfuse import progress\n"
         "    results = []\n"
         "    for i, item in enumerate(items):\n"
         "        results.append(item.upper())\n"
@@ -157,7 +157,7 @@ def _progress_store() -> tuple[Store, str]:
         "    return results"
     ))
     node.imports = [ImportInfo(
-        statement="from seeya import progress",
+        statement="from pyfuse import progress",
         bound_name="progress",
     )]
     h = store.put(node)

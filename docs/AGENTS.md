@@ -1,8 +1,8 @@
-# seeya — Context for Coding Assistants
+# pyfuse — Context for Coding Assistants
 
 This file is a compact, technical orientation for AI coding assistants. For user-facing docs see [README.md](../README.md), [docs/QUICK_START.md](QUICK_START.md), [docs/TECHNICAL_OVERVIEW.md](TECHNICAL_OVERVIEW.md), [docs/SIGNING.md](SIGNING.md), [docs/SANDBOX.md](SANDBOX.md).
 
-## What seeya is
+## What pyfuse is
 
 A Python package that serializes a function — its source, its dependency graph, its imports, its closure, its arguments — into a self-contained JSON envelope, ships it to a worker process, and executes it there. Workers need no prior knowledge of the user's codebase: they reconstruct source from the payload, `pip install` missing packages on the fly, `compile` + `exec` the result, and return the value.
 
@@ -12,7 +12,7 @@ Add `@trace` to one entry-point function. Call `await func.run(...)`. That is th
 
 - **Zero deployment** — no shared filesystem, no image rebuilds, no code sync. The client ships everything the worker needs in one envelope.
 - **Zero setup for users** — one decorator (`@trace`), one connect call. Workers auto-install missing third-party packages.
-- **Zero hard dependencies** — seeya itself has no required runtime deps. `redis`, `aio-pika`, `docker` are optional extras loaded lazily.
+- **Zero hard dependencies** — pyfuse itself has no required runtime deps. `redis`, `aio-pika`, `docker` are optional extras loaded lazily.
 - **Async-native** — all I/O (`Backend`, `Worker`, `Result`, `_venv`) is `asyncio`. Sync user functions run in `loop.run_in_executor`.
 - **Pluggable transport** — `Backend` ABC abstracts task queue + result store + heartbeat + cancellation + progress + scheduling + throttling.
 - **Content-addressable caching** — functions are keyed by SHA-256 of their content. Same code → cache hit, regardless of source.
@@ -22,35 +22,35 @@ Add `@trace` to one entry-point function. Call `await func.run(...)`. That is th
 
 | Feature | Entry point | Implementation |
 |---|---|---|
-| Decorator | `@trace` | [seeya/graph/decorator.py](../seeya/graph/decorator.py) |
-| Auto-capture (source, imports, closures, classes, module vars) | `Graph.serialize` | [seeya/graph/analyzer.py](../seeya/graph/analyzer.py), [seeya/graph/graph.py](../seeya/graph/graph.py) |
-| Reconstruction → self-contained source | `Graph.reconstruct` | [seeya/graph/store.py](../seeya/graph/store.py) |
-| Runtime call-stack tracing | `contextvars` | [seeya/graph/tracing.py](../seeya/graph/tracing.py) |
-| Remote submit / await | `func.run`, `func.start`, `func.map` | [seeya/worker/remote.py](../seeya/worker/remote.py), [seeya/graph/decorator.py](../seeya/graph/decorator.py) |
-| Worker loop (signing, scheduling, throttle, heartbeat) | `serve` | [seeya/worker/remote.py](../seeya/worker/remote.py) |
-| Subgraph caching, reconstruct, retry, timeout | `Worker.run_with_policy` | [seeya/worker/worker.py](../seeya/worker/worker.py) |
-| Auto-install of third-party packages | `install_package_as`, `ensure_dependencies` | [seeya/worker/deps.py](../seeya/worker/deps.py) |
-| Worker-only imports (skip local install) | `worker_only_import` | [seeya/worker/deps.py](../seeya/worker/deps.py) |
-| Result handle, status, progress, cancel | `Result` | [seeya/worker/result.py](../seeya/worker/result.py) |
-| Scheduling (`run_in`, `run_at`, `run_every`) | `ScheduleHandle` | [seeya/worker/schedule.py](../seeya/worker/schedule.py) |
-| Throttling (`throttle=...`) | `Backend.check_throttle` | backends + [seeya/worker/worker.py](../seeya/worker/worker.py) |
-| Progress reporting | `seeya.progress(...)` | [seeya/core/progress.py](../seeya/core/progress.py) |
-| Heartbeat & stall detection | `Backend.send_heartbeat` | `_heartbeat_loop` in [seeya/worker/remote.py](../seeya/worker/remote.py), [seeya/worker/result.py](../seeya/worker/result.py) |
-| Local TCP backend | `local://` | [seeya/worker/backends/local.py](../seeya/worker/backends/local.py) |
-| Redis backend | `redis://` | [seeya/worker/backends/redis.py](../seeya/worker/backends/redis.py) |
-| RabbitMQ backend | `amqp://` | [seeya/worker/backends/rabbitmq.py](../seeya/worker/backends/rabbitmq.py) |
-| Docker sandbox isolation | `--sandbox`, `DockerSandbox` | [seeya/worker/sandbox/](../seeya/worker/sandbox/) |
-| HMAC-SHA256 task signing | `--require-signing`, token, pairing | [seeya/core/signing.py](../seeya/core/signing.py), [seeya/core/token.py](../seeya/core/token.py), [seeya/core/pairing.py](../seeya/core/pairing.py) |
-| Temp venv (for `--tmp` and `seeya run`) | `temp_venv` | [seeya/_venv.py](../seeya/_venv.py) |
-| CLI | `python -m seeya ...` | [seeya/__main__.py](../seeya/__main__.py) |
+| Decorator | `@trace` | [pyfuse/graph/decorator.py](../pyfuse/graph/decorator.py) |
+| Auto-capture (source, imports, closures, classes, module vars) | `Graph.serialize` | [pyfuse/graph/analyzer.py](../pyfuse/graph/analyzer.py), [pyfuse/graph/graph.py](../pyfuse/graph/graph.py) |
+| Reconstruction → self-contained source | `Graph.reconstruct` | [pyfuse/graph/store.py](../pyfuse/graph/store.py) |
+| Runtime call-stack tracing | `contextvars` | [pyfuse/graph/tracing.py](../pyfuse/graph/tracing.py) |
+| Remote submit / await | `func.run`, `func.start`, `func.map` | [pyfuse/worker/remote.py](../pyfuse/worker/remote.py), [pyfuse/graph/decorator.py](../pyfuse/graph/decorator.py) |
+| Worker loop (signing, scheduling, throttle, heartbeat) | `serve` | [pyfuse/worker/remote.py](../pyfuse/worker/remote.py) |
+| Subgraph caching, reconstruct, retry, timeout | `Worker.run_with_policy` | [pyfuse/worker/worker.py](../pyfuse/worker/worker.py) |
+| Auto-install of third-party packages | `install_package_as`, `ensure_dependencies` | [pyfuse/worker/deps.py](../pyfuse/worker/deps.py) |
+| Worker-only imports (skip local install) | `worker_only_import` | [pyfuse/worker/deps.py](../pyfuse/worker/deps.py) |
+| Result handle, status, progress, cancel | `Result` | [pyfuse/worker/result.py](../pyfuse/worker/result.py) |
+| Scheduling (`run_in`, `run_at`, `run_every`) | `ScheduleHandle` | [pyfuse/worker/schedule.py](../pyfuse/worker/schedule.py) |
+| Throttling (`throttle=...`) | `Backend.check_throttle` | backends + [pyfuse/worker/worker.py](../pyfuse/worker/worker.py) |
+| Progress reporting | `pyfuse.progress(...)` | [pyfuse/core/progress.py](../pyfuse/core/progress.py) |
+| Heartbeat & stall detection | `Backend.send_heartbeat` | `_heartbeat_loop` in [pyfuse/worker/remote.py](../pyfuse/worker/remote.py), [pyfuse/worker/result.py](../pyfuse/worker/result.py) |
+| Local TCP backend | `local://` | [pyfuse/worker/backends/local.py](../pyfuse/worker/backends/local.py) |
+| Redis backend | `redis://` | [pyfuse/worker/backends/redis.py](../pyfuse/worker/backends/redis.py) |
+| RabbitMQ backend | `amqp://` | [pyfuse/worker/backends/rabbitmq.py](../pyfuse/worker/backends/rabbitmq.py) |
+| Docker sandbox isolation | `--sandbox`, `DockerSandbox` | [pyfuse/worker/sandbox/](../pyfuse/worker/sandbox/) |
+| HMAC-SHA256 task signing | `--require-signing`, token, pairing | [pyfuse/core/signing.py](../pyfuse/core/signing.py), [pyfuse/core/token.py](../pyfuse/core/token.py), [pyfuse/core/pairing.py](../pyfuse/core/pairing.py) |
+| Temp venv (for `--tmp` and `pyfuse run`) | `temp_venv` | [pyfuse/_venv.py](../pyfuse/_venv.py) |
+| CLI | `python -m pyfuse ...` | [pyfuse/__main__.py](../pyfuse/__main__.py) |
 
 ## Repository layout
 
 ```
-seeya/
+pyfuse/
     __init__.py          Public API surface (re-exports). __all__ is the contract.
     __main__.py          CLI: worker, run, pair, token, sandbox, info, serialize, reconstruct.
-    _venv.py             Async temp venv (used by --tmp and `seeya run`).
+    _venv.py             Async temp venv (used by --tmp and `pyfuse run`).
     typing.py            Public type aliases.
     core/
         models.py        FunctionNode, ImportInfo dataclasses + content hashing.
@@ -59,7 +59,7 @@ seeya/
         progress.py      ProgressInfo + progress() contextvar callback.
         version.py       _VERSION (resolved from package metadata).
         signing.py       HMAC-SHA256 sign/verify, derive_key.
-        token.py         Token generate/save/load (~/.seeya/token).
+        token.py         Token generate/save/load (~/.pyfuse/token).
         pairing.py       6-digit-PIN ECDH-style key exchange.
     graph/
         decorator.py     @trace. Wraps function with .run/.start/.map and traced markers.
@@ -90,7 +90,7 @@ seeya/
             _protocol.py     4-byte big-endian length-prefixed JSON.
             Dockerfile       Container image definition.
 tests/                   Pytest. conftest.py wires fixtures (Redis, sandbox, etc.).
-examples/                Runnable examples (use with `seeya run --tmp`).
+examples/                Runnable examples (use with `pyfuse run --tmp`).
 docs/                    Public docs.
 ```
 
@@ -98,28 +98,28 @@ docs/                    Public docs.
 
 Client side, on `await func.run(*args)`:
 
-1. `Graph.default().serialize(func)` (in [graph/graph.py](../seeya/graph/graph.py)) walks the function's subgraph and emits JSON via `Store`.
-2. `Task(graph_json=..., function_name=..., args=..., kwargs=..., timeout=..., retries=...)` ([core/task.py](../seeya/core/task.py)).
-3. `Backend.submit(task_json)` enqueues. Optionally signed via `sign_json` ([core/signing.py](../seeya/core/signing.py)).
+1. `Graph.default().serialize(func)` (in [graph/graph.py](../pyfuse/graph/graph.py)) walks the function's subgraph and emits JSON via `Store`.
+2. `Task(graph_json=..., function_name=..., args=..., kwargs=..., timeout=..., retries=...)` ([core/task.py](../pyfuse/core/task.py)).
+3. `Backend.submit(task_json)` enqueues. Optionally signed via `sign_json` ([core/signing.py](../pyfuse/core/signing.py)).
 4. `Result(task_id, backend)` is returned (or awaited directly for `.run`).
 
-Worker side: `serve` ([worker/remote.py](../seeya/worker/remote.py)) drives the loop and delegates to `Worker.run_with_policy` ([worker/worker.py](../seeya/worker/worker.py)):
+Worker side: `serve` ([worker/remote.py](../pyfuse/worker/remote.py)) drives the loop and delegates to `Worker.run_with_policy` ([worker/worker.py](../pyfuse/worker/worker.py)):
 
 1. `async for task_json in backend.listen()` (in `serve`).
 2. Optional `verify_and_load_json` if `--require-signing`.
-3. Wait for `scheduled_at`; check `is_cancelled`; check `check_throttle` (in `_run_task`, [remote.py](../seeya/worker/remote.py)).
+3. Wait for `scheduled_at`; check `is_cancelled`; check `check_throttle` (in `_run_task`, [remote.py](../pyfuse/worker/remote.py)).
 4. `_heartbeat_loop` runs concurrently for the duration of execution.
 5. `Worker.run_with_policy` looks up subgraph cache (SHA-256 of all reachable content hashes).
 6. On miss: `ensure_dependencies` → `Graph.reconstruct(json, name)` → `compile` + `exec` into fresh namespace.
 7. `resolve_args` rebuilds class instances against the reconstructed namespace.
 8. Sync funcs go through `loop.run_in_executor` with `contextvars.copy_context()` to propagate the `progress` callback. Async funcs are awaited.
 9. `asyncio.wait_for(timeout)` per attempt, exponential `retry_delay * 2^attempt` between attempts.
-10. `ResultEnvelope` ([worker/result.py](../seeya/worker/result.py)) sent via `backend.send_result`. If cancelled mid-execution, the result is discarded.
+10. `ResultEnvelope` ([worker/result.py](../pyfuse/worker/result.py)) sent via `backend.send_result`. If cancelled mid-execution, the result is discarded.
 11. Re-enqueue if `recur_interval` set and schedule not cancelled. Record throttle on success.
 
 ## Public API contract
 
-The `__all__` in [seeya/__init__.py](../seeya/__init__.py) is the public surface. Anything else is internal and subject to change. Notable exports:
+The `__all__` in [pyfuse/__init__.py](../pyfuse/__init__.py) is the public surface. Anything else is internal and subject to change. Notable exports:
 
 - Decorator: `trace`.
 - Lifecycle: `connect(url)`, `disconnect()`, `serve(url, concurrency=, sandbox=, ...)`.
@@ -130,15 +130,15 @@ The `__all__` in [seeya/__init__.py](../seeya/__init__.py) is the public surface
 - Auth: `generate_token`, `save_token`, `load_token`, `clear_token`, `resolve_signing_key`, `sign_json`, `verify_and_load_json`, `compute_signature`, `verify_signature`, `derive_key`, plus pairing helpers.
 - Sandbox: `DockerSandbox`.
 
-`func.run`, `func.start`, `func.map`, `func.run_in`, `func.run_at`, `func.run_every` are attributes attached by `@trace` ([graph/decorator.py](../seeya/graph/decorator.py)).
+`func.run`, `func.start`, `func.map`, `func.run_in`, `func.run_at`, `func.run_every` are attributes attached by `@trace` ([graph/decorator.py](../pyfuse/graph/decorator.py)).
 
 ## Conventions and invariants
 
 - **Async by default.** Every `Backend` method is `async def`. Adding a sync helper is a smell — use `loop.run_in_executor` only for unavoidable blocking calls (pip subprocess, sync user code).
 - **No required runtime dependencies.** `redis`, `aio_pika`, `docker` are imported lazily inside the modules that need them. Do not move these imports to the top of any always-imported file.
-- **Content hash excludes structural data.** `FunctionNode`'s hash includes `source`, `imports`, `closure_*`, `module_vars`, `class_*` but NOT `dependencies`. This is load-bearing for cache reuse — see [core/models.py](../seeya/core/models.py).
-- **`@trace` is stripped from reconstructed source.** Reconstructed code must not import seeya. Anything that survives reconstruction must be in stdlib or installable via pip.
-- **Closure capture is multi-tier.** Order matters: `repr()` → traced refs → lambdas → user funcs → stdlib constructor expressions → pickle → warning. See [graph/analyzer.py](../seeya/graph/analyzer.py).
+- **Content hash excludes structural data.** `FunctionNode`'s hash includes `source`, `imports`, `closure_*`, `module_vars`, `class_*` but NOT `dependencies`. This is load-bearing for cache reuse — see [core/models.py](../pyfuse/core/models.py).
+- **`@trace` is stripped from reconstructed source.** Reconstructed code must not import pyfuse. Anything that survives reconstruction must be in stdlib or installable via pip.
+- **Closure capture is multi-tier.** Order matters: `repr()` → traced refs → lambdas → user funcs → stdlib constructor expressions → pickle → warning. See [graph/analyzer.py](../pyfuse/graph/analyzer.py).
 - **Auto-discovery is recursive.** Calling an untraced user function from a traced one registers it transitively. Cross-module imports become inline edges.
 - **Backend defaults are no-ops.** `Backend` ABC supplies safe defaults for cancellation, progress, throttling, scheduling, notifications. Subclasses override only what they support.
 - **Subgraph cache key.** `Worker` keys cache by SHA-256 of sorted reachable content hashes — not by `task_id`, not by `function_name`.
@@ -147,27 +147,27 @@ The `__all__` in [seeya/__init__.py](../seeya/__init__.py) is the public surface
 
 ## Where things live (cheat-sheet for common edits)
 
-- New decorator option (e.g. `@trace(priority=...)`) → [graph/decorator.py](../seeya/graph/decorator.py), [core/task.py](../seeya/core/task.py), `Worker.run_with_policy` in [worker/worker.py](../seeya/worker/worker.py).
-- New backend → subclass `Backend` in [worker/backends/base.py](../seeya/worker/backends/base.py), wire URL scheme in [worker/remote.py](../seeya/worker/remote.py).
-- New auto-discovery rule → [graph/analyzer.py](../seeya/graph/analyzer.py); update reconstruction in [graph/store.py](../seeya/graph/store.py); add fields to `FunctionNode` in [core/models.py](../seeya/core/models.py) (remember the content-hash inclusion rule).
-- New CLI subcommand → [seeya/__main__.py](../seeya/__main__.py).
-- New error type → [core/errors.py](../seeya/core/errors.py); export from [seeya/__init__.py](../seeya/__init__.py) `__all__`.
-- New package-name mapping (`cv2` → `opencv-python`) → `DEFAULT_IMPORT_TO_PACKAGE` in [worker/deps.py](../seeya/worker/deps.py).
+- New decorator option (e.g. `@trace(priority=...)`) → [graph/decorator.py](../pyfuse/graph/decorator.py), [core/task.py](../pyfuse/core/task.py), `Worker.run_with_policy` in [worker/worker.py](../pyfuse/worker/worker.py).
+- New backend → subclass `Backend` in [worker/backends/base.py](../pyfuse/worker/backends/base.py), wire URL scheme in [worker/remote.py](../pyfuse/worker/remote.py).
+- New auto-discovery rule → [graph/analyzer.py](../pyfuse/graph/analyzer.py); update reconstruction in [graph/store.py](../pyfuse/graph/store.py); add fields to `FunctionNode` in [core/models.py](../pyfuse/core/models.py) (remember the content-hash inclusion rule).
+- New CLI subcommand → [pyfuse/__main__.py](../pyfuse/__main__.py).
+- New error type → [core/errors.py](../pyfuse/core/errors.py); export from [pyfuse/__init__.py](../pyfuse/__init__.py) `__all__`.
+- New package-name mapping (`cv2` → `opencv-python`) → `DEFAULT_IMPORT_TO_PACKAGE` in [worker/deps.py](../pyfuse/worker/deps.py).
 
 ## Run / develop
 
 ```bash
 # Worker (isolated venv, auto-cleaned on exit)
-seeya worker --backend redis://localhost:6379 --tmp
+pyfuse worker --backend redis://localhost:6379 --tmp
 
 # Run an example script in a temp venv with auto-detected deps
-python -m seeya run --tmp examples/remote_execution.py
+python -m pyfuse run --tmp examples/remote_execution.py
 
 # Tests
 pytest
 
 # Strict typing
-mypy seeya
+mypy pyfuse
 ```
 
 Worker logs are concise and structured. The first execution of a new graph shows `build` + any `pip <pkg>` annotations; repeats show `build` (cached venv) or `cached` (subgraph cache hit).

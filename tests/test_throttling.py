@@ -6,11 +6,11 @@ from datetime import timedelta
 
 import pytest
 
-from seeya.core.task import Task
-from seeya.core.errors import ThrottleError
-from seeya.graph.decorator import trace
-from seeya.worker.result import ResultEnvelope, Result
-from seeya.worker.backends.local import _Broker
+from pyfuse.core.task import Task
+from pyfuse.core.errors import ThrottleError
+from pyfuse.graph.decorator import trace
+from pyfuse.worker.result import ResultEnvelope, Result
+from pyfuse.worker.backends.local import _Broker
 
 
 class TestTaskThrottleField:
@@ -110,7 +110,7 @@ class TestTraceThrottleOption:
         def my_func() -> int:
             return 1
 
-        opts = my_func.__seeya_options__  # type: ignore[attr-defined]
+        opts = my_func.__pyfuse_options__  # type: ignore[attr-defined]
         assert opts["throttle"] == 3600.0
 
     def test_throttle_float_stored(self) -> None:
@@ -118,7 +118,7 @@ class TestTraceThrottleOption:
         def my_func() -> int:
             return 1
 
-        opts = my_func.__seeya_options__  # type: ignore[attr-defined]
+        opts = my_func.__pyfuse_options__  # type: ignore[attr-defined]
         assert opts["throttle"] == 120.0
 
     def test_throttle_negative_raises(self) -> None:
