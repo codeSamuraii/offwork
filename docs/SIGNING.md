@@ -9,7 +9,7 @@ Both methods use the same underlying HMAC-SHA256 signing — they differ only in
 
 ## Overview
 
-By default, pyfuse workers execute any task they receive from the backend. When signing is enabled:
+By default, offwork workers execute any task they receive from the backend. When signing is enabled:
 
 1. A client and worker share a cryptographic key (via **token** or **pairing**).
 2. The client **signs** every task with HMAC-SHA256 before submitting it.
@@ -22,16 +22,16 @@ Tasks with missing or invalid signatures are rejected.
 ### 1. Generate a token
 
 ```bash
-pyfuse token generate
+offwork token generate
 ```
 
 ```
-  Token generated and saved to ~/.pyfuse/token
+  Token generated and saved to ~/.offwork/token
 
   Token: a1b2c3d4e5f6...
 
   Set this on both client and worker:
-    export PYFUSE_SIGNING_TOKEN=a1b2c3d4e5f6...
+    export OFFWORK_SIGNING_TOKEN=a1b2c3d4e5f6...
 ```
 
 ### 2. Distribute the token
@@ -40,17 +40,17 @@ Copy the token to both the client and worker machines. The recommended method is
 
 ```bash
 # On both client and worker
-export PYFUSE_SIGNING_TOKEN=a1b2c3d4e5f6...
+export OFFWORK_SIGNING_TOKEN=a1b2c3d4e5f6...
 ```
 
-For CI/CD, store the token as a secret in your CI provider (GitHub Actions secrets, GitLab CI variables, etc.) and inject it as `PYFUSE_SIGNING_TOKEN`.
+For CI/CD, store the token as a secret in your CI provider (GitHub Actions secrets, GitLab CI variables, etc.) and inject it as `OFFWORK_SIGNING_TOKEN`.
 
-Alternatively, copy the `~/.pyfuse/token` file to both machines.
+Alternatively, copy the `~/.offwork/token` file to both machines.
 
 ### 3. Start the worker with signing
 
 ```bash
-pyfuse worker --backend redis://localhost:6379 --require-signing
+offwork worker --backend redis://localhost:6379 --require-signing
 ```
 
 ### 4. Run tasks (no changes needed)
@@ -68,7 +68,7 @@ The client automatically loads the token and signs tasks before submission. No c
 On the **worker** machine:
 
 ```bash
-pyfuse worker --backend redis://localhost:6379 --pair
+offwork worker --backend redis://localhost:6379 --pair
 ```
 
 This generates a 6-digit PIN and waits for a client:
@@ -77,7 +77,7 @@ This generates a 6-digit PIN and waits for a client:
   Pairing PIN:  482913
 
   Enter this PIN on the client with:
-    pyfuse pair --backend redis://localhost:6379
+    offwork pair --backend redis://localhost:6379
 
   Waiting for client...
 ```
@@ -89,7 +89,7 @@ Once paired, the worker starts automatically with signing enabled.
 On the **client** machine (within 60 seconds):
 
 ```bash
-pyfuse pair --backend redis://localhost:6379
+offwork pair --backend redis://localhost:6379
 ```
 
 ```
@@ -98,10 +98,10 @@ pyfuse pair --backend redis://localhost:6379
 
   ✓ Paired successfully as 'client'.
     Peer role: worker
-    Key saved to ~/.pyfuse/client.key
+    Key saved to ~/.offwork/client.key
 ```
 
-Both machines now share a cryptographic key stored in `~/.pyfuse/`.
+Both machines now share a cryptographic key stored in `~/.offwork/`.
 
 ### 3. Run tasks (no changes needed)
 
@@ -109,7 +109,7 @@ Both machines now share a cryptographic key stored in `~/.pyfuse/`.
 python examples/remote_execution.py
 ```
 
-The client automatically loads `~/.pyfuse/client.key` and signs tasks before submission. No code changes are needed.
+The client automatically loads `~/.offwork/client.key` and signs tasks before submission. No code changes are needed.
 
 ### Alternative: manual pairing and worker start
 
@@ -117,13 +117,13 @@ If you need more control, you can pair and start the worker separately:
 
 ```bash
 # Pair the worker
-pyfuse pair --backend redis://localhost:6379 --role worker
+offwork pair --backend redis://localhost:6379 --role worker
 
 # Pair the client (same PIN)
-pyfuse pair --backend redis://localhost:6379
+offwork pair --backend redis://localhost:6379
 
 # Start the worker with signing enforcement
-pyfuse worker --backend redis://localhost:6379 --require-signing
+offwork worker --backend redis://localhost:6379 --require-signing
 ```
 
 ## How it works
@@ -132,9 +132,9 @@ pyfuse worker --backend redis://localhost:6379 --require-signing
 
 When signing is enabled, both client and worker resolve the signing key using the following precedence order:
 
-1. **`PYFUSE_SIGNING_TOKEN` environment variable** — hex-encoded token (highest priority)
-2. **`~/.pyfuse/token` file** — hex-encoded token written by `pyfuse token generate`
-3. **`~/.pyfuse/{client,worker}.key` file** — raw bytes from PIN-based pairing
+1. **`OFFWORK_SIGNING_TOKEN` environment variable** — hex-encoded token (highest priority)
+2. **`~/.offwork/token` file** — hex-encoded token written by `offwork token generate`
+3. **`~/.offwork/{client,worker}.key` file** — raw bytes from PIN-based pairing
 
 This means you can migrate from pairing to tokens without disruption: set the environment variable and it takes precedence over any existing pairing key.
 
@@ -143,10 +143,10 @@ This means you can migrate from pairing to tokens without disruption: set the en
 ```
 Generate (once)                       Distribute
 ──────────────                        ──────────
-pyfuse token generate                 Copy token to CI secrets,
+offwork token generate                 Copy token to CI secrets,
     │                                 env vars, or config
     └─→ random 32-byte token          │
-        saved to ~/.pyfuse/token       │
+        saved to ~/.offwork/token       │
                                        ▼
 Client                                Worker
 ──────                                ──────
@@ -195,7 +195,7 @@ Enter PIN: 482913                     Enter PIN: 482913
         │                                     ├── derive shared secret
         │                                     │   (same computation)
         │                                     │
-    Save ~/.pyfuse/worker.key          Save ~/.pyfuse/client.key
+    Save ~/.offwork/worker.key          Save ~/.offwork/client.key
 ```
 
 **Security properties:**
@@ -227,46 +227,46 @@ The signature covers the entire task payload — graph JSON, function name, argu
 
 ## CLI reference
 
-### `pyfuse token generate`
+### `offwork token generate`
 
 ```bash
-pyfuse token generate [--force]
+offwork token generate [--force]
 ```
 
-Generates a random 32-byte signing token and saves it to `~/.pyfuse/token`. Prints the hex-encoded token and usage instructions.
+Generates a random 32-byte signing token and saves it to `~/.offwork/token`. Prints the hex-encoded token and usage instructions.
 
 | Flag | Description |
 |------|-------------|
 | `--force` | Overwrite an existing token |
 
-### `pyfuse token show`
+### `offwork token show`
 
 ```bash
-pyfuse token show
+offwork token show
 ```
 
 Displays the current token source (environment variable or file) and a truncated preview.
 
-### `pyfuse token clear`
+### `offwork token clear`
 
 ```bash
-pyfuse token clear
+offwork token clear
 ```
 
-Removes the saved `~/.pyfuse/token` file.
+Removes the saved `~/.offwork/token` file.
 
-### `pyfuse worker --pair`
+### `offwork worker --pair`
 
 ```bash
-pyfuse worker --backend URL --pair
+offwork worker --backend URL --pair
 ```
 
 Generates a PIN, pairs with a client, then starts serving with signing automatically enabled. This is the recommended way to set up a signed worker interactively.
 
-### `pyfuse pair`
+### `offwork pair`
 
 ```bash
-pyfuse pair --backend URL [--pin PIN] [--timeout SECS] [--force] [--clear]
+offwork pair --backend URL [--pin PIN] [--timeout SECS] [--force] [--clear]
 ```
 
 | Flag | Description |
@@ -276,12 +276,12 @@ pyfuse pair --backend URL [--pin PIN] [--timeout SECS] [--force] [--clear]
 | `--timeout` | Seconds to wait for the peer (default: 60) |
 | `--force` | Overwrite an existing shared key |
 | `--clear` | Remove the shared key for this role |
-| `--role` | `client` (default) or `worker` — use `pyfuse worker --pair` instead of `--role worker` |
+| `--role` | `client` (default) or `worker` — use `offwork worker --pair` instead of `--role worker` |
 
-### `pyfuse worker --require-signing`
+### `offwork worker --require-signing`
 
 ```bash
-pyfuse worker --backend URL --require-signing
+offwork worker --backend URL --require-signing
 ```
 
 When `--require-signing` is set, the worker loads signing key material using the standard resolution order (env var → token file → pairing key) and rejects any task that is unsigned or has an invalid signature. If no key material is found, the worker exits with an error.
@@ -291,7 +291,7 @@ When `--require-signing` is set, the worker loads signing key material using the
 ### Signing tasks manually
 
 ```python
-from pyfuse.core.signing import derive_key, compute_signature, verify_signature
+from offwork.core.signing import derive_key, compute_signature, verify_signature
 
 # After pairing or with a token, both sides have the same shared_key
 signing_key = derive_key(shared_key)
@@ -306,8 +306,8 @@ is_valid = verify_signature(payload, signature, signing_key)
 ### Using Task signing
 
 ```python
-from pyfuse.core.task import Task
-from pyfuse.core.signing import derive_key
+from offwork.core.task import Task
+from offwork.core.signing import derive_key
 
 key = derive_key(shared_secret)
 
@@ -322,7 +322,7 @@ task = Task.from_json(signed_json, signing_key=key)  # raises SignatureError on 
 ### Resolving keys programmatically
 
 ```python
-from pyfuse.core.token import resolve_signing_key
+from offwork.core.token import resolve_signing_key
 
 # Resolves from env var → token file → pairing key
 key = resolve_signing_key("client")  # or "worker"
@@ -333,7 +333,7 @@ if key is not None:
 ### Token management
 
 ```python
-from pyfuse.core.token import generate_token, save_token, load_token, clear_token
+from offwork.core.token import generate_token, save_token, load_token, clear_token
 
 # Generate and save
 token = generate_token()
@@ -349,7 +349,7 @@ clear_token()
 ### Pairing programmatically
 
 ```python
-from pyfuse.core.pairing import (
+from offwork.core.pairing import (
     generate_pin,
     initiate_pairing,
     respond_to_pairing,
@@ -370,15 +370,15 @@ save_shared_key(result.shared_key, "client")
 
 | File | Purpose |
 |------|---------|
-| `~/.pyfuse/token` | Pre-shared signing token (hex-encoded, 64 chars) |
-| `~/.pyfuse/client.key` | Client's pairing key (32 bytes, from `pyfuse pair`) |
-| `~/.pyfuse/worker.key` | Worker's pairing key (32 bytes, from `pyfuse pair`) |
+| `~/.offwork/token` | Pre-shared signing token (hex-encoded, 64 chars) |
+| `~/.offwork/client.key` | Client's pairing key (32 bytes, from `offwork pair`) |
+| `~/.offwork/worker.key` | Worker's pairing key (32 bytes, from `offwork pair`) |
 
 All files are created with `0600` permissions (owner-only read/write).
 
 | Environment variable | Purpose |
 |---------------------|---------|
-| `PYFUSE_SIGNING_TOKEN` | Hex-encoded signing token (overrides file) |
+| `OFFWORK_SIGNING_TOKEN` | Hex-encoded signing token (overrides file) |
 
 ### CI/CD example (GitHub Actions)
 
@@ -388,40 +388,40 @@ jobs:
   run-task:
     runs-on: ubuntu-latest
     env:
-      PYFUSE_SIGNING_TOKEN: ${{ secrets.PYFUSE_SIGNING_TOKEN }}
-      PYFUSE_BACKEND: redis://your-redis-host:6379
+      OFFWORK_SIGNING_TOKEN: ${{ secrets.OFFWORK_SIGNING_TOKEN }}
+      OFFWORK_BACKEND: redis://your-redis-host:6379
     steps:
       - uses: actions/checkout@v4
-      - run: pip install pyfuse[redis]
+      - run: pip install offwork[redis]
       - run: python my_task.py
 ```
 
 ### Regenerating tokens
 
 ```bash
-pyfuse token generate --force
+offwork token generate --force
 ```
 
-Then update the `PYFUSE_SIGNING_TOKEN` secret in your CI provider and restart workers.
+Then update the `OFFWORK_SIGNING_TOKEN` secret in your CI provider and restart workers.
 
 ### Clearing credentials
 
 ```bash
 # Token
-pyfuse token clear
+offwork token clear
 
 # Pairing keys
-pyfuse pair --clear
-pyfuse pair --role worker --clear
+offwork pair --clear
+offwork pair --role worker --clear
 ```
 
 ## Troubleshooting
 
 **"Signing is enabled but no key material found"**
-- Set `PYFUSE_SIGNING_TOKEN`, run `pyfuse token generate`, or run `pyfuse pair` to establish key material.
+- Set `OFFWORK_SIGNING_TOKEN`, run `offwork token generate`, or run `offwork pair` to establish key material.
 
 **"Task is unsigned but signing is enabled"**
-- The client is not signing tasks. Ensure the token is set via `PYFUSE_SIGNING_TOKEN` or `~/.pyfuse/token`, or that `~/.pyfuse/client.key` exists (from pairing).
+- The client is not signing tasks. Ensure the token is set via `OFFWORK_SIGNING_TOKEN` or `~/.offwork/token`, or that `~/.offwork/client.key` exists (from pairing).
 
 **"Task signature verification failed"**
 - The client and worker have different keys. Ensure both sides use the same token or re-pair.

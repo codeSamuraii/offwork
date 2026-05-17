@@ -3,11 +3,11 @@ import json
 
 import pytest
 
-from pyfuse.core.errors import WorkerError
-from pyfuse.core.models import FunctionNode, ImportInfo
-from pyfuse.graph.store import Store
-from pyfuse.core.task import Task
-from pyfuse.worker.worker import BuildInfo, Worker, _compute_subgraph_key, execute
+from offwork.core.errors import WorkerError
+from offwork.core.models import FunctionNode, ImportInfo
+from offwork.graph.store import Store
+from offwork.core.task import Task
+from offwork.worker.worker import BuildInfo, Worker, _compute_subgraph_key, execute
 
 
 # -- Helpers -----------------------------------------------------------------

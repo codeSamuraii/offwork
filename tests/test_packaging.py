@@ -10,10 +10,10 @@ try:
 except ModuleNotFoundError:
     import tomli as tomllib  # type: ignore[no-redef]
 
-import pyfuse
+import offwork
 import pytest
 
-from pyfuse.core.version import _FALLBACK_VERSION, _VERSION
+from offwork.core.version import _FALLBACK_VERSION, _VERSION
 
 
 def _project_root() -> Path:
@@ -31,7 +31,7 @@ def _venv_python(venv_dir: Path) -> str:
 
 
 def _create_venv_and_install(tmp_path: Path) -> str:
-    """Create a venv at *tmp_path*/venv, install pyfuse, return python path."""
+    """Create a venv at *tmp_path*/venv, install offwork, return python path."""
     venv_dir = tmp_path / "venv"
     venv.create(str(venv_dir), with_pip=True)
     python = _venv_python(venv_dir)
@@ -54,9 +54,9 @@ class TestVersionConsistency:
         assert _VERSION  # non-empty
 
     def test_init_exports_version(self) -> None:
-        assert hasattr(pyfuse, "__version__")
-        assert isinstance(pyfuse.__version__, str)
-        assert pyfuse.__version__  # non-empty
+        assert hasattr(offwork, "__version__")
+        assert isinstance(offwork.__version__, str)
+        assert offwork.__version__  # non-empty
 
     def test_pyproject_matches_fallback(self) -> None:
         """The fallback version in version.py must match pyproject.toml."""
@@ -67,18 +67,18 @@ class TestVersionConsistency:
 
 
 class TestIsolatedInstallation:
-    """Install pyfuse in a temporary venv and verify it works."""
+    """Install offwork in a temporary venv and verify it works."""
 
     def test_install_and_import_no_extras(self, tmp_path: Path) -> None:
         """Package installs and imports without optional dependencies."""
         python = _create_venv_and_install(tmp_path)
 
         script = (
-            "import pyfuse\n"
-            "print(pyfuse.__version__)\n"
-            "print(pyfuse.serialize)\n"
-            "print(pyfuse.trace)\n"
-            "print(pyfuse.get_graph())\n"
+            "import offwork\n"
+            "print(offwork.__version__)\n"
+            "print(offwork.serialize)\n"
+            "print(offwork.trace)\n"
+            "print(offwork.get_graph())\n"
         )
         result = subprocess.run(
             [python, "-c", script],
@@ -103,7 +103,7 @@ class TestIsolatedInstallation:
             expected_version = tomllib.load(f)["project"]["version"]
 
         result = subprocess.run(
-            [python, "-c", "import pyfuse; print(pyfuse.__version__)"],
+            [python, "-c", "import offwork; print(offwork.__version__)"],
             capture_output=True,
             text=True,
             timeout=30,
@@ -112,15 +112,15 @@ class TestIsolatedInstallation:
         assert result.stdout.strip() == expected_version
 
     def test_cli_entrypoint(self, tmp_path: Path) -> None:
-        """The ``pyfuse`` CLI entry point is installed and functional."""
+        """The ``offwork`` CLI entry point is installed and functional."""
         python = _create_venv_and_install(tmp_path)
 
-        # Run ``pyfuse info`` via the entry point
+        # Run ``offwork info`` via the entry point
         result = subprocess.run(
-            [python, "-m", "pyfuse", "info"],
+            [python, "-m", "offwork", "info"],
             capture_output=True,
             text=True,
             timeout=30,
         )
         assert result.returncode == 0
-        assert "pyfuse" in result.stdout
+        assert "offwork" in result.stdout

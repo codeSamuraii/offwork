@@ -1,21 +1,21 @@
-"""Task cancellation with pyfuse.
+"""Task cancellation with offwork.
 
 Demonstrates cancelling a pending or in-progress task.
 
 Usage:
     # Terminal 1 -- start a worker
-    pyfuse worker --backend redis://localhost:6379 --tmp
+    offwork worker --backend redis://localhost:6379 --tmp
 
     # Terminal 2 -- run this script
-    pyfuse run examples/cancellation.py
+    offwork run examples/cancellation.py
 """
 
 import asyncio
 
-import pyfuse
-from pyfuse import trace, TaskCancelled
+import offwork
+from offwork import trace, TaskCancelled
 
-pyfuse.connect("local://localhost:9748")
+offwork.connect("local://localhost:9748")
 
 
 @trace

@@ -5,7 +5,7 @@ Start RabbitMQ before running::
     docker run -d --name rabbitmq -p 5672:5672 rabbitmq:3
     pytest tests/test_rabbitmq_backend.py
 
-Override the URL with ``PYFUSE_TEST_RABBITMQ_URL``.
+Override the URL with ``OFFWORK_TEST_RABBITMQ_URL``.
 """
 
 import asyncio
@@ -15,11 +15,11 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from pyfuse import pack, trace
-from pyfuse.core.task import Task
-from pyfuse.worker.result import ResultEnvelope
-from pyfuse.worker.worker import Worker
-import pyfuse.worker.remote as _remote
+from offwork import pack, trace
+from offwork.core.task import Task
+from offwork.worker.result import ResultEnvelope
+from offwork.worker.worker import Worker
+import offwork.worker.remote as _remote
 
 try:
     import aio_pika
@@ -33,7 +33,7 @@ pytestmark = pytest.mark.skipif(
     not _HAS_AIO_PIKA, reason="aio-pika not installed",
 )
 
-RABBITMQ_URL = os.environ.get("PYFUSE_TEST_RABBITMQ_URL", "amqp://localhost")
+RABBITMQ_URL = os.environ.get("OFFWORK_TEST_RABBITMQ_URL", "amqp://localhost")
 
 
 async def _rabbitmq_available() -> bool:
@@ -49,19 +49,19 @@ async def _rabbitmq_available() -> bool:
 async def backend() -> AsyncIterator["RabbitMQBackend"]:
     if not await _rabbitmq_available():
         pytest.skip("RabbitMQ not available")
-    from pyfuse.worker.backends.rabbitmq import RabbitMQBackend
+    from offwork.worker.backends.rabbitmq import RabbitMQBackend
 
     suffix = uuid.uuid4().hex[:8]
     b = RabbitMQBackend(
         RABBITMQ_URL,
-        task_queue=f"pyfuse.test.tasks.{suffix}",
+        task_queue=f"offwork.test.tasks.{suffix}",
     )
     yield b
     await b.close()
 
 
 if _HAS_AIO_PIKA:
-    from pyfuse.worker.backends.rabbitmq import RabbitMQBackend
+    from offwork.worker.backends.rabbitmq import RabbitMQBackend
 
 
 # ---------------------------------------------------------------------------
@@ -205,11 +205,11 @@ class TestEndToEnd:
         suffix = uuid.uuid4().hex[:8]
         client = RabbitMQBackend(
             RABBITMQ_URL,
-            task_queue=f"pyfuse.test.e2e.{suffix}",
+            task_queue=f"offwork.test.e2e.{suffix}",
         )
         worker_backend = RabbitMQBackend(
             RABBITMQ_URL,
-            task_queue=f"pyfuse.test.e2e.{suffix}",
+            task_queue=f"offwork.test.e2e.{suffix}",
         )
 
         try:

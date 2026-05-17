@@ -4,8 +4,8 @@ import json
 import warnings
 from pathlib import Path
 
-from pyfuse import get_graph, reconstruct, serialize
-from pyfuse.graph.graph import Graph
+from offwork import get_graph, reconstruct, serialize
+from offwork.graph.graph import Graph
 from tests.conftest import create_module
 
 
@@ -28,7 +28,7 @@ def test_wrapper_preserves_behavior(tmp_path: Path) -> None:
         tmp_path,
         "wbehav",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def double(x):\n"
             "    return x * 2\n"
@@ -46,7 +46,7 @@ def test_wrapper_inspect_getsource(tmp_path: Path) -> None:
         tmp_path,
         "winspect",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def greet(name):\n"
             "    return f'hello {name}'\n"
@@ -62,7 +62,7 @@ def test_static_typed_obj_method_no_execution(tmp_path: Path) -> None:
         tmp_path,
         "staticobj",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "class Processor:\n"
             "    @trace\n"
             "    def step(self, x):\n"
@@ -86,7 +86,7 @@ def test_runtime_dep_obj_method_call(tmp_path: Path) -> None:
         tmp_path,
         "objcall",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "class Processor:\n"
             "    @trace\n"
             "    def step(self, x):\n"
@@ -112,7 +112,7 @@ def test_runtime_dep_direct_call(tmp_path: Path) -> None:
         tmp_path,
         "dircall",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def helper(x):\n"
             "    return x + 1\n\n"
@@ -135,7 +135,7 @@ def test_runtime_dep_chain(tmp_path: Path) -> None:
         tmp_path,
         "rtchain",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def step_a(x):\n"
             "    return x\n\n"
@@ -162,7 +162,7 @@ def test_runtime_dep_no_self_dependency(tmp_path: Path) -> None:
         tmp_path,
         "selfcall",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def factorial(n):\n"
             "    if n <= 1:\n"
@@ -185,7 +185,7 @@ def test_runtime_dep_merges_with_static(tmp_path: Path) -> None:
         tmp_path,
         "merge",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def static_dep(x):\n"
             "    return x\n\n"
@@ -220,7 +220,7 @@ def test_runtime_dep_obj_method_reconstruction(tmp_path: Path) -> None:
         "objrecon",
         (
             "import json\n\n"
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "class Formatter:\n"
             "    @trace\n"
             "    def format(self, data):\n"
@@ -251,7 +251,7 @@ def test_generator_body_dep_detected(tmp_path: Path) -> None:
         tmp_path,
         "genbody",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def helper(x):\n"
             "    return x + 1\n\n"
@@ -276,7 +276,7 @@ def test_generator_caller_dep_detected(tmp_path: Path) -> None:
         tmp_path,
         "gencaller",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def gen_func(items):\n"
             "    yield from items\n\n"
@@ -300,7 +300,7 @@ def test_generator_send_maintains_context(tmp_path: Path) -> None:
         tmp_path,
         "gensend",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def transform(x):\n"
             "    return x * 10\n\n"
@@ -336,7 +336,7 @@ def test_generator_preserves_values(tmp_path: Path) -> None:
         tmp_path,
         "genvals",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def countdown(n):\n"
             "    while n > 0:\n"
@@ -353,7 +353,7 @@ def test_generator_close_works(tmp_path: Path) -> None:
         tmp_path,
         "genclose",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "closed = False\n\n"
             "@trace\n"
             "def infinite():\n"
@@ -377,7 +377,7 @@ def test_generator_reconstruction(tmp_path: Path) -> None:
         tmp_path,
         "genrecon",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def double(x):\n"
             "    return x * 2\n\n"
@@ -400,7 +400,7 @@ def test_generator_throw_maintains_context(tmp_path: Path) -> None:
         tmp_path,
         "genthrow",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def fallback(x):\n"
             "    return x * -1\n\n"
@@ -431,7 +431,7 @@ def test_generator_return_value(tmp_path: Path) -> None:
         tmp_path,
         "genret",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def gen_with_return():\n"
             "    yield 1\n"
@@ -455,7 +455,7 @@ def test_generator_nested_chain(tmp_path: Path) -> None:
         tmp_path,
         "genchain",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def gen_inner():\n"
             "    yield 1\n"
@@ -482,7 +482,7 @@ def test_generator_wrapper_preserves_metadata(tmp_path: Path) -> None:
         "genmeta",
         (
             "import inspect\n\n"
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def my_gen(n):\n"
             "    yield n\n"
@@ -505,7 +505,7 @@ def test_closure_vars_captured(tmp_path: Path) -> None:
         tmp_path,
         "cvcap",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "def make_multiplier(factor):\n"
             "    @trace\n"
             "    def multiply(x):\n"
@@ -525,7 +525,7 @@ def test_closure_vars_serialized(tmp_path: Path) -> None:
         tmp_path,
         "cvser",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "def outer(scale, label):\n"
             "    @trace\n"
             "    def inner(x):\n"
@@ -547,7 +547,7 @@ def test_closure_hoisted_as_kwonly_params(tmp_path: Path) -> None:
         tmp_path,
         "cvhoist",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "def outer(scale):\n"
             "    @trace\n"
             "    def inner(x):\n"
@@ -566,7 +566,7 @@ def test_closure_reconstructed_code_is_runnable(tmp_path: Path) -> None:
         tmp_path,
         "cvrun",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "def outer(factor):\n"
             "    @trace\n"
             "    def multiply(x):\n"
@@ -618,7 +618,7 @@ def test_closure_valid_repr_accepted(tmp_path: Path) -> None:
         tmp_path,
         "cvvalid",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "def outer():\n"
             "    x = 42\n"
             "    label = 'hello'\n"
@@ -641,7 +641,7 @@ def test_closure_traced_func_detected_as_dep(tmp_path: Path) -> None:
         tmp_path,
         "cvfunc",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def helper(x):\n"
             "    return x + 1\n\n"
@@ -671,7 +671,7 @@ def test_closure_invalid_repr_picklable_captured(tmp_path: Path) -> None:
         "cvinvalid",
         (
             "import io\n\n"
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "def outer():\n"
             "    f = io.StringIO()\n"
             "    @trace\n"
@@ -698,7 +698,7 @@ def test_closure_func_refs_survive_refresh(tmp_path: Path) -> None:
         tmp_path,
         "cvrefresh",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def helper(x):\n"
             "    return x + 1\n\n"
@@ -724,7 +724,7 @@ def test_closure_func_refs_serialization_roundtrip(tmp_path: Path) -> None:
         tmp_path,
         "cvserial",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def helper(x):\n"
             "    return x + 1\n\n"
@@ -751,7 +751,7 @@ def test_closure_func_ref_reconstructed_code_is_runnable(tmp_path: Path) -> None
         tmp_path,
         "cvfuncrun",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def helper(x):\n"
             "    return x + 1\n\n"
@@ -779,7 +779,7 @@ def test_closure_func_ref_end_to_end_pipeline(tmp_path: Path) -> None:
         tmp_path,
         "cvpipe",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def add_one(x):\n"
             "    return x + 1\n\n"
@@ -819,7 +819,7 @@ def test_async_wrapper_preserves_behavior(tmp_path: Path) -> None:
         tmp_path,
         "asyncbehav",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "async def double(x):\n"
             "    return x * 2\n"
@@ -834,7 +834,7 @@ def test_async_wrapper_preserves_coroutine_flag(tmp_path: Path) -> None:
         tmp_path,
         "asyncflag",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "async def afunc():\n"
             "    return 1\n"
@@ -850,7 +850,7 @@ def test_async_wrapper_preserves_metadata(tmp_path: Path) -> None:
         "asyncmeta",
         (
             "import inspect\n\n"
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "async def my_coro(x):\n"
             "    return x\n"
@@ -867,7 +867,7 @@ def test_async_caller_to_async_callee(tmp_path: Path) -> None:
         tmp_path,
         "asynccall",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "async def async_helper(x):\n"
             "    return x + 1\n\n"
@@ -891,7 +891,7 @@ def test_async_caller_to_sync_callee(tmp_path: Path) -> None:
         tmp_path,
         "asyncsync",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def sync_helper(x):\n"
             "    return x + 1\n\n"
@@ -915,7 +915,7 @@ def test_async_dep_chain(tmp_path: Path) -> None:
         tmp_path,
         "asyncchain",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "async def step_a(x):\n"
             "    return x\n\n"
@@ -942,7 +942,7 @@ def test_async_no_self_dependency(tmp_path: Path) -> None:
         tmp_path,
         "asyncself",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "async def factorial(n):\n"
             "    if n <= 1:\n"
@@ -965,7 +965,7 @@ def test_async_runtime_dep_merges_with_static(tmp_path: Path) -> None:
         tmp_path,
         "asyncmerge",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def static_dep(x):\n"
             "    return x\n\n"
@@ -998,7 +998,7 @@ def test_async_reconstruction(tmp_path: Path) -> None:
         "asyncrecon",
         (
             "import json\n\n"
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "async def async_helper(data):\n"
             "    return json.dumps(data)\n\n"
@@ -1022,7 +1022,7 @@ def test_async_concurrent_tasks_isolated(tmp_path: Path) -> None:
         "asynciso",
         (
             "import asyncio\n\n"
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "async def dep_a(x):\n"
             "    return x\n\n"
@@ -1067,7 +1067,7 @@ def test_async_gen_body_dep_detected(tmp_path: Path) -> None:
         tmp_path,
         "agenbody",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def helper(x):\n"
             "    return x + 1\n\n"
@@ -1096,7 +1096,7 @@ def test_async_gen_caller_dep_detected(tmp_path: Path) -> None:
         tmp_path,
         "agencaller",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "async def async_gen(items):\n"
             "    for item in items:\n"
@@ -1121,7 +1121,7 @@ def test_async_gen_preserves_values(tmp_path: Path) -> None:
         tmp_path,
         "agenvals",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "async def countdown(n):\n"
             "    while n > 0:\n"
@@ -1142,7 +1142,7 @@ def test_async_gen_asend(tmp_path: Path) -> None:
         tmp_path,
         "agensend",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def transform(x):\n"
             "    return x * 10\n\n"
@@ -1182,7 +1182,7 @@ def test_async_gen_athrow(tmp_path: Path) -> None:
         tmp_path,
         "agenthrow",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def fallback(x):\n"
             "    return x * -1\n\n"
@@ -1217,7 +1217,7 @@ def test_async_gen_aclose(tmp_path: Path) -> None:
         tmp_path,
         "agenclose",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "closed = False\n\n"
             "@trace\n"
             "async def infinite():\n"
@@ -1246,7 +1246,7 @@ def test_async_gen_wrapper_preserves_metadata(tmp_path: Path) -> None:
         "agenmeta",
         (
             "import inspect\n\n"
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "async def my_agen(n):\n"
             "    yield n\n"
@@ -1263,7 +1263,7 @@ def test_async_gen_nested_chain(tmp_path: Path) -> None:
         tmp_path,
         "agenchain",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "async def inner():\n"
             "    yield 1\n"
@@ -1293,7 +1293,7 @@ def test_async_gen_reconstruction(tmp_path: Path) -> None:
         tmp_path,
         "agenrecon",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "@trace\n"
             "def double(x):\n"
             "    return x * 2\n\n"
@@ -1325,7 +1325,7 @@ def test_closure_untraced_user_function_auto_registered(tmp_path: Path) -> None:
         tmp_path,
         "cvuntraced",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "def helper(x):\n"
             "    return x + 1\n\n"
             "def outer():\n"
@@ -1352,7 +1352,7 @@ def test_closure_lambda_captured(tmp_path: Path) -> None:
         tmp_path,
         "cvlambda",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "def outer():\n"
             "    fn = lambda x: x * 2\n"
             "    @trace\n"
@@ -1374,7 +1374,7 @@ def test_closure_untraced_func_with_deps(tmp_path: Path) -> None:
         tmp_path,
         "cvuntraceddeps",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "def add(a, b):\n"
             "    return a + b\n\n"
             "def double_add(a, b):\n"
@@ -1404,7 +1404,7 @@ def test_closure_builtin_still_warns(tmp_path: Path) -> None:
         tmp_path,
         "cvbuiltin",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "class Unpicklable:\n"
             "    def __reduce__(self):\n"
             "        raise TypeError('nope')\n"
@@ -1438,7 +1438,7 @@ def test_closure_defaultdict_constructor_expr(tmp_path: Path) -> None:
         "cvdefdict",
         (
             "from collections import defaultdict\n"
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "def outer():\n"
             "    d = defaultdict(int, {'a': 1})\n"
             "    @trace\n"
@@ -1466,7 +1466,7 @@ def test_closure_counter_constructor_expr(tmp_path: Path) -> None:
         "cvcounter",
         (
             "from collections import Counter\n"
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "def outer():\n"
             "    c = Counter({'x': 3, 'y': 1})\n"
             "    @trace\n"
@@ -1494,7 +1494,7 @@ def test_closure_deque_constructor_expr(tmp_path: Path) -> None:
         "cvdeque",
         (
             "from collections import deque\n"
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "def outer():\n"
             "    q = deque([1, 2, 3], maxlen=5)\n"
             "    @trace\n"
@@ -1522,7 +1522,7 @@ def test_closure_pickle_fallback_custom_class(tmp_path: Path) -> None:
         tmp_path,
         "cvpickle",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "class Config:\n"
             "    def __init__(self, val):\n"
             "        self.val = val\n\n"
@@ -1551,7 +1551,7 @@ def test_nested_function_chain_via_closure(tmp_path: Path) -> None:
         tmp_path,
         "nested_chain",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "def outer():\n"
             "    def step_a(x):\n"
             "        return x + 1\n\n"
@@ -1588,7 +1588,7 @@ def test_nested_function_in_class_method(tmp_path: Path) -> None:
         tmp_path,
         "nested_cls",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "class MyClass:\n"
             "    def run(self):\n"
             "        def helper(x):\n"
@@ -1622,7 +1622,7 @@ def test_inline_import_module_captured(tmp_path: Path) -> None:
         tmp_path,
         "inline_imp",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "def outer():\n"
             "    import json as _json\n\n"
             "    @trace\n"
@@ -1649,7 +1649,7 @@ def test_inline_import_aliased_module(tmp_path: Path) -> None:
         tmp_path,
         "inline_alias",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "def outer():\n"
             "    import os.path as _osp\n\n"
             "    @trace\n"
@@ -1676,7 +1676,7 @@ def test_inline_import_same_name_module(tmp_path: Path) -> None:
         tmp_path,
         "inline_same",
         (
-            "from pyfuse import trace\n\n"
+            "from offwork import trace\n\n"
             "def outer():\n"
             "    import json\n\n"
             "    @trace\n"

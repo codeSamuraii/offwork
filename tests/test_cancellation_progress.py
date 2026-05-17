@@ -8,16 +8,16 @@ from typing import Any
 
 import pytest
 
-from pyfuse.core.errors import TaskCancelled
-from pyfuse.core.models import FunctionNode, ImportInfo
-from pyfuse.core.progress import ProgressInfo, _progress_callback, progress
-from pyfuse.core.task import Task
-from pyfuse.graph.store import Store
-from pyfuse.worker import remote as _remote
-from pyfuse.worker.backends.base import Backend
-from pyfuse.worker.remote import _handle_task
-from pyfuse.worker.result import Result, ResultEnvelope
-from pyfuse.worker.worker import Worker
+from offwork.core.errors import TaskCancelled
+from offwork.core.models import FunctionNode, ImportInfo
+from offwork.core.progress import ProgressInfo, _progress_callback, progress
+from offwork.core.task import Task
+from offwork.graph.store import Store
+from offwork.worker import remote as _remote
+from offwork.worker.backends.base import Backend
+from offwork.worker.remote import _handle_task
+from offwork.worker.result import Result, ResultEnvelope
+from offwork.worker.worker import Worker
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +149,7 @@ def _progress_store() -> tuple[Store, str]:
     store = Store()
     node = _node("process", (
         "def process(items):\n"
-        "    from pyfuse import progress\n"
+        "    from offwork import progress\n"
         "    results = []\n"
         "    for i, item in enumerate(items):\n"
         "        results.append(item.upper())\n"
@@ -157,7 +157,7 @@ def _progress_store() -> tuple[Store, str]:
         "    return results"
     ))
     node.imports = [ImportInfo(
-        statement="from pyfuse import progress",
+        statement="from offwork import progress",
         bound_name="progress",
     )]
     h = store.put(node)

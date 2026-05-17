@@ -4,8 +4,8 @@ from unittest import mock
 
 import pytest
 
-from pyfuse.core.signing import derive_key
-from pyfuse.core.token import (
+from offwork.core.signing import derive_key
+from offwork.core.token import (
     _TOKEN_ENV_VAR,
     _is_valid_token_hex,
     _validate_token_hex,
@@ -158,7 +158,7 @@ class TestResolveSigningKey:
 
     def test_from_pairing_key(self, tmp_path: Path) -> None:
         """Falls back to pairing key when no token exists."""
-        from pyfuse.core.pairing import save_shared_key
+        from offwork.core.pairing import save_shared_key
 
         raw = b"\x42" * 32
         save_shared_key(raw, "client", key_dir=tmp_path)
@@ -169,7 +169,7 @@ class TestResolveSigningKey:
 
     def test_token_over_pairing(self, tmp_path: Path) -> None:
         """Token takes priority over pairing key."""
-        from pyfuse.core.pairing import save_shared_key
+        from offwork.core.pairing import save_shared_key
 
         pairing_key = b"\x99" * 32
         save_shared_key(pairing_key, "worker", key_dir=tmp_path)
@@ -201,7 +201,7 @@ class TestTokenSigningEndToEnd:
     """End-to-end: generate token, sign task, verify task."""
 
     def test_sign_and_verify(self) -> None:
-        from pyfuse.core.task import Task
+        from offwork.core.task import Task
 
         token = generate_token()
         key = derive_key(bytes.fromhex(token))
@@ -219,8 +219,8 @@ class TestTokenSigningEndToEnd:
         assert restored.signature is not None
 
     def test_wrong_token_fails(self) -> None:
-        from pyfuse.core.errors import SignatureError
-        from pyfuse.core.task import Task
+        from offwork.core.errors import SignatureError
+        from offwork.core.task import Task
 
         key1 = derive_key(bytes.fromhex(generate_token()))
         key2 = derive_key(bytes.fromhex(generate_token()))
@@ -234,7 +234,7 @@ class TestTokenSigningEndToEnd:
         """A token-signed task can be verified by a pairing-derived key
         if they resolve to the same signing key (they use the same
         derive_key function)."""
-        from pyfuse.core.task import Task
+        from offwork.core.task import Task
 
         token = generate_token()
         raw = bytes.fromhex(token)

@@ -3,7 +3,7 @@
 import math
 import statistics
 
-from pyfuse import trace
+from offwork import trace
 
 from tests.fixtures.stress_test_module.transformers import group_by_sensor
 

@@ -2,7 +2,7 @@
 
 import json
 
-from pyfuse import trace
+from offwork import trace
 
 from tests.fixtures.stress_test_module.analyzers import (
     analyze_measurements,

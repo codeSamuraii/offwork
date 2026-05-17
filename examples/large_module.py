@@ -2,13 +2,13 @@
 
 The stress_test_module has 47 functions across 7 files, 3 classes, and deep
 dependency chains. Only the entry point below is decorated with @trace --
-pyfuse discovers everything else automatically.
+offwork discovers everything else automatically.
 
 Requires Redis on localhost:6379.  Install: pip install redis
 
 Usage:
     # Terminal 1 -- start a worker
-    pyfuse worker --backend redis://localhost:6379
+    offwork worker --backend redis://localhost:6379
 
     # Terminal 2 -- run this script
     python examples/large_module.py
@@ -23,8 +23,8 @@ from pathlib import Path
 # if str(_REPO_ROOT) not in sys.path:
 #     sys.path.insert(0, str(_REPO_ROOT))
 
-import pyfuse
-from pyfuse import trace
+import offwork
+from offwork import trace
 
 from tests.fixtures.stress_test_module.analyzers import build_report, detect_anomalies, analyze_measurements
 from tests.fixtures.stress_test_module.formatters import format_text_report
@@ -37,7 +37,7 @@ from tests.fixtures.stress_test_module.transformers import compute_deltas, norma
 def full_sensor_report(sensor_count: int, readings_per_sensor: int, seed: int = 42) -> str:
     """
     Calls functions from multiple modules, with complex dependency chains.
-    pyfuse captures their source and dependencies automatically.
+    offwork captures their source and dependencies automatically.
     """
     measurements = generate_measurements(sensor_count, readings_per_sensor, seed)
     measurements = inject_anomalies(measurements, anomaly_rate=0.05, seed=seed + 1)
@@ -59,7 +59,7 @@ def full_sensor_report(sensor_count: int, readings_per_sensor: int, seed: int = 
 
 
 async def main() -> None:
-    pyfuse.connect("local://localhost:9748")
+    offwork.connect("local://localhost:9748")
     report = await full_sensor_report.run(3, 50, seed=42)
     print(report)
 

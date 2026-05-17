@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from pyfuse.graph.graph import Graph
-from pyfuse.core.models import FunctionNode, ImportInfo
-from pyfuse.graph.store import Store, MergeResult
+from offwork.graph.graph import Graph
+from offwork.core.models import FunctionNode, ImportInfo
+from offwork.graph.store import Store, MergeResult
 from tests.conftest import create_module
 
 
@@ -415,7 +415,7 @@ class TestReconstruction:
             "store_recon",
             (
                 "import csv\nimport json as js\n\n"
-                "from pyfuse import trace\n\n"
+                "from offwork import trace\n\n"
                 "@trace\n"
                 "def parse(data):\n"
                 "    return csv.reader(data)\n\n"
@@ -440,7 +440,7 @@ class TestToStore:
             tmp_path,
             "tostore",
             (
-                "from pyfuse import trace\n\n"
+                "from offwork import trace\n\n"
                 "@trace\n"
                 "def leaf():\n    return 1\n\n"
                 "@trace\n"
@@ -462,7 +462,7 @@ class TestToStore:
             tmp_path,
             "tostoresub",
             (
-                "from pyfuse import trace\n\n"
+                "from offwork import trace\n\n"
                 "@trace\n"
                 "def a():\n    return 1\n\n"
                 "@trace\n"

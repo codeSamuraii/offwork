@@ -2,10 +2,10 @@ import asyncio
 import math
 from typing import overload
 
-import pyfuse
-from pyfuse import trace
+import offwork
+from offwork import trace
 
-pyfuse.connect("local://localhost:9748")
+offwork.connect("local://localhost:9748")
 
 @overload
 def add(a: int, b: int) -> int: ...

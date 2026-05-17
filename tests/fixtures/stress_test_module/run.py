@@ -1,4 +1,4 @@
-"""Run the stress-test module through pyfuse: serialize, reconstruct, execute on a Worker.
+"""Run the stress-test module through offwork: serialize, reconstruct, execute on a Worker.
 
 Usage:
     python tests/fixtures/stress_test_module/run.py
@@ -6,8 +6,8 @@ Usage:
 
 import asyncio
 
-from pyfuse import pack, serialize, reconstruct, Graph
-from pyfuse.worker.worker import Worker
+from offwork import pack, serialize, reconstruct, Graph
+from offwork.worker.worker import Worker
 
 from tests.fixtures.stress_test_module import pipeline
 from tests.fixtures.stress_test_module.generators import generate_measurements
@@ -19,7 +19,7 @@ async def async_main() -> None:
     report = pipeline.run_full_pipeline(sensor_count=3, readings_per_sensor=20, seed=42)
     print(report[:200], "...\n")
 
-    # ── 2. Inspect what pyfuse captured ──────────────────────────────
+    # ── 2. Inspect what offwork captured ──────────────────────────────
     graph = Graph.default()
     print(f"--- Graph: {len(graph.nodes)} nodes ---")
     for qname in sorted(graph.nodes):

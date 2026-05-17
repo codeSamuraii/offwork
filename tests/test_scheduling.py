@@ -5,10 +5,10 @@ import time
 
 import pytest
 
-from pyfuse.core.task import Task
-from pyfuse.worker.schedule import ScheduleHandle
-from pyfuse.worker.result import ResultEnvelope
-from pyfuse.worker.backends.local import _Broker
+from offwork.core.task import Task
+from offwork.worker.schedule import ScheduleHandle
+from offwork.worker.result import ResultEnvelope
+from offwork.worker.backends.local import _Broker
 
 
 class TestTaskSchedulingFields:

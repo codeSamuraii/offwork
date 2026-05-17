@@ -5,9 +5,9 @@ RabbitMQ) and exercise the full client → backend → worker → result path.
 
 Environment variables
 ---------------------
-PYFUSE_TEST_BACKEND     Backend URL (required).  e.g. redis://localhost:6379
-PYFUSE_TEST_SIGNING     Set to "1" to enable HMAC-SHA256 task signing.
-PYFUSE_TEST_SANDBOX     Set to "1" to run workers with Docker sandbox.
+OFFWORK_TEST_BACKEND     Backend URL (required).  e.g. redis://localhost:6379
+OFFWORK_TEST_SIGNING     Set to "1" to enable HMAC-SHA256 task signing.
+OFFWORK_TEST_SANDBOX     Set to "1" to run workers with Docker sandbox.
 
 The worker is launched as a subprocess so that client and worker live in
 completely separate Python processes (no shared state).
@@ -26,21 +26,21 @@ from typing import Any
 
 import pytest
 
-import pyfuse
-from pyfuse import trace, progress, TaskCancelled, ThrottleError
-from pyfuse.core.token import generate_token
-from pyfuse.graph.graph import Graph
+import offwork
+from offwork import trace, progress, TaskCancelled, ThrottleError
+from offwork.core.token import generate_token
+from offwork.graph.graph import Graph
 
 
 # ---------------------------------------------------------------------------
 # Configuration from environment
 # ---------------------------------------------------------------------------
 
-BACKEND_URL = os.environ.get("PYFUSE_TEST_BACKEND", "")
-USE_SIGNING = os.environ.get("PYFUSE_TEST_SIGNING", "") == "1"
-USE_SANDBOX = os.environ.get("PYFUSE_TEST_SANDBOX", "") == "1"
+BACKEND_URL = os.environ.get("OFFWORK_TEST_BACKEND", "")
+USE_SIGNING = os.environ.get("OFFWORK_TEST_SIGNING", "") == "1"
+USE_SANDBOX = os.environ.get("OFFWORK_TEST_SANDBOX", "") == "1"
 
-pytestmark = pytest.mark.skipif(not BACKEND_URL, reason="PYFUSE_TEST_BACKEND not set")
+pytestmark = pytest.mark.skipif(not BACKEND_URL, reason="OFFWORK_TEST_BACKEND not set")
 
 
 # ---------------------------------------------------------------------------
@@ -56,23 +56,23 @@ def _start_worker(
     signing_token: str | None = None,
     sandbox: bool = False,
 ) -> subprocess.Popen[bytes]:
-    """Launch ``python -m pyfuse worker`` in a subprocess.
+    """Launch ``python -m offwork worker`` in a subprocess.
 
     Waits for the worker to print its "Listening for tasks" log line
     before returning, so the caller knows it is actually ready.
     """
-    cmd = [sys.executable, "-m", "pyfuse", "worker", "--backend", backend]
+    cmd = [sys.executable, "-m", "offwork", "worker", "--backend", backend]
     if signing_token:
         cmd.append("--require-signing")
     if sandbox:
         cmd.append("--sandbox")
-    log_level = os.environ.get("PYFUSE_LOG_LEVEL", "")
+    log_level = os.environ.get("OFFWORK_LOG_LEVEL", "")
     if log_level:
         cmd.extend(["--log-level", log_level])
 
     env = os.environ.copy()
     if signing_token:
-        env["PYFUSE_SIGNING_TOKEN"] = signing_token
+        env["OFFWORK_SIGNING_TOKEN"] = signing_token
 
     proc = subprocess.Popen(
         cmd,
@@ -155,8 +155,8 @@ def _connect_backend(signing_token: str | None) -> None:
     """Connect the client to the backend before each test."""
     env = os.environ.copy()
     if signing_token:
-        os.environ["PYFUSE_SIGNING_TOKEN"] = signing_token
-    pyfuse.connect(BACKEND_URL)
+        os.environ["OFFWORK_SIGNING_TOKEN"] = signing_token
+    offwork.connect(BACKEND_URL)
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +287,7 @@ class TestRetryAndTimeout:
         # whichever filesystem actually runs the function -- the host
         # worker's /tmp, or the sandbox container's /tmp.
         import uuid
-        counter_path = f"/tmp/pyfuse-retry-{uuid.uuid4().hex}.txt"
+        counter_path = f"/tmp/offwork-retry-{uuid.uuid4().hex}.txt"
 
         @trace(retries=3, retry_delay=0.1)
         def fails_then_succeeds(path: str, fail_until: int) -> str:
@@ -349,7 +349,7 @@ class TestErrorHandling:
         def bad_func() -> None:
             raise ValueError("intentional error")
 
-        from pyfuse.core.errors import RemoteError
+        from offwork.core.errors import RemoteError
         with pytest.raises(RemoteError, match="intentional error"):
             await bad_func.run()
 
@@ -396,13 +396,13 @@ if __name__ == "__main__":
     import itertools
 
     def _flush_backend(backend_url: str) -> None:
-        """Remove leftover pyfuse state so permutations don't interfere."""
+        """Remove leftover offwork state so permutations don't interfere."""
         scheme = backend_url.split("://", 1)[0].lower()
         if scheme in ("redis", "rediss"):
             try:
                 import redis as _redis
                 r = _redis.Redis.from_url(backend_url)
-                for key in r.scan_iter("pyfuse:*"):
+                for key in r.scan_iter("offwork:*"):
                     r.delete(key)
                 r.close()
             except Exception:
@@ -432,13 +432,13 @@ if __name__ == "__main__":
         print(f"{'=' * 60}\n")
 
         env = os.environ.copy()
-        env["PYFUSE_TEST_BACKEND"] = backend_url
-        env["PYFUSE_TEST_SIGNING"] = "1" if signing else "0"
-        env["PYFUSE_TEST_SANDBOX"] = "1" if sandbox else "0"
+        env["OFFWORK_TEST_BACKEND"] = backend_url
+        env["OFFWORK_TEST_SIGNING"] = "1" if signing else "0"
+        env["OFFWORK_TEST_SANDBOX"] = "1" if sandbox else "0"
 
         if signing:
             token = generate_token()
-            env["PYFUSE_SIGNING_TOKEN"] = token
+            env["OFFWORK_SIGNING_TOKEN"] = token
 
         cmd = [sys.executable, "-m", "pytest", __file__, "--tb=short", "-p", "no:warnings", "--no-header"] + extra_pytest_args
         print(f"Running command: python {' '.join(cmd[1:])}")

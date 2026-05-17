@@ -1,15 +1,15 @@
 # Technical Overview
 
-This document covers pyfuse's internal architecture, execution flow, serialization format, and transport backends. For a usage-oriented guide, see the [Quick Start](QUICK_START.md).
+This document covers offwork's internal architecture, execution flow, serialization format, and transport backends. For a usage-oriented guide, see the [Quick Start](QUICK_START.md).
 
 ## How it works
 
-pyfuse enables remote execution of Python functions without deploying code to workers. The client serializes a function's source code, its entire dependency tree, and its arguments into a self-contained JSON payload. The worker reconstructs the function from source, installs missing packages, and executes it.
+offwork enables remote execution of Python functions without deploying code to workers. The client serializes a function's source code, its entire dependency tree, and its arguments into a self-contained JSON payload. The worker reconstructs the function from source, installs missing packages, and executes it.
 
 ```
   Client                              Worker
   ──────                              ──────
-  @trace                              pyfuse worker
+  @trace                              offwork worker
   await func.run(args)                ← listen for tasks
     │                                   │
     ├─ capture source + deps            ├─ deserialize graph
@@ -22,7 +22,7 @@ pyfuse enables remote execution of Python functions without deploying code to wo
 ## Architecture
 
 ```
-pyfuse/
+offwork/
     __init__.py              Public API: trace, connect, serve, serialize, reconstruct, ...
     __main__.py              CLI: worker, run, pair, token, sandbox, info, serialize, reconstruct
     _venv.py                 Async temporary virtual environment management
@@ -33,7 +33,7 @@ pyfuse/
                              TaskStalled, TaskCancelled, ThrottleError, SignatureError, PairingError
         progress.py          ProgressInfo + progress() contextvar callback
         signing.py           HMAC-SHA256 sign/verify, derive_key
-        token.py             Token generate/save/load (~/.pyfuse/token)
+        token.py             Token generate/save/load (~/.offwork/token)
         pairing.py           PIN-based key exchange (SPAKE2/SAS-style)
         version.py           Version constant resolved from package metadata
     graph/
@@ -72,8 +72,8 @@ pyfuse/
 @trace(throttle=timedelta(hours=24)/50)   # rate-limit: 50 calls per day
 
 # Remote execution (all async)
-pyfuse.connect("redis://localhost:6379")  # configure backend (sync)
-await pyfuse.serve("redis://...", concurrency=4)  # start worker loop
+offwork.connect("redis://localhost:6379")  # configure backend (sync)
+await offwork.serve("redis://...", concurrency=4)  # start worker loop
 await func.run(*args)                     # submit + await result
 future = await func.start(*args)          # submit, returns Result handle
 results = await func.map([(a1, b1), ...]) # batch submit + await all
@@ -93,17 +93,17 @@ await future.cancel()                     # cancel task
 p = await future.progress()               # get ProgressInfo or None
 
 # Progress (inside tasks)
-pyfuse.progress(75.0)                     # report percentage
-pyfuse.progress(3, 10, message="step 3")  # report current/total
+offwork.progress(75.0)                     # report percentage
+offwork.progress(3, 10, message="step 3")  # report current/total
 
 # Serialization (sync)
-pyfuse.serialize(func)                    # -> JSON string
-pyfuse.reconstruct(json_str, "name")      # -> Python source string
-pyfuse.pack(func, *args)                  # -> Task
-await pyfuse.execute(task)                # -> return value
+offwork.serialize(func)                    # -> JSON string
+offwork.reconstruct(json_str, "name")      # -> Python source string
+offwork.pack(func, *args)                  # -> Task
+await offwork.execute(task)                # -> return value
 
 # Inspection
-pyfuse.get_graph().to_mermaid(func)       # -> Mermaid diagram string
+offwork.get_graph().to_mermaid(func)       # -> Mermaid diagram string
 ```
 
 ## Remote execution flow
@@ -115,7 +115,7 @@ pyfuse.get_graph().to_mermaid(func)       # -> Mermaid diagram string
 3. **Submit** -- `await backend.submit(task_json)` sends the task to the transport layer.
 4. **Return** -- `.run()` awaits the result and returns the value directly. `.start()` returns a `Result` handle immediately.
 
-### Worker side: `await serve()` / `pyfuse worker`
+### Worker side: `await serve()` / `offwork worker`
 
 1. **Listen** — `async for task_json in backend.listen()` yields tasks as they arrive.
 2. **Verify signature** — If `--require-signing` is set, call `verify_and_load_json(task_json, key)`; reject with `SignatureError` on failure.
@@ -172,14 +172,14 @@ All methods are `async def`. Methods below the line are non-abstract with safe d
 ### RedisBackend
 
 Uses `redis.asyncio.Redis` with `RPUSH`/`BLPOP` patterns. Keys:
-- `pyfuse:tasks` -- task queue
-- `pyfuse:result:{task_id}` -- per-task result (TTL: 300s)
-- `pyfuse:heartbeat:{task_id}` -- worker heartbeat timestamp (TTL: 30s)
-- `pyfuse:cancel:{task_id}` -- cancellation flag (TTL: 3600s)
-- `pyfuse:progress:{task_id}` -- latest progress JSON (TTL: 300s)
-- `pyfuse:schedule:{schedule_id}` -- schedule cancellation flag (TTL: 30 days)
-- `pyfuse:throttle:{function_name}` -- throttle cooldown (TTL: throttle seconds)
-- `pyfuse:notify` -- Pub/Sub channel for result notifications
+- `offwork:tasks` -- task queue
+- `offwork:result:{task_id}` -- per-task result (TTL: 300s)
+- `offwork:heartbeat:{task_id}` -- worker heartbeat timestamp (TTL: 30s)
+- `offwork:cancel:{task_id}` -- cancellation flag (TTL: 3600s)
+- `offwork:progress:{task_id}` -- latest progress JSON (TTL: 300s)
+- `offwork:schedule:{schedule_id}` -- schedule cancellation flag (TTL: 30 days)
+- `offwork:throttle:{function_name}` -- throttle cooldown (TTL: throttle seconds)
+- `offwork:notify` -- Pub/Sub channel for result notifications
 
 Result notifications use Redis Pub/Sub (`PUBLISH`/`SUBSCRIBE`). Batch heartbeat fetching uses `MGET` for efficiency.
 
@@ -195,16 +195,16 @@ The broker auto-starts as a subprocess on first connection (or can be started ex
 
 ### RabbitMQBackend
 
-Uses `aio-pika` (async AMQP 0-9-1). Tasks go through a single durable queue (`pyfuse.tasks`). Per-task results, heartbeats, cancellation flags, and progress live in single-message queues (`x-max-length: 1`) used as key-value slots. Result notifications fan out via a topic exchange (`pyfuse.notify`). Throttle queues use a fixed TTL with the cooldown expiry encoded in the message body.
+Uses `aio-pika` (async AMQP 0-9-1). Tasks go through a single durable queue (`offwork.tasks`). Per-task results, heartbeats, cancellation flags, and progress live in single-message queues (`x-max-length: 1`) used as key-value slots. Result notifications fan out via a topic exchange (`offwork.notify`). Throttle queues use a fixed TTL with the cooldown expiry encoded in the message body.
 
-URL scheme: `amqp://` or `amqps://` (e.g. `amqp://guest:guest@localhost/`). The `aio-pika` package is an optional dependency installed via `pip install pyfuse[rabbitmq]`.
+URL scheme: `amqp://` or `amqps://` (e.g. `amqp://guest:guest@localhost/`). The `aio-pika` package is an optional dependency installed via `pip install offwork[rabbitmq]`.
 
 ### Custom backends
 
 Subclass `Backend` to implement any transport (HTTP, NATS, gRPC, etc.):
 
 ```python
-pyfuse.connect("redis://...")  # built-in
+offwork.connect("redis://...")  # built-in
 await func.start(*args, backend=my_custom_backend)  # per-call override
 ```
 
@@ -214,7 +214,7 @@ When `@trace` is applied to a function:
 
 ### 1. Source capture
 
-`inspect.getsource()` retrieves the function's source. `textwrap.dedent()` normalizes indentation. `@trace` decorator lines are stripped so reconstructed code doesn't depend on pyfuse.
+`inspect.getsource()` retrieves the function's source. `textwrap.dedent()` normalizes indentation. `@trace` decorator lines are stripped so reconstructed code doesn't depend on offwork.
 
 ### 2. Import analysis
 
@@ -233,11 +233,11 @@ The function's AST is walked for `ast.Call` nodes. Four kinds of calls are detec
 
 ### 4. Auto-discovery
 
-When a traced function calls an untraced user-defined function, pyfuse automatically discovers and registers it. This is recursive: if `traced_func()` calls `helper_a()` which calls `helper_b()`, all three end up in the graph.
+When a traced function calls an untraced user-defined function, offwork automatically discovers and registers it. This is recursive: if `traced_func()` calls `helper_a()` which calls `helper_b()`, all three end up in the graph.
 
 Cross-module imports (e.g., `from utils import helper`) are converted from import statements to inline dependency edges, so the reconstructed code is self-contained.
 
-Class constructors (`MyClass()`) are auto-discovered: pyfuse registers all user-defined methods of the class, even when the class relies on the implicit `object.__init__`. `@staticmethod` and `@classmethod` descriptors are unwrapped and registered correctly. Base classes and their methods are pulled in via `__mro__` walking (independent of `super()` usage), and `class Foo(Base):` headers are emitted in reconstructed source.
+Class constructors (`MyClass()`) are auto-discovered: offwork registers all user-defined methods of the class, even when the class relies on the implicit `object.__init__`. `@staticmethod` and `@classmethod` descriptors are unwrapped and registered correctly. Base classes and their methods are pulled in via `__mro__` walking (independent of `super()` usage), and `class Foo(Base):` headers are emitted in reconstructed source.
 
 Classes that hook `__init_subclass__` are treated as registries: every user-defined subclass is auto-registered so its definition fires the parent hook on the worker. The same path catches subclasses looked up indirectly (e.g., by name from a registry dict) without requiring an explicit reference in the traced body.
 
@@ -249,7 +249,7 @@ Module-level constants and variables referenced by traced functions (e.g., `MAX_
 
 ### 5. Closure capture
 
-If the function captures variables from an enclosing scope, pyfuse uses a multi-tier capture strategy:
+If the function captures variables from an enclosing scope, offwork uses a multi-tier capture strategy:
 
 1. **`repr()` validation** -- Values whose `repr()` is valid Python (passes `ast.parse()`) are stored directly. They become keyword-only parameters with defaults in reconstructed code.
 2. **Traced functions** -- References to `@trace`-decorated functions are recorded as dependency edges.
@@ -271,7 +271,7 @@ The returned wrapper gains:
 - `.run(*args)` -- submit to remote worker and await result (coroutine)
 - `.start(*args)` -- submit to remote worker, returns `Result` handle (coroutine)
 - `.map(args_list)` -- batch submit and await all results (coroutine)
-- `__pyfuse_traced__ = True` -- marker attribute
+- `__offwork_traced__ = True` -- marker attribute
 
 ## Task envelope
 
@@ -537,12 +537,12 @@ Tasks can be cancelled via `await result.cancel()`. Cancellation is cooperative:
 
 | Backend | Cancellation storage |
 |---------|---------------------|
-| Redis | `SET pyfuse:cancel:{task_id} 1 EX 3600` |
+| Redis | `SET offwork:cancel:{task_id} 1 EX 3600` |
 | Local | In-memory `set()` in the broker |
 
 ## Progress reporting
 
-Tasks can report progress via `pyfuse.progress(percent)` or `pyfuse.progress(current, total)`.
+Tasks can report progress via `offwork.progress(percent)` or `offwork.progress(current, total)`.
 
 ### How it works
 
@@ -555,7 +555,7 @@ Tasks can report progress via `pyfuse.progress(percent)` or `pyfuse.progress(cur
 
 | Backend | Progress storage |
 |---------|-----------------|
-| Redis | `SET pyfuse:progress:{task_id} <json> EX 300` |
+| Redis | `SET offwork:progress:{task_id} <json> EX 300` |
 | Local | In-memory `dict` in the broker |
 
 ## Graceful shutdown
@@ -615,7 +615,7 @@ sequenceDiagram
     Worker->>Client: Result
 ```
 
-A lightweight **guest agent** (`guest_agent.py`) runs inside the container. It is stdlib-only (no pyfuse install required) and communicates with the worker over TCP using a **length-prefixed JSON protocol** (4-byte big-endian header + UTF-8 JSON payload).
+A lightweight **guest agent** (`guest_agent.py`) runs inside the container. It is stdlib-only (no offwork install required) and communicates with the worker over TCP using a **length-prefixed JSON protocol** (4-byte big-endian header + UTF-8 JSON payload).
 
 ### Container lifecycle
 
@@ -643,15 +643,15 @@ stateDiagram-v2
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `image` | `"pyfuse-sandbox"` | Docker image name |
-| `container_name` | `"pyfuse-sandbox"` | Container name |
+| `image` | `"offwork-sandbox"` | Docker image name |
+| `container_name` | `"offwork-sandbox"` | Container name |
 | `guest_port` | `9749` | TCP port for the guest agent |
 | `cpus` | `2` | vCPUs allocated to the container |
 | `memory_gb` | `2` | RAM (GB) allocated to the container |
 | `timeout` | `60.0` | Max seconds per function execution |
 | `boot_timeout` | `30.0` | Max seconds to wait for container to start |
 
-Environment variables `PYFUSE_SANDBOX_DOCKER_IMAGE` and `PYFUSE_SANDBOX_DOCKER_CONTAINER` override the image and container names.
+Environment variables `OFFWORK_SANDBOX_DOCKER_IMAGE` and `OFFWORK_SANDBOX_DOCKER_CONTAINER` override the image and container names.
 
 ## Limitations
 
@@ -678,38 +678,38 @@ Environment variables `PYFUSE_SANDBOX_DOCKER_IMAGE` and `PYFUSE_SANDBOX_DOCKER_C
 
 ```bash
 # Start a worker
-pyfuse worker --backend redis://localhost:6379
-pyfuse worker --backend redis://localhost:6379 -c 4
-pyfuse worker --backend redis://localhost:6379 --no-auto-install
-pyfuse worker --backend redis://localhost:6379 --tmp              # isolated temp venv
-pyfuse worker --backend redis://localhost:6379 --sandbox          # Docker sandbox
-pyfuse worker --backend redis://localhost:6379 --require-signing  # reject unsigned tasks
-pyfuse worker --backend redis://localhost:6379 --pair             # pair then serve
+offwork worker --backend redis://localhost:6379
+offwork worker --backend redis://localhost:6379 -c 4
+offwork worker --backend redis://localhost:6379 --no-auto-install
+offwork worker --backend redis://localhost:6379 --tmp              # isolated temp venv
+offwork worker --backend redis://localhost:6379 --sandbox          # Docker sandbox
+offwork worker --backend redis://localhost:6379 --require-signing  # reject unsigned tasks
+offwork worker --backend redis://localhost:6379 --pair             # pair then serve
 
 # Signing — token-based
-pyfuse token generate           # write ~/.pyfuse/token
-pyfuse token show               # display current token source
-pyfuse token clear              # remove ~/.pyfuse/token
+offwork token generate           # write ~/.offwork/token
+offwork token show               # display current token source
+offwork token clear              # remove ~/.offwork/token
 
 # Signing — PIN-based pairing
-pyfuse pair --backend URL                   # client side: enter PIN displayed by worker
-pyfuse pair --backend URL --role worker     # worker side (or use `pyfuse worker --pair`)
-pyfuse pair --backend URL --clear           # remove ~/.pyfuse/{client,worker}.key
+offwork pair --backend URL                   # client side: enter PIN displayed by worker
+offwork pair --backend URL --role worker     # worker side (or use `offwork worker --pair`)
+offwork pair --backend URL --clear           # remove ~/.offwork/{client,worker}.key
 
 # Sandbox management
-pyfuse sandbox setup       # build Docker sandbox image
-pyfuse sandbox status      # show Docker sandbox status
-pyfuse sandbox teardown    # remove Docker sandbox
+offwork sandbox setup       # build Docker sandbox image
+offwork sandbox status      # show Docker sandbox status
+offwork sandbox teardown    # remove Docker sandbox
 
 # Run a script in a temporary venv (auto-detects and installs dependencies)
-pyfuse run examples/script.py
+offwork run examples/script.py
 
 # Show configuration
-pyfuse info
+offwork info
 
 # Serialize a function to JSON
-pyfuse serialize mymodule:csv_to_json
+offwork serialize mymodule:csv_to_json
 
 # Reconstruct source from a graph file
-pyfuse reconstruct graph.json csv_to_json
+offwork reconstruct graph.json csv_to_json
 ```

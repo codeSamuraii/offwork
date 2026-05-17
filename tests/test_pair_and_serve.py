@@ -1,8 +1,8 @@
 """Integration tests for the simplified pairing flow.
 
 Verifies:
-- ``pyfuse worker --pair`` generates a PIN, pairs, and starts serving with signing
-- ``pyfuse pair --backend ...`` pairs as a client and can submit signed tasks
+- ``offwork worker --pair`` generates a PIN, pairs, and starts serving with signing
+- ``offwork pair --backend ...`` pairs as a client and can submit signed tasks
 - End-to-end: pair → submit signed task → receive result
 """
 
@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from pyfuse import trace
-from pyfuse.core.pairing import (
+from offwork import trace
+from offwork.core.pairing import (
     PairingResult,
     generate_pin,
     initiate_pairing,
@@ -22,13 +22,13 @@ from pyfuse.core.pairing import (
     respond_to_pairing,
     save_shared_key,
 )
-from pyfuse.core.signing import derive_key
-from pyfuse.core.task import Task
-from pyfuse.graph.graph import Graph
-from pyfuse.worker.backends.local import LocalBackend
-from pyfuse.worker.remote import _handle_task
-from pyfuse.worker.result import ResultEnvelope
-from pyfuse.worker.worker import Worker
+from offwork.core.signing import derive_key
+from offwork.core.task import Task
+from offwork.graph.graph import Graph
+from offwork.worker.backends.local import LocalBackend
+from offwork.worker.remote import _handle_task
+from offwork.worker.result import ResultEnvelope
+from offwork.worker.worker import Worker
 
 
 def _free_port() -> int:

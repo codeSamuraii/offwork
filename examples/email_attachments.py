@@ -5,15 +5,15 @@ Two concerns kept apart:
 * The **poller** (this script's main loop) is stateful: it owns the IMAP
   connection and tracks which UIDs were already seen.  It stays local.
 * The **per-attachment work** is pure: bytes in, structured result out.
-  That's the pyfuse task.
+  That's the offwork task.
 
 The traced entry point ``process_attachment`` is small.  It calls three
 plain helpers -- ``_classify``, ``_extract_text``, ``_score_risk`` --
-that are not decorated.  pyfuse discovers them by walking the AST and
+that are not decorated.  offwork discovers them by walking the AST and
 ships their source as part of the same task envelope.
 
 Usage:
-    pyfuse worker --backend redis://localhost:6379 --tmp
+    offwork worker --backend redis://localhost:6379 --tmp
     python examples/email_attachments.py
 
 The script synthesizes a handful of emails with attachments in-memory
@@ -28,10 +28,10 @@ from email import message_from_bytes
 from email.message import EmailMessage, Message
 from typing import Any
 
-import pyfuse
-from pyfuse import trace
+import offwork
+from offwork import trace
 
-pyfuse.connect("local://localhost:9748")
+offwork.connect("local://localhost:9748")
 
 
 # --- helpers (auto-discovered) --------------------------------------------

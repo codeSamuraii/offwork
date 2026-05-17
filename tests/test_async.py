@@ -10,15 +10,15 @@ from typing import Any
 
 import pytest
 
-from pyfuse import pack, trace
-from pyfuse.core.errors import RemoteError, TaskStalled
-from pyfuse.core.models import FunctionNode, ImportInfo
-from pyfuse.core.task import Task
-from pyfuse.graph.store import Store
-from pyfuse.worker.backends.base import Backend
-from pyfuse.worker.result import Result, ResultEnvelope
-from pyfuse.worker.worker import Worker
-import pyfuse.worker.remote as _remote
+from offwork import pack, trace
+from offwork.core.errors import RemoteError, TaskStalled
+from offwork.core.models import FunctionNode, ImportInfo
+from offwork.core.task import Task
+from offwork.graph.store import Store
+from offwork.worker.backends.base import Backend
+from offwork.worker.result import Result, ResultEnvelope
+from offwork.worker.worker import Worker
+import offwork.worker.remote as _remote
 
 
 # ---------------------------------------------------------------------------
