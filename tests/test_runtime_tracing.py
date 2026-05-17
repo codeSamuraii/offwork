@@ -28,8 +28,8 @@ def test_wrapper_preserves_behavior(tmp_path: Path) -> None:
         tmp_path,
         "wbehav",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def double(x):\n"
             "    return x * 2\n"
         ),
@@ -46,8 +46,8 @@ def test_wrapper_inspect_getsource(tmp_path: Path) -> None:
         tmp_path,
         "winspect",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def greet(name):\n"
             "    return f'hello {name}'\n"
         ),
@@ -62,12 +62,12 @@ def test_static_typed_obj_method_no_execution(tmp_path: Path) -> None:
         tmp_path,
         "staticobj",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class Processor:\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def step(self, x):\n"
             "        return x.upper()\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def run(proc: Processor, data: str) -> str:\n"
             "    return proc.step(data)\n"
         ),
@@ -86,12 +86,12 @@ def test_runtime_dep_obj_method_call(tmp_path: Path) -> None:
         tmp_path,
         "objcall",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class Processor:\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def step(self, x):\n"
             "        return x.upper()\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def run(proc, data):\n"
             "    return proc.step(data)\n"
         ),
@@ -112,11 +112,11 @@ def test_runtime_dep_direct_call(tmp_path: Path) -> None:
         tmp_path,
         "dircall",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def helper(x):\n"
             "    return x + 1\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def caller(x):\n"
             "    return helper(x)\n"
         ),
@@ -135,14 +135,14 @@ def test_runtime_dep_chain(tmp_path: Path) -> None:
         tmp_path,
         "rtchain",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def step_a(x):\n"
             "    return x\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def step_b(x):\n"
             "    return step_a(x)\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def step_c(x):\n"
             "    return step_b(x)\n"
         ),
@@ -162,8 +162,8 @@ def test_runtime_dep_no_self_dependency(tmp_path: Path) -> None:
         tmp_path,
         "selfcall",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def factorial(n):\n"
             "    if n <= 1:\n"
             "        return 1\n"
@@ -185,15 +185,15 @@ def test_runtime_dep_merges_with_static(tmp_path: Path) -> None:
         tmp_path,
         "merge",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def static_dep(x):\n"
             "    return x\n\n"
             "class Worker:\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def dynamic_dep(self, x):\n"
             "        return x\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def caller(w, x):\n"
             "    # static_dep is detectable statically\n"
             "    a = static_dep(x)\n"
@@ -220,12 +220,12 @@ def test_runtime_dep_obj_method_reconstruction(tmp_path: Path) -> None:
         "objrecon",
         (
             "import json\n\n"
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class Formatter:\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def format(self, data):\n"
             "        return json.dumps(data)\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def process(fmt, data):\n"
             "    return fmt.format(data)\n"
         ),
@@ -251,11 +251,11 @@ def test_generator_body_dep_detected(tmp_path: Path) -> None:
         tmp_path,
         "genbody",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def helper(x):\n"
             "    return x + 1\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def gen_func(items):\n"
             "    for item in items:\n"
             "        yield helper(item)\n"
@@ -276,11 +276,11 @@ def test_generator_caller_dep_detected(tmp_path: Path) -> None:
         tmp_path,
         "gencaller",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def gen_func(items):\n"
             "    yield from items\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def caller():\n"
             "    return list(gen_func([1, 2, 3]))\n"
         ),
@@ -300,11 +300,11 @@ def test_generator_send_maintains_context(tmp_path: Path) -> None:
         tmp_path,
         "gensend",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def transform(x):\n"
             "    return x * 10\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def accumulator():\n"
             "    total = 0\n"
             "    while True:\n"
@@ -336,8 +336,8 @@ def test_generator_preserves_values(tmp_path: Path) -> None:
         tmp_path,
         "genvals",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def countdown(n):\n"
             "    while n > 0:\n"
             "        yield n\n"
@@ -353,9 +353,9 @@ def test_generator_close_works(tmp_path: Path) -> None:
         tmp_path,
         "genclose",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "closed = False\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def infinite():\n"
             "    global closed\n"
             "    try:\n"
@@ -377,11 +377,11 @@ def test_generator_reconstruction(tmp_path: Path) -> None:
         tmp_path,
         "genrecon",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def double(x):\n"
             "    return x * 2\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def gen_doubles(items):\n"
             "    for item in items:\n"
             "        yield double(item)\n"
@@ -400,11 +400,11 @@ def test_generator_throw_maintains_context(tmp_path: Path) -> None:
         tmp_path,
         "genthrow",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def fallback(x):\n"
             "    return x * -1\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def resilient():\n"
             "    while True:\n"
             "        try:\n"
@@ -431,8 +431,8 @@ def test_generator_return_value(tmp_path: Path) -> None:
         tmp_path,
         "genret",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def gen_with_return():\n"
             "    yield 1\n"
             "    yield 2\n"
@@ -455,12 +455,12 @@ def test_generator_nested_chain(tmp_path: Path) -> None:
         tmp_path,
         "genchain",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def gen_inner():\n"
             "    yield 1\n"
             "    yield 2\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def gen_outer():\n"
             "    for val in gen_inner():\n"
             "        yield val * 10\n"
@@ -482,8 +482,8 @@ def test_generator_wrapper_preserves_metadata(tmp_path: Path) -> None:
         "genmeta",
         (
             "import inspect\n\n"
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def my_gen(n):\n"
             "    yield n\n"
         ),
@@ -505,9 +505,9 @@ def test_closure_vars_captured(tmp_path: Path) -> None:
         tmp_path,
         "cvcap",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "def make_multiplier(factor):\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def multiply(x):\n"
             "        return x * factor\n"
             "    return multiply\n"
@@ -525,9 +525,9 @@ def test_closure_vars_serialized(tmp_path: Path) -> None:
         tmp_path,
         "cvser",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "def outer(scale, label):\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def inner(x):\n"
             "        return label + str(x * scale)\n"
             "    return inner\n"
@@ -547,9 +547,9 @@ def test_closure_hoisted_as_kwonly_params(tmp_path: Path) -> None:
         tmp_path,
         "cvhoist",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "def outer(scale):\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def inner(x):\n"
             "        return x * scale\n"
             "    return inner\n"
@@ -566,9 +566,9 @@ def test_closure_reconstructed_code_is_runnable(tmp_path: Path) -> None:
         tmp_path,
         "cvrun",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "def outer(factor):\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def multiply(x):\n"
             "        return x * factor\n"
             "    return multiply\n"
@@ -618,11 +618,11 @@ def test_closure_valid_repr_accepted(tmp_path: Path) -> None:
         tmp_path,
         "cvvalid",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "def outer():\n"
             "    x = 42\n"
             "    label = 'hello'\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def inner():\n"
             "        return label + str(x)\n"
             "    return inner\n"
@@ -641,13 +641,13 @@ def test_closure_traced_func_detected_as_dep(tmp_path: Path) -> None:
         tmp_path,
         "cvfunc",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def helper(x):\n"
             "    return x + 1\n\n"
             "def outer():\n"
             "    fn = helper\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def inner(x):\n"
             "        return fn(x)\n"
             "    return inner\n"
@@ -671,10 +671,10 @@ def test_closure_invalid_repr_picklable_captured(tmp_path: Path) -> None:
         "cvinvalid",
         (
             "import io\n\n"
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "def outer():\n"
             "    f = io.StringIO()\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def inner():\n"
             "        return f.read()\n"
             "    return inner\n"
@@ -698,13 +698,13 @@ def test_closure_func_refs_survive_refresh(tmp_path: Path) -> None:
         tmp_path,
         "cvrefresh",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def helper(x):\n"
             "    return x + 1\n\n"
             "def outer():\n"
             "    fn = helper\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def inner(x):\n"
             "        return fn(x)\n"
             "    return inner\n"
@@ -724,13 +724,13 @@ def test_closure_func_refs_serialization_roundtrip(tmp_path: Path) -> None:
         tmp_path,
         "cvserial",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def helper(x):\n"
             "    return x + 1\n\n"
             "def outer():\n"
             "    fn = helper\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def inner(x):\n"
             "        return fn(x)\n"
             "    return inner\n"
@@ -751,13 +751,13 @@ def test_closure_func_ref_reconstructed_code_is_runnable(tmp_path: Path) -> None
         tmp_path,
         "cvfuncrun",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def helper(x):\n"
             "    return x + 1\n\n"
             "def outer():\n"
             "    fn = helper\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def inner(x):\n"
             "        return fn(x) * 2\n"
             "    return inner\n"
@@ -774,22 +774,22 @@ def test_closure_func_ref_reconstructed_code_is_runnable(tmp_path: Path) -> None
 
 
 def test_closure_func_ref_end_to_end_pipeline(tmp_path: Path) -> None:
-    """Full pipeline: trace → serialize → reconstruct → exec with closure func ref."""
+    """Full pipeline: task → serialize → reconstruct → exec with closure func ref."""
     mod = create_module(
         tmp_path,
         "cvpipe",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def add_one(x):\n"
             "    return x + 1\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def double(x):\n"
             "    return x * 2\n\n"
             "def make_pipeline():\n"
             "    step1 = add_one\n"
             "    step2 = double\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def pipeline(x):\n"
             "        return step2(step1(x))\n"
             "    return pipeline\n"
@@ -819,8 +819,8 @@ def test_async_wrapper_preserves_behavior(tmp_path: Path) -> None:
         tmp_path,
         "asyncbehav",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "async def double(x):\n"
             "    return x * 2\n"
         ),
@@ -834,8 +834,8 @@ def test_async_wrapper_preserves_coroutine_flag(tmp_path: Path) -> None:
         tmp_path,
         "asyncflag",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "async def afunc():\n"
             "    return 1\n"
         ),
@@ -850,8 +850,8 @@ def test_async_wrapper_preserves_metadata(tmp_path: Path) -> None:
         "asyncmeta",
         (
             "import inspect\n\n"
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "async def my_coro(x):\n"
             "    return x\n"
         ),
@@ -867,11 +867,11 @@ def test_async_caller_to_async_callee(tmp_path: Path) -> None:
         tmp_path,
         "asynccall",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "async def async_helper(x):\n"
             "    return x + 1\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "async def async_caller(x):\n"
             "    return await async_helper(x)\n"
         ),
@@ -891,11 +891,11 @@ def test_async_caller_to_sync_callee(tmp_path: Path) -> None:
         tmp_path,
         "asyncsync",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def sync_helper(x):\n"
             "    return x + 1\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "async def async_caller(x):\n"
             "    return sync_helper(x)\n"
         ),
@@ -915,14 +915,14 @@ def test_async_dep_chain(tmp_path: Path) -> None:
         tmp_path,
         "asyncchain",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "async def step_a(x):\n"
             "    return x\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "async def step_b(x):\n"
             "    return await step_a(x)\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "async def step_c(x):\n"
             "    return await step_b(x)\n"
         ),
@@ -942,8 +942,8 @@ def test_async_no_self_dependency(tmp_path: Path) -> None:
         tmp_path,
         "asyncself",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "async def factorial(n):\n"
             "    if n <= 1:\n"
             "        return 1\n"
@@ -965,15 +965,15 @@ def test_async_runtime_dep_merges_with_static(tmp_path: Path) -> None:
         tmp_path,
         "asyncmerge",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def static_dep(x):\n"
             "    return x\n\n"
             "class Worker:\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def dynamic_dep(self, x):\n"
             "        return x\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "async def caller(w, x):\n"
             "    a = static_dep(x)\n"
             "    b = w.dynamic_dep(x)\n"
@@ -992,17 +992,17 @@ def test_async_runtime_dep_merges_with_static(tmp_path: Path) -> None:
 
 
 def test_async_reconstruction(tmp_path: Path) -> None:
-    """End-to-end: async function trace/serialize/reconstruct."""
+    """End-to-end: async function task/serialize/reconstruct."""
     mod = create_module(
         tmp_path,
         "asyncrecon",
         (
             "import json\n\n"
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "async def async_helper(data):\n"
             "    return json.dumps(data)\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "async def async_main(data):\n"
             "    return await async_helper(data)\n"
         ),
@@ -1022,18 +1022,18 @@ def test_async_concurrent_tasks_isolated(tmp_path: Path) -> None:
         "asynciso",
         (
             "import asyncio\n\n"
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "async def dep_a(x):\n"
             "    return x\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "async def dep_b(x):\n"
             "    return x\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "async def task_a(x):\n"
             "    await asyncio.sleep(0)\n"
             "    return await dep_a(x)\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "async def task_b(x):\n"
             "    await asyncio.sleep(0)\n"
             "    return await dep_b(x)\n"
@@ -1067,11 +1067,11 @@ def test_async_gen_body_dep_detected(tmp_path: Path) -> None:
         tmp_path,
         "agenbody",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def helper(x):\n"
             "    return x + 1\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "async def async_gen(items):\n"
             "    for item in items:\n"
             "        yield helper(item)\n"
@@ -1096,12 +1096,12 @@ def test_async_gen_caller_dep_detected(tmp_path: Path) -> None:
         tmp_path,
         "agencaller",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "async def async_gen(items):\n"
             "    for item in items:\n"
             "        yield item\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "async def caller():\n"
             "    return [x async for x in async_gen([1, 2, 3])]\n"
         ),
@@ -1121,8 +1121,8 @@ def test_async_gen_preserves_values(tmp_path: Path) -> None:
         tmp_path,
         "agenvals",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "async def countdown(n):\n"
             "    while n > 0:\n"
             "        yield n\n"
@@ -1142,11 +1142,11 @@ def test_async_gen_asend(tmp_path: Path) -> None:
         tmp_path,
         "agensend",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def transform(x):\n"
             "    return x * 10\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "async def accumulator():\n"
             "    total = 0\n"
             "    while True:\n"
@@ -1182,11 +1182,11 @@ def test_async_gen_athrow(tmp_path: Path) -> None:
         tmp_path,
         "agenthrow",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def fallback(x):\n"
             "    return x * -1\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "async def resilient():\n"
             "    while True:\n"
             "        try:\n"
@@ -1217,9 +1217,9 @@ def test_async_gen_aclose(tmp_path: Path) -> None:
         tmp_path,
         "agenclose",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "closed = False\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "async def infinite():\n"
             "    global closed\n"
             "    try:\n"
@@ -1246,8 +1246,8 @@ def test_async_gen_wrapper_preserves_metadata(tmp_path: Path) -> None:
         "agenmeta",
         (
             "import inspect\n\n"
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "async def my_agen(n):\n"
             "    yield n\n"
         ),
@@ -1263,12 +1263,12 @@ def test_async_gen_nested_chain(tmp_path: Path) -> None:
         tmp_path,
         "agenchain",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "async def inner():\n"
             "    yield 1\n"
             "    yield 2\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "async def outer():\n"
             "    async for val in inner():\n"
             "        yield val * 10\n"
@@ -1288,16 +1288,16 @@ def test_async_gen_nested_chain(tmp_path: Path) -> None:
 
 
 def test_async_gen_reconstruction(tmp_path: Path) -> None:
-    """End-to-end: async generator trace/serialize/reconstruct."""
+    """End-to-end: async generator task/serialize/reconstruct."""
     mod = create_module(
         tmp_path,
         "agenrecon",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def double(x):\n"
             "    return x * 2\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "async def gen_doubles(items):\n"
             "    for item in items:\n"
             "        yield double(item)\n"
@@ -1325,12 +1325,12 @@ def test_closure_untraced_user_function_auto_registered(tmp_path: Path) -> None:
         tmp_path,
         "cvuntraced",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "def helper(x):\n"
             "    return x + 1\n\n"
             "def outer():\n"
             "    fn = helper\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def inner(x):\n"
             "        return fn(x)\n"
             "    return inner\n"
@@ -1352,10 +1352,10 @@ def test_closure_lambda_captured(tmp_path: Path) -> None:
         tmp_path,
         "cvlambda",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "def outer():\n"
             "    fn = lambda x: x * 2\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def inner(x):\n"
             "        return fn(x)\n"
             "    return inner\n"
@@ -1374,14 +1374,14 @@ def test_closure_untraced_func_with_deps(tmp_path: Path) -> None:
         tmp_path,
         "cvuntraceddeps",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "def add(a, b):\n"
             "    return a + b\n\n"
             "def double_add(a, b):\n"
             "    return add(a, b) * 2\n\n"
             "def outer():\n"
             "    fn = double_add\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def inner(a, b):\n"
             "        return fn(a, b)\n"
             "    return inner\n"
@@ -1404,7 +1404,7 @@ def test_closure_builtin_still_warns(tmp_path: Path) -> None:
         tmp_path,
         "cvbuiltin",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class Unpicklable:\n"
             "    def __reduce__(self):\n"
             "        raise TypeError('nope')\n"
@@ -1412,7 +1412,7 @@ def test_closure_builtin_still_warns(tmp_path: Path) -> None:
             "        return '<Unpicklable>'\n\n"
             "def outer():\n"
             "    obj = Unpicklable()\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def inner():\n"
             "        return str(obj)\n"
             "    return inner\n"
@@ -1438,10 +1438,10 @@ def test_closure_defaultdict_constructor_expr(tmp_path: Path) -> None:
         "cvdefdict",
         (
             "from collections import defaultdict\n"
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "def outer():\n"
             "    d = defaultdict(int, {'a': 1})\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def inner():\n"
             "        return d['a']\n"
             "    return inner\n"
@@ -1466,10 +1466,10 @@ def test_closure_counter_constructor_expr(tmp_path: Path) -> None:
         "cvcounter",
         (
             "from collections import Counter\n"
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "def outer():\n"
             "    c = Counter({'x': 3, 'y': 1})\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def inner():\n"
             "        return c['x']\n"
             "    return inner\n"
@@ -1494,10 +1494,10 @@ def test_closure_deque_constructor_expr(tmp_path: Path) -> None:
         "cvdeque",
         (
             "from collections import deque\n"
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "def outer():\n"
             "    q = deque([1, 2, 3], maxlen=5)\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def inner():\n"
             "        return list(q)\n"
             "    return inner\n"
@@ -1522,13 +1522,13 @@ def test_closure_pickle_fallback_custom_class(tmp_path: Path) -> None:
         tmp_path,
         "cvpickle",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class Config:\n"
             "    def __init__(self, val):\n"
             "        self.val = val\n\n"
             "def outer():\n"
             "    cfg = Config(42)\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def inner():\n"
             "        return cfg.val\n"
             "    return inner\n"
@@ -1551,13 +1551,13 @@ def test_nested_function_chain_via_closure(tmp_path: Path) -> None:
         tmp_path,
         "nested_chain",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "def outer():\n"
             "    def step_a(x):\n"
             "        return x + 1\n\n"
             "    def step_b(x):\n"
             "        return step_a(x) * 2\n\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def pipeline(x):\n"
             "        return step_b(x) + 10\n\n"
             "    return pipeline\n"
@@ -1588,12 +1588,12 @@ def test_nested_function_in_class_method(tmp_path: Path) -> None:
         tmp_path,
         "nested_cls",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class MyClass:\n"
             "    def run(self):\n"
             "        def helper(x):\n"
             "            return x * 2\n\n"
-            "        @trace\n"
+            "        @offwork.task\n"
             "        def compute(x):\n"
             "            return helper(x) + 1\n\n"
             "        return compute\n"
@@ -1622,10 +1622,10 @@ def test_inline_import_module_captured(tmp_path: Path) -> None:
         tmp_path,
         "inline_imp",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "def outer():\n"
             "    import json as _json\n\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def serialize(data):\n"
             "        return _json.dumps(data)\n\n"
             "    return serialize\n"
@@ -1649,10 +1649,10 @@ def test_inline_import_aliased_module(tmp_path: Path) -> None:
         tmp_path,
         "inline_alias",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "def outer():\n"
             "    import os.path as _osp\n\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def check(p):\n"
             "        return _osp.exists(p)\n\n"
             "    return check\n"
@@ -1676,10 +1676,10 @@ def test_inline_import_same_name_module(tmp_path: Path) -> None:
         tmp_path,
         "inline_same",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "def outer():\n"
             "    import json\n\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def dump(data):\n"
             "        return json.dumps(data)\n\n"
             "    return dump\n"

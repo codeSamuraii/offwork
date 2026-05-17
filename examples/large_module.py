@@ -1,7 +1,7 @@
 """Run a large multi-file module on a remote worker.
 
 The stress_test_module has 47 functions across 7 files, 3 classes, and deep
-dependency chains. Only the entry point below is decorated with @trace --
+dependency chains. Only the entry point below is decorated with @offwork.task --
 offwork discovers everything else automatically.
 
 Requires Redis on localhost:6379.  Install: pip install redis
@@ -24,7 +24,6 @@ from pathlib import Path
 #     sys.path.insert(0, str(_REPO_ROOT))
 
 import offwork
-from offwork import trace
 
 from tests.fixtures.stress_test_module.analyzers import build_report, detect_anomalies, analyze_measurements
 from tests.fixtures.stress_test_module.formatters import format_text_report
@@ -33,7 +32,7 @@ from tests.fixtures.stress_test_module.validators import validate_measurements
 from tests.fixtures.stress_test_module.transformers import compute_deltas, normalize_units, clean_measurements
 
 
-@trace
+@offwork.task
 def full_sensor_report(sensor_count: int, readings_per_sensor: int, seed: int = 42) -> str:
     """
     Calls functions from multiple modules, with complex dependency chains.

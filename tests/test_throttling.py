@@ -6,9 +6,10 @@ from datetime import timedelta
 
 import pytest
 
+import offwork
 from offwork.core.task import Task
 from offwork.core.errors import ThrottleError
-from offwork.graph.decorator import trace
+from offwork.graph.decorator import task
 from offwork.worker.result import ResultEnvelope, Result
 from offwork.worker.backends.local import _Broker
 
@@ -106,7 +107,7 @@ class TestBrokerThrottle:
 
 class TestTraceThrottleOption:
     def test_throttle_timedelta_converted(self) -> None:
-        @trace(throttle=timedelta(hours=1))
+        @offwork.task(throttle=timedelta(hours=1))
         def my_func() -> int:
             return 1
 
@@ -114,7 +115,7 @@ class TestTraceThrottleOption:
         assert opts["throttle"] == 3600.0
 
     def test_throttle_float_stored(self) -> None:
-        @trace(throttle=120.0)
+        @offwork.task(throttle=120.0)
         def my_func() -> int:
             return 1
 
@@ -123,6 +124,6 @@ class TestTraceThrottleOption:
 
     def test_throttle_negative_raises(self) -> None:
         with pytest.raises(ValueError, match="throttle must be positive"):
-            @trace(throttle=-1.0)
+            @offwork.task(throttle=-1.0)
             def my_func() -> int:
                 return 1

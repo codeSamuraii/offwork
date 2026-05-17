@@ -1,8 +1,8 @@
 """Throttling and retry with offwork.
 
 Demonstrates:
-- @trace(throttle=timedelta) — rate-limit executions
-- @trace(retries=N, retry_delay=T) — retry with exponential backoff
+- @offwork.task(throttle=timedelta) — rate-limit executions
+- @offwork.task(retries=N, retry_delay=T) — retry with exponential backoff
 - Combining throttle + retry
 
 Usage:
@@ -18,21 +18,21 @@ import random
 from datetime import timedelta
 
 import offwork
-from offwork import trace, ThrottleError
+from offwork import ThrottleError
 
 offwork.connect("local://localhost:9748")
 
 
 # --- Throttling: at most once every 5 seconds ---
 
-@trace(throttle=timedelta(seconds=5))
+@offwork.task(throttle=timedelta(seconds=5))
 def expensive_query(query: str) -> str:
     return f"Result for '{query}'"
 
 
 # --- Retry: 3 attempts with exponential backoff ---
 
-@trace(retries=3, retry_delay=0.5)
+@offwork.task(retries=3, retry_delay=0.5)
 def flaky_operation(x: int) -> int:
     if random.random() < 0.5:
         raise RuntimeError("Random failure!")

@@ -15,7 +15,8 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from offwork import pack, trace
+from offwork import pack
+import offwork
 from offwork.core.task import Task
 from offwork.worker.result import ResultEnvelope
 from offwork.worker.worker import Worker
@@ -198,7 +199,7 @@ class TestEndToEnd:
         if not await _rabbitmq_available():
             pytest.skip("RabbitMQ not available")
 
-        @trace
+        @offwork.task
         def add(a: int, b: int) -> int:
             return a + b
 

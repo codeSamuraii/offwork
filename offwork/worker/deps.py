@@ -39,7 +39,7 @@ def install_package_as(package: str) -> Iterator[None]:
     """Declare the pip package name for imports inside this block.
 
     At runtime this is a no-op -- the import executes normally.  The
-    ``@trace`` analyzer detects the ``with`` block in the AST and records
+    ``@offwork.task`` analyzer detects the ``with`` block in the AST and records
     the *package* name on every :class:`ImportInfo` inside it, so the
     worker knows which pip package to install.
 
@@ -64,7 +64,7 @@ class _WorkerOnlyStub(types.ModuleType):
     def _err(self) -> WorkerOnlyError:
         return WorkerOnlyError(
             f"'{self.__name__}' was imported with worker_only_import; "
-            "it must only be used inside a @trace function executed on a worker"
+            "it must only be used inside a @offwork.task function executed on a worker"
         )
 
     def __getattr__(self, name: str) -> Any:
@@ -86,7 +86,7 @@ class _StubAttr:
     def _err(self) -> WorkerOnlyError:
         return WorkerOnlyError(
             f"'{self._qualname}' was imported with worker_only_import; "
-            "it must only be used inside a @trace function executed on a worker"
+            "it must only be used inside a @offwork.task function executed on a worker"
         )
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
@@ -183,7 +183,7 @@ def worker_only_import(package: str | None = None) -> Iterator[None]:
     """Skip installing packages locally; the worker installs them on demand.
 
     Imports inside this block resolve to lightweight stubs on the client.
-    The ``@trace`` analyzer records the imports as worker-only, and the
+    The ``@offwork.task`` analyzer records the imports as worker-only, and the
     worker installs them via pip before reconstructing the function.
 
     The optional *package* argument overrides the pip package name (same

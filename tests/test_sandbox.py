@@ -570,7 +570,7 @@ class TestGuestAgentProgress:
             assert sys.modules.get("offwork") is original
         # offwork IS in sys.modules because the test suite imports it,
         # so just verify it's the real one, not a fake
-        assert hasattr(sys.modules["offwork"], "trace")
+        assert hasattr(sys.modules["offwork"], "task")
 
 
 # ===========================================================================

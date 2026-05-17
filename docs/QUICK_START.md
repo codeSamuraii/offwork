@@ -12,18 +12,17 @@ offwork itself has zero runtime dependencies. Backend extras are only needed whe
 
 ## Remote execution
 
-Add `@trace` to the entry point. Everything it calls is captured automatically.
+Add `@offwork.task` to the entry point. Everything it calls is captured automatically.
 
 ```python
 import asyncio, math, offwork
-from offwork import trace
 
 offwork.connect("local://localhost:9748")
 
 def add(a, b):
     return a + b
 
-@trace
+@offwork.task
 def hypotenuse(a: float, b: float) -> float:
     return math.sqrt(add(a**2, b**2))
 
@@ -55,7 +54,7 @@ r1, r2 = await asyncio.gather(func.run(3, 4), func.run(5, 12))  # concurrent
 ## Retry and timeout
 
 ```python
-@trace(timeout=30, retries=3)
+@offwork.task(timeout=30, retries=3)
 def flaky_task(url: str) -> str: ...
 ```
 
@@ -79,7 +78,7 @@ schedule = await func.run_every(timedelta(hours=1), *args)
 await schedule.cancel()  # stop the schedule
 ```
 
-`start_at` and `start_in` return a `Result` handle (like `.start()`).
+`run_at` and `run_in` return a `Result` handle (like `.start()`).
 
 ## Throttling
 
@@ -88,7 +87,7 @@ Rate-limit how often a function can be executed:
 ```python
 from datetime import timedelta
 
-@trace(throttle=timedelta(hours=24) / 50)  # ~29 min cooldown
+@offwork.task(throttle=timedelta(hours=24) / 50)  # ~29 min cooldown
 def expensive_api_call(query: str) -> str: ...
 ```
 
@@ -121,7 +120,7 @@ with worker_only_import("opencv-python-headless"):
     import cv2
 ```
 
-The local `requests` and `cv2` resolve to lightweight stubs. They're fine to reference inside a `@trace` function (the worker re-imports them for real), but raise `WorkerOnlyError` if used directly on the client.
+The local `requests` and `cv2` resolve to lightweight stubs. They're fine to reference inside a `@offwork.task` function (the worker re-imports them for real), but raise `WorkerOnlyError` if used directly on the client.
 
 Only the names imported literally inside the `with` block are stubbed — real installed packages and their transitive imports are unaffected.
 
@@ -131,7 +130,7 @@ Only the names imported literally inside the `with` block are stubbed — real i
 from offwork import progress, TaskCancelled, RemoteError, TaskStalled
 
 # Inside a task — report progress (no-op when called locally)
-@trace
+@offwork.task
 def train(epochs: int) -> float:
     for i in range(epochs):
         ...

@@ -415,11 +415,11 @@ class TestReconstruction:
             "store_recon",
             (
                 "import csv\nimport json as js\n\n"
-                "from offwork import trace\n\n"
-                "@trace\n"
+                "import offwork\n\n"
+                "@offwork.task\n"
                 "def parse(data):\n"
                 "    return csv.reader(data)\n\n"
-                "@trace\n"
+                "@offwork.task\n"
                 "def transform(data):\n"
                 "    rows = parse(data)\n"
                 "    return js.dumps(rows)\n"
@@ -440,10 +440,10 @@ class TestToStore:
             tmp_path,
             "tostore",
             (
-                "from offwork import trace\n\n"
-                "@trace\n"
+                "import offwork\n\n"
+                "@offwork.task\n"
                 "def leaf():\n    return 1\n\n"
-                "@trace\n"
+                "@offwork.task\n"
                 "def root():\n    return leaf()\n"
             ),
         )
@@ -462,12 +462,12 @@ class TestToStore:
             tmp_path,
             "tostoresub",
             (
-                "from offwork import trace\n\n"
-                "@trace\n"
+                "import offwork\n\n"
+                "@offwork.task\n"
                 "def a():\n    return 1\n\n"
-                "@trace\n"
+                "@offwork.task\n"
                 "def b():\n    return a()\n\n"
-                "@trace\n"
+                "@offwork.task\n"
                 "def c():\n    return 2\n"
             ),
         )

@@ -13,12 +13,12 @@ Usage:
 import asyncio
 
 import offwork
-from offwork import trace, TaskCancelled
+from offwork import TaskCancelled
 
 offwork.connect("local://localhost:9748")
 
 
-@trace
+@offwork.task
 async def slow_computation(n: int) -> int:
     """A deliberately slow function."""
     total = 0

@@ -1,4 +1,4 @@
-"""Protocol types for ``@trace``-decorated functions."""
+"""Protocol types for ``@offwork.task``-decorated functions."""
 
 from datetime import datetime, timedelta
 from typing import Any, TypeVar, Protocol, ParamSpec
@@ -12,7 +12,7 @@ R = TypeVar("R")
 
 
 class TracedFunction(Protocol[P, R]):
-    """A function decorated with ``@trace``, with remote execution methods."""
+    """A function decorated with ``@offwork.task``, with remote execution methods."""
 
     __offwork_traced__: bool
     __wrapped__: Callable[P, R]
@@ -43,6 +43,6 @@ class TracedFunction(Protocol[P, R]):
 
 
 class TraceDecorator(Protocol):
-    """The ``@trace`` decorator when called with keyword arguments."""
+    """The ``@offwork.task`` decorator when called with keyword arguments."""
 
     def __call__(self, func: Callable[P, R]) -> TracedFunction[P, R]: ...

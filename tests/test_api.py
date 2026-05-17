@@ -5,7 +5,7 @@ import warnings
 import pytest
 
 import offwork
-from offwork import Graph, Task, get_graph, pack, trace
+from offwork import Graph, Task, get_graph, pack
 
 
 # -- get_graph() / graph ----------------------------------------------------
@@ -26,11 +26,11 @@ class TestGraph:
 class TestPack:
     def _make_traced(self):
         """Create traced functions within the current default graph."""
-        @trace
+        @offwork.task
         def double(x: int) -> int:
             return x * 2
 
-        @trace
+        @offwork.task
         def add_then_double(a: int, b: int) -> int:
             return double(a + b)
 

@@ -43,10 +43,10 @@ def test_auto_discover_same_module(tmp_path: Path) -> None:
         tmp_path,
         "adbasic",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "def normalize(text):\n"
             "    return text.strip().lower()\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def parse_row(row):\n"
             "    return [normalize(cell) for cell in row]\n"
         ),
@@ -64,12 +64,12 @@ def test_auto_discover_transitive(tmp_path: Path) -> None:
         tmp_path,
         "adtrans",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "def step_c(x):\n"
             "    return x\n\n"
             "def step_b(x):\n"
             "    return step_c(x)\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def step_a(x):\n"
             "    return step_b(x)\n"
         ),
@@ -89,10 +89,10 @@ def test_auto_discover_with_imports(tmp_path: Path) -> None:
         "adimports",
         (
             "import csv\n\n"
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "def parse(data):\n"
             "    return list(csv.reader(data.splitlines()))\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def run(data):\n"
             "    return parse(data)\n"
         ),
@@ -109,8 +109,8 @@ def test_auto_discover_skips_builtins(tmp_path: Path) -> None:
         tmp_path,
         "adbuiltins",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def run(items):\n"
             "    print(len(items))\n"
             "    return list(range(10))\n"
@@ -130,10 +130,10 @@ def test_auto_discover_class_no_init(tmp_path: Path) -> None:
         tmp_path,
         "adclass",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class MyClass:\n"
             "    pass\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def run():\n"
             "    return MyClass()\n"
         ),
@@ -148,13 +148,13 @@ def test_auto_discover_no_duplicate(tmp_path: Path) -> None:
         tmp_path,
         "adnodup",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "def helper(x):\n"
             "    return x + 1\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def caller_a(x):\n"
             "    return helper(x)\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def caller_b(x):\n"
             "    return helper(x)\n"
         ),
@@ -182,8 +182,8 @@ def test_auto_discover_cross_module(tmp_path: Path) -> None:
         "adcross",
         (
             "from adutils import helper\n\n"
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def run(x):\n"
             "    return helper(x)\n"
         ),
@@ -203,8 +203,8 @@ def test_auto_discover_preserves_stdlib_imports(tmp_path: Path) -> None:
         "adstdlib",
         (
             "import json\n\n"
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def run(data):\n"
             "    return json.dumps(data)\n"
         ),
@@ -229,8 +229,8 @@ def test_auto_discover_skips_aliased_imports(tmp_path: Path) -> None:
         "adalias",
         (
             "from adutils2 import helper as h\n\n"
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def run(x):\n"
             "    return h(x)\n"
         ),
@@ -255,13 +255,13 @@ def test_untraced_dep_end_to_end(tmp_path: Path) -> None:
         "ade2e",
         (
             "import csv\n\n"
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "def normalize(text):\n"
             "    return text.strip().lower()\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def parse_row(row):\n"
             "    return [normalize(cell) for cell in row]\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def parse_csv(data):\n"
             "    rows = list(csv.reader(data.splitlines()))\n"
             "    return [parse_row(row) for row in rows]\n"
@@ -292,12 +292,12 @@ def test_untraced_dep_chain_reconstruction(tmp_path: Path) -> None:
         tmp_path,
         "adchain",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "def step_c(x):\n"
             "    return x * 2\n\n"
             "def step_b(x):\n"
             "    return step_c(x) + 1\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def step_a(x):\n"
             "    return step_b(x) + 10\n"
         ),
@@ -326,8 +326,8 @@ def test_auto_discover_cross_module_reconstruction(tmp_path: Path) -> None:
         "adxmain",
         (
             "from adxutils import double\n\n"
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def run(x):\n"
             "    return double(x) + 1\n"
         ),
@@ -357,7 +357,7 @@ def test_auto_register_warns_on_source_unavailable(tmp_path: Path) -> None:
             "adwarn",
             (
                 "import posixpath\n\n"
-                "from offwork import trace\n\n"
+                "import offwork\n\n"
                 "# Rebind a stdlib function under a new name to bypass stdlib check\n"
                 "helper = type(lambda: None)(\n"
                 "    posixpath.join.__code__,\n"
@@ -366,7 +366,7 @@ def test_auto_register_warns_on_source_unavailable(tmp_path: Path) -> None:
                 ")\n"
                 "helper.__module__ = 'adwarn'\n"
                 "helper.__qualname__ = 'helper'\n\n"
-                "@trace\n"
+                "@offwork.task\n"
                 "def run(x):\n"
                 "    return helper(x)\n"
             ),
@@ -385,8 +385,8 @@ def test_auto_discover_no_warning_for_local_variables(tmp_path: Path) -> None:
             tmp_path,
             "adnolocal",
             (
-                "from offwork import trace\n\n"
-                "@trace\n"
+                "import offwork\n\n"
+                "@offwork.task\n"
                 "def run(callback, items):\n"
                 "    result = callback(items)\n"
                 "    return result\n"
@@ -407,9 +407,9 @@ def test_auto_discover_staticmethod(tmp_path: Path) -> None:
         tmp_path,
         "adstaticmethod",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class Calc:\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def run(self, x):\n"
             "        return self.double(x)\n\n"
             "    @staticmethod\n"
@@ -434,9 +434,9 @@ def test_auto_discover_classmethod(tmp_path: Path) -> None:
         tmp_path,
         "adclassmethod",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class MyClass:\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def run(cls):\n"
             "        return cls.create(42)\n\n"
             "    @classmethod\n"
@@ -462,13 +462,13 @@ def test_auto_discover_no_warning_for_closure_vars(tmp_path: Path) -> None:
             tmp_path,
             "adnoclosure",
             (
-                "from offwork import trace\n\n"
-                "@trace\n"
+                "import offwork\n\n"
+                "@offwork.task\n"
                 "def helper(x):\n"
                 "    return x + 1\n\n"
                 "def outer():\n"
                 "    fn = helper\n"
-                "    @trace\n"
+                "    @offwork.task\n"
                 "    def inner(x):\n"
                 "        return fn(x)\n"
                 "    return inner\n"
@@ -493,13 +493,13 @@ def test_auto_discover_class_constructor(tmp_path: Path) -> None:
         tmp_path,
         "adctor",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class Processor:\n"
             "    def __init__(self, scale):\n"
             "        self.scale = scale\n\n"
             "    def run(self, x):\n"
             "        return x * self.scale\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def process(x):\n"
             "    p = Processor(10)\n"
             "    return p.run(x)\n"
@@ -521,13 +521,13 @@ def test_auto_discover_class_init_with_deps(tmp_path: Path) -> None:
         tmp_path,
         "adctordeps",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class Builder:\n"
             "    def __init__(self, data):\n"
             "        self.result = self.transform(data)\n\n"
             "    def transform(self, data):\n"
             "        return [x * 2 for x in data]\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def build(data):\n"
             "    return Builder(data).result\n"
         ),
@@ -550,8 +550,8 @@ def test_auto_discover_class_skips_stdlib_classes(tmp_path: Path) -> None:
         "adstdclass",
         (
             "from collections import OrderedDict\n"
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def run():\n"
             "    return OrderedDict(a=1)\n"
         ),
@@ -574,9 +574,9 @@ def test_module_constant_int(tmp_path: Path) -> None:
         tmp_path,
         "adconst_int",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "MAX_RETRIES = 5\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def get_retries():\n"
             "    return MAX_RETRIES\n"
         ),
@@ -596,9 +596,9 @@ def test_module_constant_dict(tmp_path: Path) -> None:
         tmp_path,
         "adconst_dict",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "CONFIG = {'debug': True, 'workers': 4}\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def get_config():\n"
             "    return CONFIG\n"
         ),
@@ -620,9 +620,9 @@ def test_module_constant_with_import(tmp_path: Path) -> None:
         "adconst_import",
         (
             "import os\n"
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "SEP = os.sep\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def get_sep():\n"
             "    return SEP\n"
         ),
@@ -642,10 +642,10 @@ def test_module_constant_skips_dunders(tmp_path: Path) -> None:
         tmp_path,
         "adconst_dunder",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "__version__ = '1.0'\n"
             "VALUE = 42\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def get():\n"
             "    return VALUE\n"
         ),
@@ -661,9 +661,9 @@ def test_module_constant_type_alias(tmp_path: Path) -> None:
         tmp_path,
         "adconst_alias",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "Multiplier: int = 10\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def scale(x):\n"
             "    return x * Multiplier\n"
         ),
@@ -687,7 +687,7 @@ def test_super_init_call(tmp_path: Path) -> None:
         tmp_path,
         "adsuper",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class Base:\n"
             "    def __init__(self, x):\n"
             "        self.x = x\n\n"
@@ -695,7 +695,7 @@ def test_super_init_call(tmp_path: Path) -> None:
             "    def __init__(self, x, y):\n"
             "        super().__init__(x)\n"
             "        self.y = y\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def create(x, y):\n"
             "    return Child(x, y)\n"
         ),
@@ -719,12 +719,12 @@ def test_super_method_call(tmp_path: Path) -> None:
         tmp_path,
         "adsupermethod",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class Base:\n"
             "    def greet(self):\n"
             "        return 'hello'\n\n"
             "class Child(Base):\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def greet(self):\n"
             "        return super().greet() + ' world'\n"
         ),
@@ -744,9 +744,9 @@ def test_class_inheriting_stdlib(tmp_path: Path) -> None:
         tmp_path,
         "adstdbase",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class MyList(list):\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def first(self):\n"
             "        return self[0] if self else None\n"
         ),
@@ -772,13 +772,13 @@ def test_metaclass_reconstructed(tmp_path: Path) -> None:
         "admeta",
         (
             "from abc import ABCMeta, abstractmethod\n"
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class Animal(metaclass=ABCMeta):\n"
             "    @abstractmethod\n"
             "    def speak(self):\n"
             "        ...\n\n"
             "class Dog(Animal):\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def speak(self):\n"
             "        return super().speak() or 'woof'\n"
         ),
@@ -800,12 +800,12 @@ def test_metaclass_with_bases(tmp_path: Path) -> None:
         "admetabases",
         (
             "from abc import ABCMeta\n"
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class Base(metaclass=ABCMeta):\n"
             "    def value(self):\n"
             "        return 42\n\n"
             "class MyABC(Base):\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def get(self):\n"
             "        return super().value()\n"
         ),
@@ -825,14 +825,14 @@ def test_init_subclass_replayed(tmp_path: Path) -> None:
         tmp_path,
         "adinitsubclass",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class Registry:\n"
             "    _registry = []\n"
             "    def __init_subclass__(cls, **kwargs):\n"
             "        super().__init_subclass__(**kwargs)\n"
             "        Registry._registry.append(cls.__name__)\n\n"
             "class Plugin(Registry):\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def run(self):\n"
             "        return super().__init_subclass__.__qualname__\n"
         ),
@@ -858,11 +858,11 @@ def test_class_attrs_captured(tmp_path: Path) -> None:
         tmp_path,
         "adclsattrs",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class Config:\n"
             "    MAX = 10\n"
             "    name = 'default'\n\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def get_max(self):\n"
             "        return self.MAX\n"
         ),
@@ -882,10 +882,10 @@ def test_class_annotated_attrs_captured(tmp_path: Path) -> None:
         tmp_path,
         "adclsann",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class Item:\n"
             "    count: int = 0\n\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def increment(self):\n"
             "        Item.count += 1\n"
             "        return Item.count\n"
@@ -902,12 +902,12 @@ def test_class_decorator_captured(tmp_path: Path) -> None:
         "adclsdeco",
         (
             "from dataclasses import dataclass\n"
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "@dataclass\n"
             "class Point:\n"
             "    x: float\n"
             "    y: float\n\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def magnitude(self):\n"
             "        return (self.x ** 2 + self.y ** 2) ** 0.5\n"
         ),
@@ -929,10 +929,10 @@ def test_class_docstring_captured(tmp_path: Path) -> None:
         tmp_path,
         "adclsdoc",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class Documented:\n"
             '    """A documented class."""\n\n'
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def method(self):\n"
             "        return 1\n"
         ),
@@ -951,11 +951,11 @@ def test_bare_class_no_init_chained(tmp_path: Path) -> None:
         tmp_path,
         "adbarenoinit",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class Tag:\n"
             "    def label(self):\n"
             "        return 'tag'\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def construct_tag():\n"
             "    return Tag().label()\n"
         ),
@@ -980,7 +980,7 @@ def test_init_subclass_registry_pulls_subclasses(tmp_path: Path) -> None:
         tmp_path,
         "adsubregistry",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class Plugin:\n"
             "    _registry = {}\n"
             "    def __init__(self):\n"
@@ -994,7 +994,7 @@ def test_init_subclass_registry_pulls_subclasses(tmp_path: Path) -> None:
             "class GreetPlugin(Plugin, name='greet'):\n"
             "    def run(self, payload):\n"
             "        return f'hello, {payload}!'\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def dispatch(plugin_name, payload):\n"
             "    Plugin()\n"
             "    cls = Plugin._registry[plugin_name]\n"
@@ -1021,7 +1021,7 @@ def test_class_level_descriptor_registered(tmp_path: Path) -> None:
         tmp_path,
         "addescriptor",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class Doubler:\n"
             "    def __set_name__(self, owner, name):\n"
             "        self._attr = f'_{name}'\n"
@@ -1035,7 +1035,7 @@ def test_class_level_descriptor_registered(tmp_path: Path) -> None:
             "    value = Doubler()\n"
             "    def __init__(self, start):\n"
             "        self.value = start\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def doubled(start):\n"
             "    c = Counter(start)\n"
             "    return c.value\n"

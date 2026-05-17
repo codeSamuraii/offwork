@@ -6,12 +6,12 @@ This file is a compact, technical orientation for AI coding assistants. For user
 
 A Python package that serializes a function — its source, its dependency graph, its imports, its closure, its arguments — into a self-contained JSON envelope, ships it to a worker process, and executes it there. Workers need no prior knowledge of the user's codebase: they reconstruct source from the payload, `pip install` missing packages on the fly, `compile` + `exec` the result, and return the value.
 
-Add `@trace` to one entry-point function. Call `await func.run(...)`. That is the entire surface area.
+Add `@offwork.task` to one entry-point function. Call `await func.run(...)`. That is the entire surface area.
 
 ## Design goals
 
 - **Zero deployment** — no shared filesystem, no image rebuilds, no code sync. The client ships everything the worker needs in one envelope.
-- **Zero setup for users** — one decorator (`@trace`), one connect call. Workers auto-install missing third-party packages.
+- **Zero setup for users** — one decorator (`@offwork.task`), one connect call. Workers auto-install missing third-party packages.
 - **Zero hard dependencies** — offwork itself has no required runtime deps. `redis`, `aio-pika`, `docker` are optional extras loaded lazily.
 - **Async-native** — all I/O (`Backend`, `Worker`, `Result`, `_venv`) is `asyncio`. Sync user functions run in `loop.run_in_executor`.
 - **Pluggable transport** — `Backend` ABC abstracts task queue + result store + heartbeat + cancellation + progress + scheduling + throttling.
@@ -22,7 +22,7 @@ Add `@trace` to one entry-point function. Call `await func.run(...)`. That is th
 
 | Feature | Entry point | Implementation |
 |---|---|---|
-| Decorator | `@trace` | [offwork/graph/decorator.py](../offwork/graph/decorator.py) |
+| Decorator | `@offwork.task` | [offwork/graph/decorator.py](../offwork/graph/decorator.py) |
 | Auto-capture (source, imports, closures, classes, module vars) | `Graph.serialize` | [offwork/graph/analyzer.py](../offwork/graph/analyzer.py), [offwork/graph/graph.py](../offwork/graph/graph.py) |
 | Reconstruction → self-contained source | `Graph.reconstruct` | [offwork/graph/store.py](../offwork/graph/store.py) |
 | Runtime call-stack tracing | `contextvars` | [offwork/graph/tracing.py](../offwork/graph/tracing.py) |
@@ -62,7 +62,7 @@ offwork/
         token.py         Token generate/save/load (~/.offwork/token).
         pairing.py       6-digit-PIN ECDH-style key exchange.
     graph/
-        decorator.py     @trace. Wraps function with .run/.start/.map and traced markers.
+        decorator.py     @offwork.task. Wraps function with .run/.start/.map and traced markers.
         analyzer.py      AST analysis: imports, calls, closures, classes, module vars,
                          install_package_as / worker_only_import detection,
                          star-import resolution.
@@ -121,7 +121,7 @@ Worker side: `serve` ([worker/remote.py](../offwork/worker/remote.py)) drives th
 
 The `__all__` in [offwork/__init__.py](../offwork/__init__.py) is the public surface. Anything else is internal and subject to change. Notable exports:
 
-- Decorator: `trace`.
+- Decorator: `task`.
 - Lifecycle: `connect(url)`, `disconnect()`, `serve(url, concurrency=, sandbox=, ...)`.
 - Power-user: `Task`, `Worker`, `Backend`, `serialize`, `reconstruct`, `pack`, `execute`, `get_graph`, `Graph`.
 - Result: `Result`, `ResultEnvelope`, `ProgressInfo`, `progress`.
@@ -130,14 +130,14 @@ The `__all__` in [offwork/__init__.py](../offwork/__init__.py) is the public sur
 - Auth: `generate_token`, `save_token`, `load_token`, `clear_token`, `resolve_signing_key`, `sign_json`, `verify_and_load_json`, `compute_signature`, `verify_signature`, `derive_key`, plus pairing helpers.
 - Sandbox: `DockerSandbox`.
 
-`func.run`, `func.start`, `func.map`, `func.run_in`, `func.run_at`, `func.run_every` are attributes attached by `@trace` ([graph/decorator.py](../offwork/graph/decorator.py)).
+`func.run`, `func.start`, `func.map`, `func.run_in`, `func.run_at`, `func.run_every` are attributes attached by `@offwork.task` ([graph/decorator.py](../offwork/graph/decorator.py)).
 
 ## Conventions and invariants
 
 - **Async by default.** Every `Backend` method is `async def`. Adding a sync helper is a smell — use `loop.run_in_executor` only for unavoidable blocking calls (pip subprocess, sync user code).
 - **No required runtime dependencies.** `redis`, `aio_pika`, `docker` are imported lazily inside the modules that need them. Do not move these imports to the top of any always-imported file.
 - **Content hash excludes structural data.** `FunctionNode`'s hash includes `source`, `imports`, `closure_*`, `module_vars`, `class_*` but NOT `dependencies`. This is load-bearing for cache reuse — see [core/models.py](../offwork/core/models.py).
-- **`@trace` is stripped from reconstructed source.** Reconstructed code must not import offwork. Anything that survives reconstruction must be in stdlib or installable via pip.
+- **`@offwork.task` is stripped from reconstructed source.** Reconstructed code must not import offwork. Anything that survives reconstruction must be in stdlib or installable via pip.
 - **Closure capture is multi-tier.** Order matters: `repr()` → traced refs → lambdas → user funcs → stdlib constructor expressions → pickle → warning. See [graph/analyzer.py](../offwork/graph/analyzer.py).
 - **Auto-discovery is recursive.** Calling an untraced user function from a traced one registers it transitively. Cross-module imports become inline edges.
 - **Backend defaults are no-ops.** `Backend` ABC supplies safe defaults for cancellation, progress, throttling, scheduling, notifications. Subclasses override only what they support.
@@ -147,7 +147,7 @@ The `__all__` in [offwork/__init__.py](../offwork/__init__.py) is the public sur
 
 ## Where things live (cheat-sheet for common edits)
 
-- New decorator option (e.g. `@trace(priority=...)`) → [graph/decorator.py](../offwork/graph/decorator.py), [core/task.py](../offwork/core/task.py), `Worker.run_with_policy` in [worker/worker.py](../offwork/worker/worker.py).
+- New decorator option (e.g. `@offwork.task(priority=...)`) → [graph/decorator.py](../offwork/graph/decorator.py), [core/task.py](../offwork/core/task.py), `Worker.run_with_policy` in [worker/worker.py](../offwork/worker/worker.py).
 - New backend → subclass `Backend` in [worker/backends/base.py](../offwork/worker/backends/base.py), wire URL scheme in [worker/remote.py](../offwork/worker/remote.py).
 - New auto-discovery rule → [graph/analyzer.py](../offwork/graph/analyzer.py); update reconstruction in [graph/store.py](../offwork/graph/store.py); add fields to `FunctionNode` in [core/models.py](../offwork/core/models.py) (remember the content-hash inclusion rule).
 - New CLI subcommand → [offwork/__main__.py](../offwork/__main__.py).
@@ -171,12 +171,3 @@ mypy offwork
 ```
 
 Worker logs are concise and structured. The first execution of a new graph shows `build` + any `pip <pkg>` annotations; repeats show `build` (cached venv) or `cached` (subgraph cache hit).
-
-
-----
-
-# Question
-
-Can you make sure all the example scripts in `examples/` can be run standalone ? For example, the FastAPI example need the user to make a request. I want these examples to represent real situations, but I'd like the user to be able to run them and see the results immediately.
-
-This means: generating image data and report data in the script directly, and making the request for the user.

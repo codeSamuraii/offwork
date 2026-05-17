@@ -67,7 +67,7 @@ def progress(
 ) -> None:
     """Report task progress from within a running function.
 
-    Call this inside a ``@trace``-decorated function to report progress
+    Call this inside a ``@offwork.task``-decorated function to report progress
     to the client.  When called outside a worker, this is a silent no-op.
 
     Accepts either a percentage or a current/total pair::

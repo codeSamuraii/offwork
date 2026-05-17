@@ -16,8 +16,8 @@ def test_csv_requests_example(tmp_path: Path) -> None:
         "example",
         (
             "import csv\nimport requests\n\n"
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def parse_csv(csv_data: str) -> dict:\n"
             '    """Parses CSV data."""\n'
             "    reader = csv.reader(csv_data)\n"
@@ -26,7 +26,7 @@ def test_csv_requests_example(tmp_path: Path) -> None:
             "        return {}\n"
             "    headers = rows[0]\n"
             "    return {i: dict(zip(headers, row)) for i, row in enumerate(rows[1:])}\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def fetch_table(url: str) -> dict:\n"
             '    """Fetches CSV data from the given URL."""\n'
             "    csv_data = requests.get(url)\n"
@@ -59,12 +59,12 @@ def test_three_level_chain(tmp_path: Path) -> None:
         "chain",
         (
             "import csv\nimport json\nimport os\n\n"
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def step_a(x):\n    return csv.reader(x)\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def step_b(x):\n    return json.dumps(step_a(x))\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def step_c(x):\n    os.getenv('X')\n    return step_b(x)\n"
         ),
     )
@@ -88,14 +88,14 @@ def test_diamond_dependency(tmp_path: Path) -> None:
         "diamond",
         (
             "import csv\nimport json\n\n"
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def base(x):\n    return csv.reader(x)\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def left(x):\n    return json.dumps(base(x))\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def right(x):\n    return list(base(x))\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def top(x):\n    return left(x), right(x)\n"
         ),
     )
@@ -119,10 +119,10 @@ def test_independent_functions(tmp_path: Path) -> None:
         "indep",
         (
             "import csv\nimport json\n\n"
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def func_a(x):\n    return csv.reader(x)\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def func_b(x):\n    return json.dumps(x)\n"
         ),
     )
@@ -145,10 +145,10 @@ def test_order_independent_registration(tmp_path: Path) -> None:
         tmp_path,
         "late",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def caller():\n    return callee()\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def callee():\n    return 42\n"
         ),
     )
@@ -165,12 +165,12 @@ def test_class_methods_end_to_end(tmp_path: Path) -> None:
         "clse2e",
         (
             "import csv\n\n"
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class DataProcessor:\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def read(self, data):\n"
             "        return list(csv.reader(data))\n\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def process(self, data):\n"
             "        rows = self.read(data)\n"
             "        return rows\n"
@@ -193,8 +193,8 @@ def test_star_import_end_to_end(tmp_path: Path) -> None:
         "stare2e",
         (
             "from os.path import *\n\n"
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def build_path():\n"
             "    return join('a', 'b')\n"
         ),
@@ -214,12 +214,12 @@ def test_mixed_class_and_standalone(tmp_path: Path) -> None:
         "mixed",
         (
             "import csv\n\n"
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def helper(data):\n"
             "    return csv.reader(data)\n\n"
             "class Worker:\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def work(self, data):\n"
             "        return helper(data)\n"
         ),
@@ -237,16 +237,16 @@ def test_mixed_class_and_standalone(tmp_path: Path) -> None:
 
 def test_install_package_as_end_to_end(tmp_path: Path) -> None:
     """install_package_as records the package name through the full pipeline."""
-    # Create a stub module so the import succeeds at trace time
+    # Create a stub module so the import succeeds at task time
     (tmp_path / "cv2.py").write_text("def imread(path): pass\n")
     create_module(
         tmp_path,
         "vision",
         (
-            "from offwork import trace, install_package_as\n\n"
+            "import offwork\nfrom offwork import install_package_as\n\n"
             "with install_package_as('opencv-python'):\n"
             "    import cv2\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def process_image(path):\n"
             "    return cv2.imread(path)\n"
         ),

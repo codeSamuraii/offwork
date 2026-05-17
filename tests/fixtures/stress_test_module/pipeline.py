@@ -1,8 +1,8 @@
-"""Orchestration entry points -- only this file uses @trace."""
+"""Orchestration entry points -- only this file uses @offwork.task."""
 
 import json
 
-from offwork import trace
+import offwork
 
 from tests.fixtures.stress_test_module.analyzers import (
     analyze_measurements,
@@ -19,7 +19,7 @@ from tests.fixtures.stress_test_module.transformers import (
 from tests.fixtures.stress_test_module.validators import validate_measurements
 
 
-@trace
+@offwork.task
 def run_full_pipeline(
     sensor_count: int = 5,
     readings_per_sensor: int = 100,
@@ -49,7 +49,7 @@ def run_full_pipeline(
     return format_text_report(report)
 
 
-@trace
+@offwork.task
 def run_analysis_only(measurements: list[dict]) -> str:
     cleaned = clean_measurements(measurements)
     stats = analyze_measurements(cleaned)
@@ -63,7 +63,7 @@ def run_analysis_only(measurements: list[dict]) -> str:
     return format_json_report(report)
 
 
-@trace
+@offwork.task
 def run_validation_report(measurements: list[dict]) -> str:
     validation = validate_measurements(measurements)
     lines = [
@@ -87,7 +87,7 @@ def _apply_filter(measurements: list[dict], cutoff: float) -> list[dict]:
 
 
 def _make_threshold_pipeline(threshold: float, label: str):
-    @trace
+    @offwork.task
     def threshold_filter(measurements: list[dict]) -> str:
         cleaned = clean_measurements(measurements)
         filtered = _apply_filter(cleaned, threshold)

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from offwork import trace
+import offwork
 from offwork.core.pairing import (
     PairingResult,
     generate_pin,
@@ -124,7 +124,7 @@ class TestPairThenServe:
         worker_signing_key = derive_key(worker_result.shared_key)
 
         # Create and sign a task
-        @trace
+        @offwork.task
         def add(a: int, b: int) -> int:
             return a + b
 
@@ -181,7 +181,7 @@ class TestPairThenServe:
         transport = LocalBackend(f"local://127.0.0.1:{port}", server=True)
 
         try:
-            @trace
+            @offwork.task
             def multiply(x: int, y: int) -> int:
                 return x * y
 
@@ -218,9 +218,9 @@ class TestPairThenServe:
 
             # Fetch the result
             raw = await transport.get_result(task.task_id, timeout=5.0)
-            envelope = ResultEnvelope.from_json(raw)
-            assert envelope.status == "ok"
-            assert envelope.result == 42
+            task = ResultEnvelope.from_json(raw)
+            assert task.status == "ok"
+            assert task.result == 42
         finally:
             await transport.close()
 
@@ -245,7 +245,7 @@ class TestPairThenServe:
         transport = LocalBackend(f"local://127.0.0.1:{port}", server=True)
 
         try:
-            @trace
+            @offwork.task
             def noop() -> None:
                 pass
 
@@ -279,8 +279,8 @@ class TestPairThenServe:
 
             # Worker should have sent an error result
             raw = await transport.get_result(task.task_id, timeout=5.0)
-            envelope = ResultEnvelope.from_json(raw)
-            assert envelope.status == "error"
-            assert envelope.error_type == "SignatureError"
+            task = ResultEnvelope.from_json(raw)
+            assert task.status == "error"
+            assert task.error_type == "SignatureError"
         finally:
             await transport.close()

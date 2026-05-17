@@ -24,7 +24,7 @@ from tests.fixtures.stress_test_module.generators import generate_measurements
 
 @pytest.fixture(autouse=True)
 def _reload_traced_modules():
-    """Re-run @trace registrations against the fresh graph."""
+    """Re-run @offwork.task registrations against the fresh graph."""
     importlib.reload(_validators_mod)
     importlib.reload(_analyzers_mod)
     importlib.reload(_pipeline_mod)

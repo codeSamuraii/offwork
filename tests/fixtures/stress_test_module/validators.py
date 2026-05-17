@@ -4,7 +4,7 @@ import datetime
 import re
 import statistics
 
-from offwork import trace
+import offwork
 
 VALID_UNITS = frozenset({"celsius", "fahrenheit", "psi", "bar", "rpm", "kwh"})
 SENSOR_ID_PATTERN = re.compile(r"^[A-Z]{4}-\d{4}-[0-9a-f]{4}$")
@@ -102,7 +102,7 @@ class MeasurementValidator:
             "warnings": warnings,
         }
 
-    @trace
+    @offwork.task
     def validate_batch(self, measurements: list[dict]) -> dict:
         all_errors: list[str] = []
         all_warnings: list[str] = []

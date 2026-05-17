@@ -10,7 +10,8 @@ from typing import Any
 
 import pytest
 
-from offwork import pack, trace
+from offwork import pack
+import offwork
 from offwork.core.errors import RemoteError, TaskStalled
 from offwork.core.models import FunctionNode, ImportInfo
 from offwork.core.task import Task
@@ -255,7 +256,7 @@ class TestHandleTaskAsync:
     async def test_handle_async_task(self, backend: InMemoryBackend) -> None:
         """_handle_task correctly processes async functions."""
 
-        @trace
+        @offwork.task
         async def async_double(x: int) -> int:
             return x * 2
 
@@ -280,7 +281,7 @@ class TestHandleTaskAsync:
 class TestStartMethod:
     @pytest.mark.asyncio
     async def test_start_exists(self) -> None:
-        @trace
+        @offwork.task
         def my_func(x: int) -> int:
             return x + 1
 
@@ -291,7 +292,7 @@ class TestStartMethod:
     async def test_start_submits_and_returns_result(self, backend: InMemoryBackend) -> None:
         _remote._active_backend = backend
 
-        @trace
+        @offwork.task
         def double(x: int) -> int:
             return x * 2
 
@@ -311,7 +312,7 @@ class TestStartMethod:
     async def test_start_on_async_func(self, backend: InMemoryBackend) -> None:
         _remote._active_backend = backend
 
-        @trace
+        @offwork.task
         async def async_triple(x: int) -> int:
             return x * 3
 
@@ -322,7 +323,7 @@ class TestStartMethod:
 class TestRunMethod:
     @pytest.mark.asyncio
     async def test_run_exists(self) -> None:
-        @trace
+        @offwork.task
         def my_func(x: int) -> int:
             return x + 1
 
@@ -338,7 +339,7 @@ class TestRunMethod:
 class TestMapMethod:
     @pytest.mark.asyncio
     async def test_map_exists(self) -> None:
-        @trace
+        @offwork.task
         def my_func(x: int) -> int:
             return x + 1
 
@@ -356,7 +357,7 @@ class TestGather:
     async def test_gather_multiple_results(self, backend: InMemoryBackend) -> None:
         _remote._active_backend = backend
 
-        @trace
+        @offwork.task
         def square(x: int) -> int:
             return x ** 2
 
@@ -386,7 +387,7 @@ class TestWorkerHeartbeat:
     async def test_handle_task_sends_heartbeats(self, backend: InMemoryBackend) -> None:
         """_handle_task sends heartbeats while executing."""
 
-        @trace
+        @offwork.task
         def slow_add(a: int, b: int) -> int:
             import time as _t
             _t.sleep(0.3)
@@ -414,7 +415,7 @@ class TestWorkerHeartbeat:
     ) -> None:
         """Heartbeat task stops once the task completes."""
 
-        @trace
+        @offwork.task
         def quick() -> int:
             return 42
 

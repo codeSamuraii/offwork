@@ -15,20 +15,22 @@ logger = logging.getLogger(__name__)
 
 
 def _is_trace_decorator(node: ast.expr) -> bool:
-    """Return True if *node* is a ``@trace`` or ``@trace(...)`` decorator."""
-    if isinstance(node, ast.Name) and node.id == "trace":
+    """Return True if *node* is a ``@task``, ``@task(...)``, ``@offwork.task``, or ``@offwork.task(...)`` decorator."""
+    # @task or @task(...)
+    if isinstance(node, ast.Name) and node.id == "task":
         return True
-    if (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "trace"
-    ):
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "task":
+        return True
+    # @offwork.task or @offwork.task(...)
+    if isinstance(node, ast.Attribute) and node.attr == "task" and isinstance(node.value, ast.Name) and node.value.id == "offwork":
+        return True
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "task" and isinstance(node.func.value, ast.Name) and node.func.value.id == "offwork":
         return True
     return False
 
 
 def get_function_source(func: Callable[..., object]) -> str:
-    """Get dedented source of func with @trace decorator lines stripped."""
+    """Get dedented source of func with @task decorator lines stripped."""
     source = textwrap.dedent(inspect.getsource(func))
     tree = ast.parse(source)
     func_def = tree.body[0]

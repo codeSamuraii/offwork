@@ -1,4 +1,4 @@
-"""The ``@trace`` decorator for marking functions for remote execution."""
+"""The ``@offwork.task`` decorator for marking functions for remote execution."""
 
 import logging
 from datetime import timedelta
@@ -15,12 +15,12 @@ _P = ParamSpec("_P")
 
 
 @overload
-def trace(func: Callable[_P, _R]) -> TracedFunction[_P, _R]: ...
+def task(func: Callable[_P, _R]) -> TracedFunction[_P, _R]: ...
 @overload
-def trace(*, timeout: float | None = ..., retries: int = ..., retry_delay: float = ..., throttle: timedelta | float | None = ...) -> TraceDecorator: ...
+def task(*, timeout: float | None = ..., retries: int = ..., retry_delay: float = ..., throttle: timedelta | float | None = ...) -> TraceDecorator: ...
 
 
-def trace(
+def task(
     func: Callable[..., object] | None = None,
     *,
     timeout: float | None = None,
@@ -35,10 +35,10 @@ def trace(
 
     Can be used with or without arguments::
 
-        @trace
+        @offwork.task
         def fast(x): ...
 
-        @trace(timeout=30, retries=3)
+        @offwork.task(timeout=30, retries=3)
         def flaky(x): ...
     """
     if func is not None:
@@ -74,7 +74,7 @@ def _apply_trace(
         if throttle_seconds <= 0:
             raise ValueError(f"throttle must be positive, got {throttle}")
 
-    logger.debug("@trace applied to %s", func.__qualname__)
+    logger.debug("@offwork.task applied to %s", func.__qualname__)
     graph = Graph.default()
     graph.register(func)
     wrapper = graph.create_wrapper(func)

@@ -6,7 +6,8 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from offwork import pack, trace
+from offwork import pack
+import offwork
 from offwork.core.task import Task
 from offwork.worker.backends.local import LocalBackend
 from offwork.worker.result import ResultEnvelope
@@ -170,7 +171,7 @@ class TestEndToEnd:
     async def test_submit_execute_result(self) -> None:
         """Full cycle: submit on local backend, execute in worker, read result."""
 
-        @trace
+        @offwork.task
         def add(a: int, b: int) -> int:
             return a + b
 
@@ -205,7 +206,7 @@ class TestEndToEnd:
     async def test_concurrent_tasks(self) -> None:
         """Multiple tasks processed concurrently."""
 
-        @trace
+        @offwork.task
         def double(n: int) -> int:
             return n * 2
 

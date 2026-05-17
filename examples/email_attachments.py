@@ -29,7 +29,6 @@ from email.message import EmailMessage, Message
 from typing import Any
 
 import offwork
-from offwork import trace
 
 offwork.connect("local://localhost:9748")
 
@@ -73,7 +72,7 @@ def _score_risk(filename: str, kind: str, text: str) -> int:
 
 # --- entry point ----------------------------------------------------------
 
-@trace
+@offwork.task
 def process_attachment(filename: str, payload: bytes) -> dict[str, Any]:
     """Inspect a single attachment.  Calls the helpers above on the worker."""
     kind = _classify(filename)

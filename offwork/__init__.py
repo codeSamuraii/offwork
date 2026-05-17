@@ -53,7 +53,7 @@ from offwork.worker.worker import Worker
 from offwork.worker.worker import execute as execute
 from offwork.worker.sandbox import DockerSandbox
 from offwork.worker.schedule import ScheduleHandle
-from offwork.graph.decorator import trace
+from offwork.graph.decorator import task
 from offwork.worker.backends.base import Backend
 
 
@@ -107,7 +107,7 @@ __version__: str = _VERSION
 __all__ = [
     "__version__",
     # Primary API
-    "trace",
+    "task",
     "connect",
     "disconnect",
     "serve",

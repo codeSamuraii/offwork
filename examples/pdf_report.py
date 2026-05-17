@@ -5,7 +5,7 @@ dependency (``reportlab``), uses a chunk of CPU, and the request handler
 just wants bytes back.  The web app stays light; the worker pool absorbs
 the load and can be scaled independently.
 
-Only the entry point is decorated with ``@trace``.  The two helpers
+Only the entry point is decorated with ``@offwork.task``.  The two helpers
 (``_styled_table``, ``_build_pdf``) are plain functions; offwork walks
 the AST of ``render_report``, sees the calls, and ships their source
 along automatically.
@@ -39,10 +39,9 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
 from reportlab.lib.styles import getSampleStyleSheet
 
 import offwork
-from offwork import trace
 
 
-# --- helpers (no @trace -- auto-discovered) -------------------------------
+# --- helpers (no @offwork.task -- auto-discovered) -------------------------------
 
 def _styled_table(rows: list[list[str | float]]) -> Table:
     table = Table([["Item", "Amount"]] + rows, hAlign="LEFT")
@@ -64,7 +63,7 @@ def _build_pdf(title: str, table: Table) -> bytes:
 
 # --- entry point ----------------------------------------------------------
 
-@trace
+@offwork.task
 def render_report(title: str, rows: list[list[str | float]]) -> bytes:
     """Render a titled table to PDF bytes."""
     return _build_pdf(title, _styled_table(rows))

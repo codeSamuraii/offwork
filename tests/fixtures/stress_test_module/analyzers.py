@@ -3,7 +3,7 @@
 import math
 import statistics
 
-from offwork import trace
+import offwork
 
 from tests.fixtures.stress_test_module.transformers import group_by_sensor
 
@@ -65,7 +65,7 @@ class StatisticalAnalyzer:
             "trend": self._detect_trends(values),
         }
 
-    @trace
+    @offwork.task
     def analyze_all(self, measurements: list[dict]) -> dict[str, dict]:
         groups = group_by_sensor(measurements)
         results: dict[str, dict] = {}
@@ -95,7 +95,7 @@ class AnomalyDetector:
                 anomalies.append(i)
         return anomalies
 
-    @trace
+    @offwork.task
     def detect(self, sensor_id: str, measurements: list[dict]) -> list[dict]:
         values = [m["value"] for m in measurements]
 

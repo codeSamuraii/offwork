@@ -17,10 +17,10 @@ def test_get_function_source_strips_trace(tmp_path: Path) -> None:
     mod = create_module(
         tmp_path,
         "src_trace",
-        "from offwork import trace\n\n@trace\ndef foo():\n    return 1\n",
+        "import offwork\n\n@offwork.task\ndef foo():\n    return 1\n",
     )
     source = get_function_source(mod.foo)
-    assert "@trace" not in source
+    assert "@offwork.task" not in source
     assert "def foo():" in source
     assert "return 1" in source
 
@@ -30,8 +30,8 @@ def test_get_function_source_strips_multiline_trace(tmp_path: Path) -> None:
         tmp_path,
         "src_multiline",
         (
-            "from offwork import trace\n\n"
-            "@trace(\n"
+            "import offwork\n\n"
+            "@offwork.task(\n"
             "    timeout=30,\n"
             "    retries=3,\n"
             ")\n"
@@ -40,7 +40,7 @@ def test_get_function_source_strips_multiline_trace(tmp_path: Path) -> None:
         ),
     )
     source = get_function_source(mod.foo)
-    assert "@trace" not in source
+    assert "@offwork.task" not in source
     assert "timeout" not in source
     assert "retries" not in source
     assert "def foo():" in source
@@ -52,10 +52,10 @@ def test_get_function_source_strips_multiline_preserves_other(tmp_path: Path) ->
         tmp_path,
         "src_multi_other",
         (
-            "from offwork import trace\n"
+            "import offwork\n"
             "def my_dec(f): return f\n\n"
             "@my_dec\n"
-            "@trace(\n"
+            "@offwork.task(\n"
             "    timeout=10,\n"
             ")\n"
             "def bar():\n"
@@ -64,7 +64,7 @@ def test_get_function_source_strips_multiline_preserves_other(tmp_path: Path) ->
     )
     source = get_function_source(mod.bar)
     assert "@my_dec" in source
-    assert "@trace" not in source
+    assert "@offwork.task" not in source
     assert "timeout" not in source
     assert "def bar():" in source
 
@@ -74,14 +74,14 @@ def test_get_function_source_preserves_other_decorators(tmp_path: Path) -> None:
         tmp_path,
         "src_other_dec",
         (
-            "from offwork import trace\n"
+            "import offwork\n"
             "def my_dec(f): return f\n\n"
-            "@my_dec\n@trace\ndef bar():\n    return 2\n"
+            "@my_dec\n@offwork.task\ndef bar():\n    return 2\n"
         ),
     )
     source = get_function_source(mod.bar)
     assert "@my_dec" in source
-    assert "@trace" not in source
+    assert "@offwork.task" not in source
 
 
 def test_get_module_imports_basic(tmp_path: Path) -> None:
@@ -461,12 +461,12 @@ def test_detect_typed_obj_method_e2e_reconstruction(tmp_path: Path) -> None:
         tmp_path,
         "typede2e",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class Calculator:\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def add(self, a, b):\n"
             "        return a + b\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def compute(calc: Calculator, x, y):\n"
             "    return calc.add(x, y)\n"
         ),

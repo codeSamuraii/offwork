@@ -243,11 +243,11 @@ class TestEndToEnd:
             tmp_path,
             "wo_e2e",
             (
-                "from offwork import trace, worker_only_import\n"
+                "import offwork\nfrom offwork import worker_only_import\n"
                 "with worker_only_import():\n"
                 "    import some_missing_pkg_e2e\n"
                 "\n"
-                "@trace\n"
+                "@offwork.task\n"
                 "def go():\n"
                 "    return some_missing_pkg_e2e.compute()\n"
             ),

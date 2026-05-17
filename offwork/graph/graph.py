@@ -296,7 +296,7 @@ class Graph(TracingMixin):
 
     @classmethod
     def default(cls) -> "Graph":
-        """Return the singleton default graph used by ``@trace``."""
+        """Return the singleton default graph used by ``@offwork.task``."""
         if cls._default is None:
             cls._default = Graph()
         return cls._default

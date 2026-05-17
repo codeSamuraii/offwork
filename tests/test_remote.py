@@ -10,7 +10,8 @@ from typing import Any
 
 import pytest
 
-from offwork import pack, trace
+from offwork import pack
+import offwork
 from offwork.core.errors import RemoteError
 from offwork.core.task import Task
 from offwork.worker.backends.base import Backend
@@ -254,7 +255,7 @@ class TestConnectDisconnect:
 
 class TestStartMethod:
     def test_traced_function_has_start(self) -> None:
-        @trace
+        @offwork.task
         def my_func(x: int) -> int:
             return x + 1
 
@@ -263,7 +264,7 @@ class TestStartMethod:
 
     @pytest.mark.asyncio
     async def test_start_without_backend_raises(self) -> None:
-        @trace
+        @offwork.task
         def my_func(x: int) -> int:
             return x + 1
 
@@ -274,7 +275,7 @@ class TestStartMethod:
     async def test_start_submits_to_backend(self, backend: InMemoryBackend) -> None:
         _remote._active_backend = backend
 
-        @trace
+        @offwork.task
         def double(x: int) -> int:
             return x * 2
 
@@ -291,7 +292,7 @@ class TestStartMethod:
     async def test_start_returns_fuse_result(self, backend: InMemoryBackend) -> None:
         _remote._active_backend = backend
 
-        @trace
+        @offwork.task
         def add(a: int, b: int) -> int:
             return a + b
 
@@ -302,7 +303,7 @@ class TestStartMethod:
 
 class TestRunMethod:
     def test_traced_function_has_run(self) -> None:
-        @trace
+        @offwork.task
         def my_func(x: int) -> int:
             return x + 1
 
@@ -322,7 +323,7 @@ class TestHandleTaskOutput:
         backend: InMemoryBackend,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        @trace
+        @offwork.task
         def add_one(x: int) -> int:
             return x + 1
 
@@ -345,7 +346,7 @@ class TestHandleTaskOutput:
         backend: InMemoryBackend,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        @trace
+        @offwork.task
         def double(x: int) -> int:
             return x * 2
 
@@ -370,7 +371,7 @@ class TestHandleTaskOutput:
         backend: InMemoryBackend,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        @trace
+        @offwork.task
         def boom() -> None:
             raise RuntimeError("intentional")
 
@@ -398,7 +399,7 @@ class TestServe:
     async def test_serve_executes_tasks(self, backend: InMemoryBackend) -> None:
         """End-to-end: submit a task, run worker, check result."""
 
-        @trace
+        @offwork.task
         def triple(x: int) -> int:
             return x * 3
 
@@ -425,7 +426,7 @@ class TestServe:
     async def test_serve_handles_errors(self, backend: InMemoryBackend) -> None:
         """Tasks that raise should produce error envelopes, not crash."""
 
-        @trace
+        @offwork.task
         def failing() -> None:
             raise RuntimeError("intentional")
 

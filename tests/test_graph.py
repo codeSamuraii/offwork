@@ -17,11 +17,11 @@ def _make_graph(tmp_path: Path) -> Graph:
         "gmod",
         (
             "import csv\nimport json as js\n\n"
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def parse(data):\n"
             "    return csv.reader(data)\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def transform(data):\n"
             "    rows = parse(data)\n"
             "    return js.dumps(rows)\n"
@@ -113,10 +113,10 @@ def test_reconstruct_deduplicates_imports(tmp_path: Path) -> None:
         "dedup",
         (
             "import csv\n\n"
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def a(x):\n    return csv.reader(x)\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def b(x):\n    return csv.writer(a(x))\n"
         ),
     )
@@ -155,10 +155,10 @@ def test_auto_refresh_on_register(tmp_path: Path) -> None:
         tmp_path,
         "autoref",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def caller():\n    return callee()\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def callee():\n    return 42\n"
         ),
     )
@@ -171,9 +171,9 @@ def test_class_method_registration(tmp_path: Path) -> None:
         tmp_path,
         "clsreg",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class Parser:\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def parse(self, data):\n"
             "        return data.split(',')\n"
         ),
@@ -190,12 +190,12 @@ def test_class_method_reconstruction(tmp_path: Path) -> None:
         "clsrecon",
         (
             "import csv\n\n"
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class Parser:\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def helper(self, data):\n"
             "        return csv.reader(data)\n\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def parse(self, data):\n"
             "        return self.helper(data)\n"
         ),
@@ -216,10 +216,10 @@ def test_nested_function_closure_captured(tmp_path: Path) -> None:
         tmp_path,
         "closure_mod",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "def outer():\n"
             "    x = 10\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def inner():\n"
             "        return x\n"
             "    return inner\n"
@@ -256,12 +256,12 @@ def test_to_mermaid_class_methods(tmp_path: Path) -> None:
         tmp_path,
         "mermcls",
         (
-            "from offwork import trace\n\n"
+            "import offwork\n\n"
             "class Pipeline:\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def step_a(self, x):\n"
             "        return x.strip()\n\n"
-            "    @trace\n"
+            "    @offwork.task\n"
             "    def step_b(self, x):\n"
             "        return self.step_a(x).lower()\n"
         ),
@@ -325,12 +325,12 @@ def test_deduplication_shared_dep(tmp_path: Path) -> None:
         tmp_path,
         "dedup_shared",
         (
-            "from offwork import trace\n\n"
-            "@trace\n"
+            "import offwork\n\n"
+            "@offwork.task\n"
             "def shared():\n    return 1\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def caller_a():\n    return shared()\n\n"
-            "@trace\n"
+            "@offwork.task\n"
             "def caller_b():\n    return shared()\n"
         ),
     )

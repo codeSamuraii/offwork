@@ -2,14 +2,13 @@
 
 **Run any Python function on a remote worker — zero setup, zero deployment.**
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
+[![PyPI](https://img.shields.io/pypi/v/offwork)](https://pypi.org/project/offwork/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-green)](LICENSE)
 [![Typed](https://img.shields.io/badge/typing-strict%20mypy-blue)](https://mypy-lang.org/)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)]()
 
-Add `@trace` to a function. offwork captures its source, dependencies, and imports automatically.
-Workers reconstruct and execute everything from scratch — no shared filesystem, no deployment pipeline.
-Missing packages are installed on the fly.
+Add `@offwork.task` to a function. offwork captures its source, all dependencies, and all imports automatically. Workers reconstruct and execute everything from scratch — no shared filesystem, no deployment pipeline. Missing packages are installed on the fly.
 
 ## Quick start
 
@@ -19,14 +18,14 @@ pip install offwork
 
 ```python
 import asyncio, math, offwork
-from offwork import trace
+import offwork
 
 offwork.connect("local://localhost:9748")
 
 def add(a, b):
     return a + b
 
-@trace
+@offwork.task
 def hypotenuse(a: float, b: float) -> float:
     return math.sqrt(add(a**2, b**2))
 
@@ -36,14 +35,32 @@ async def main():
 asyncio.run(main())
 ```
 
-Only the entry point needs `@trace` — everything it calls is captured automatically.
+Only the entry point needs `@offwork.task` — everything it calls is captured automatically.
 
 ```bash
 offwork worker --backend local://localhost:9748 --tmp   # start a worker
 python my_script.py                                    # → 5.0
 ```
 
-For multi-machine, swap `local://` for `redis://` or an `https://` managed broker URL. That's it.
+For multi-machine, swap `local://` for `redis://` or an `https://` managed broker URL.
+
+## Features
+
+| | |
+|-|-|
+| **Auto dependency capture** | Functions, classes, constants, closures — recursive AST analysis |
+| **Package auto-install** | Workers `pip install` missing packages before execution |
+| **Async-native** | `.run()`, `.start()`, `.map()`, `asyncio.gather` |
+| **Retry & timeout** | `@offwork.task(timeout=30, retries=3)` with exponential backoff |
+| **Scheduling** | `.run_in(delay)`, `.run_at(datetime)`, `.run_every(freq)` with cancellation |
+| **Throttling** | `@offwork.task(throttle=timedelta(hours=24)/50)` — rate-limit executions |
+| **Progress & cancellation** | `offwork.progress(3, 10)` inside tasks; `await future.cancel()` on client |
+| **Heartbeat & stall detection** | Workers heartbeat; clients raise `TaskStalled` on silence |
+| **Content-hash caching** | Same code = cache hit, regardless of client |
+| **Pluggable backends** | `local://` (TCP), `redis://`, `amqp://` (RabbitMQ), `https://` (hosted) |
+| **Docker sandbox** | Container isolation, transparent to clients |
+| **Signed execution** | Pre-shared token or PIN pairing + HMAC-SHA256 task authentication |
+| **Graceful shutdown** | Ctrl+C drains in-flight tasks; second Ctrl+C force-quits |
 
 ## Sandbox
 
@@ -54,7 +71,7 @@ offwork sandbox setup                                      # build image (once)
 offwork worker --backend redis://localhost:6379 --sandbox  # run with isolation
 ```
 
-See [Sandbox](docs/SANDBOX.md) for configuration and management.
+See [Sandbox](docs/SANDBOX.md) for configuration.
 
 ## Signing
 
@@ -62,7 +79,7 @@ Pre-shared token or PIN-based pairing + HMAC-SHA256 — workers reject untrusted
 
 ```bash
 # Token-based (recommended for CI/CD)
-offwork token generate                                       # generate once
+offwork token generate
 export OFFWORK_SIGNING_TOKEN=<token>                         # set on client & worker
 offwork worker --backend redis://localhost:6379 --require-signing
 
@@ -71,25 +88,7 @@ offwork worker --backend redis://localhost:6379 --pair       # displays a 6-digi
 offwork pair --backend redis://localhost:6379                # on client: enter the PIN
 ```
 
-After setup, tasks are signed automatically. No client-side code changes. See [Signing & Pairing](docs/SIGNING.md) for details.
-
-## Features
-
-| | |
-|-|-|
-| **Auto dependency capture** | Functions, classes, constants, closures — recursive AST analysis |
-| **Package auto-install** | Workers `pip install` missing packages before execution |
-| **Async-native** | `.run()`, `.start()`, `.map()`, `asyncio.gather` |
-| **Retry & timeout** | `@trace(timeout=30, retries=3)` with exponential backoff |
-| **Scheduling** | `.run_in(delay)`, `.run_at(datetime)`, `.run_every(freq)` with cancellation |
-| **Throttling** | `@trace(throttle=timedelta(hours=24)/50)` — rate-limit executions |
-| **Progress & cancellation** | `offwork.progress(3, 10)` inside tasks; `await future.cancel()` on client |
-| **Heartbeat & stall detection** | Workers heartbeat; clients raise `TaskStalled` on silence |
-| **Content-hash caching** | Same code = cache hit, regardless of client |
-| **Pluggable backends** | `local://` (same-machine TCP), `redis://`, `amqp://` (RabbitMQ), `http://`/`https://` (hosted broker API) |
-| **Docker sandbox** | Container isolation, transparent to clients |
-| **Signed execution** | Pre-shared token or PIN pairing + HMAC-SHA256 task authentication |
-| **Graceful shutdown** | Ctrl+C drains in-flight tasks; second Ctrl+C force-quits |
+After setup, tasks are signed automatically. No client-side code changes. See [Signing & Pairing](docs/SIGNING.md).
 
 ## Documentation
 
@@ -99,7 +98,6 @@ After setup, tasks are signed automatically. No client-side code changes. See [S
 | **[Technical Overview](docs/TECHNICAL_OVERVIEW.md)** | Architecture, serialization format, internals |
 | **[Signing & Pairing](docs/SIGNING.md)** | Cryptographic task signing protocol |
 | **[Sandbox](docs/SANDBOX.md)** | Docker container isolation |
-| **[Cloud POC](docs/CLOUD_POC.md)** | Local FastAPI + MongoDB + Kubernetes + React prototype for managed hosting |
 
 ## Examples
 

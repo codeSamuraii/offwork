@@ -9,7 +9,7 @@ offwork enables remote execution of Python functions without deploying code to w
 ```
   Client                              Worker
   ──────                              ──────
-  @trace                              offwork worker
+  @offwork.task                              offwork worker
   await func.run(args)                ← listen for tasks
     │                                   │
     ├─ capture source + deps            ├─ deserialize graph
@@ -23,7 +23,7 @@ offwork enables remote execution of Python functions without deploying code to w
 
 ```
 offwork/
-    __init__.py              Public API: trace, connect, serve, serialize, reconstruct, ...
+    __init__.py              Public API: task, connect, serve, serialize, reconstruct, ...
     __main__.py              CLI: worker, run, pair, token, sandbox, info, serialize, reconstruct
     _venv.py                 Async temporary virtual environment management
     core/
@@ -37,7 +37,7 @@ offwork/
         pairing.py           PIN-based key exchange (SPAKE2/SAS-style)
         version.py           Version constant resolved from package metadata
     graph/
-        decorator.py         @trace: wraps functions with .run/.start/.map/.run_in/.run_at/.run_every
+        decorator.py         @offwork.task: wraps functions with .run/.start/.map/.run_in/.run_at/.run_every
         analyzer.py          AST analysis: imports, calls, closures, classes, module vars,
                              install_package_as detection, star-import resolution
         graph.py             Registry, auto-discovery, serialize/reconstruct entry points
@@ -67,9 +67,9 @@ offwork/
 
 ```python
 # Decorator
-@trace                                    # capture function for remote execution
-@trace(timeout=30, retries=3)             # with execution options
-@trace(throttle=timedelta(hours=24)/50)   # rate-limit: 50 calls per day
+@offwork.task                                    # capture function for remote execution
+@offwork.task(timeout=30, retries=3)             # with execution options
+@offwork.task(throttle=timedelta(hours=24)/50)   # rate-limit: 50 calls per day
 
 # Remote execution (all async)
 offwork.connect("redis://localhost:6379")  # configure backend (sync)
@@ -208,13 +208,13 @@ offwork.connect("redis://...")  # built-in
 await func.start(*args, backend=my_custom_backend)  # per-call override
 ```
 
-## How `@trace` works
+## How `@offwork.task` works
 
-When `@trace` is applied to a function:
+When `@offwork.task` is applied to a function:
 
 ### 1. Source capture
 
-`inspect.getsource()` retrieves the function's source. `textwrap.dedent()` normalizes indentation. `@trace` decorator lines are stripped so reconstructed code doesn't depend on offwork.
+`inspect.getsource()` retrieves the function's source. `textwrap.dedent()` normalizes indentation. `@offwork.task` decorator lines are stripped so reconstructed code doesn't depend on offwork.
 
 ### 2. Import analysis
 
@@ -252,7 +252,7 @@ Module-level constants and variables referenced by traced functions (e.g., `MAX_
 If the function captures variables from an enclosing scope, offwork uses a multi-tier capture strategy:
 
 1. **`repr()` validation** -- Values whose `repr()` is valid Python (passes `ast.parse()`) are stored directly. They become keyword-only parameters with defaults in reconstructed code.
-2. **Traced functions** -- References to `@trace`-decorated functions are recorded as dependency edges.
+2. **Traced functions** -- References to `@offwork.task`-decorated functions are recorded as dependency edges.
 3. **Lambda functions** -- Source is extracted via `inspect.getsource()` + AST walking, stored as a closure variable expression.
 4. **Non-traced user functions** -- Automatically discovered and registered as dependencies (same as traced functions).
 5. **Constructor expressions** -- Common stdlib types (`defaultdict`, `Counter`, `deque`) whose `repr()` isn't valid Python are captured via self-contained constructor expressions (e.g., `__import__('collections').defaultdict(int, {'a': 1})`).
@@ -261,7 +261,7 @@ If the function captures variables from an enclosing scope, offwork uses a multi
 
 ### 6. Runtime tracing
 
-`@trace` wraps the function to record caller-callee edges at runtime via a `contextvars.ContextVar`-based call stack. This catches dependencies that static analysis cannot resolve (e.g., `obj.method()` calls on untyped variables).
+`@offwork.task` wraps the function to record caller-callee edges at runtime via a `contextvars.ContextVar`-based call stack. This catches dependencies that static analysis cannot resolve (e.g., `obj.method()` calls on untyped variables).
 
 For generators and async generators, a proxy pattern intercepts each iteration step to maintain call stack context throughout lazy evaluation.
 
@@ -458,7 +458,7 @@ One function in the dependency graph:
 | `qualified_name` | `"module.ClassName.method"` -- unique in-memory identifier |
 | `name` | `"method"` -- simple function name |
 | `module` | `"module"` -- where the function is defined |
-| `source` | Source code with `@trace` stripped, zero-indented |
+| `source` | Source code with `@offwork.task` stripped, zero-indented |
 | `imports` | `list[ImportInfo]` -- only imports this function uses |
 | `dependencies` | `list[str]` -- qualified names of dependencies |
 | `owner_class` | `"ClassName"` for methods, `None` for standalone functions |
@@ -483,7 +483,7 @@ Import names are mapped to pip packages in this priority order:
 
 ### `install_package_as` context manager
 
-A no-op at runtime. The `@trace` AST analyzer detects the `with` block and records the package name on every `ImportInfo` inside it:
+A no-op at runtime. The `@offwork.task` AST analyzer detects the `with` block and records the package name on every `ImportInfo` inside it:
 
 ```python
 with install_package_as("opencv-python"):

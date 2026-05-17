@@ -22,7 +22,6 @@ import random
 import pandas as pd
 
 import offwork
-from offwork import trace
 
 offwork.connect("local://localhost:9748")
 
@@ -52,7 +51,7 @@ def _aggregate(df: pd.DataFrame) -> dict[str, float | int]:
 
 # --- entry point ----------------------------------------------------------
 
-@trace
+@offwork.task
 def summarize_chunk(csv_bytes: bytes) -> dict[str, float | int]:
     """Clean a CSV chunk and return per-chunk aggregates."""
     return _aggregate(_clean(_load(csv_bytes)))

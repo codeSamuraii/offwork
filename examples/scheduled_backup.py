@@ -29,7 +29,6 @@ from pathlib import Path
 from typing import Any
 
 import offwork
-from offwork import trace
 
 offwork.connect("local://localhost:9748")
 
@@ -54,7 +53,7 @@ def _upload(bucket: str, key: str, blob: bytes) -> None:
 
 # --- entry point ----------------------------------------------------------
 
-@trace(timeout=600, retries=2, retry_delay=10.0)
+@offwork.task(timeout=600, retries=2, retry_delay=10.0)
 def snapshot_directory(src_dir: str, bucket: str, prefix: str) -> dict[str, Any]:
     """Tar+gzip *src_dir*, upload, return a manifest entry."""
     compressed = _compress(_archive(src_dir))

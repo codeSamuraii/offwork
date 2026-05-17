@@ -10,14 +10,13 @@ import asyncio
 import math
 
 import offwork
-from offwork import trace
 
 offwork.connect("local://localhost:9748")
 
 async def add(a: float, b: float) -> float:
     return a + b
 
-@trace
+@offwork.task
 async def hypotenuse(a: float, b: float) -> float:
     return math.sqrt(await add(a**2, b**2))
 

@@ -17,17 +17,16 @@ import asyncio
 from datetime import datetime, timedelta
 
 import offwork
-from offwork import trace
 
 offwork.connect("local://localhost:9748")
 
 
-@trace
+@offwork.task
 def greet(name: str) -> str:
     return f"Hello, {name}! (executed at {datetime.now():%H:%M:%S})"
 
 
-@trace
+@offwork.task
 def tick(n: int) -> str:
     return f"Tick #{n} at {datetime.now():%H:%M:%S}"
 

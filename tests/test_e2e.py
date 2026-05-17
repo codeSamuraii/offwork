@@ -27,7 +27,7 @@ from typing import Any
 import pytest
 
 import offwork
-from offwork import trace, progress, TaskCancelled, ThrottleError
+from offwork import progress, TaskCancelled, ThrottleError
 from offwork.core.token import generate_token
 from offwork.graph.graph import Graph
 
@@ -168,7 +168,7 @@ class TestBasicExecution:
         def add(a: int, b: int) -> int:
             return a + b
 
-        @trace
+        @offwork.task
         def hypotenuse(a: float, b: float) -> float:
             return math.sqrt(add(a**2, b**2))
 
@@ -179,7 +179,7 @@ class TestBasicExecution:
         async def async_add(a: float, b: float) -> float:
             return a + b
 
-        @trace
+        @offwork.task
         async def async_hyp(a: float, b: float) -> float:
             return math.sqrt(await async_add(a**2, b**2))
 
@@ -187,7 +187,7 @@ class TestBasicExecution:
         assert result == pytest.approx(13.0)
 
     async def test_start_and_await(self, worker: subprocess.Popen[bytes]) -> None:
-        @trace
+        @offwork.task
         def double(x: int) -> int:
             return x * 2
 
@@ -196,7 +196,7 @@ class TestBasicExecution:
         assert result == 42
 
     async def test_map_batch(self, worker: subprocess.Popen[bytes]) -> None:
-        @trace
+        @offwork.task
         def square(x: int) -> int:
             return x * x
 
@@ -204,7 +204,7 @@ class TestBasicExecution:
         assert results == [4, 9, 16]
 
     async def test_gather_concurrent(self, worker: subprocess.Popen[bytes]) -> None:
-        @trace
+        @offwork.task
         def mul(a: int, b: int) -> int:
             return a * b
 
@@ -217,7 +217,7 @@ class TestBasicExecution:
 
     async def test_caching(self, worker: subprocess.Popen[bytes]) -> None:
         """Same code + args should work correctly on repeated calls."""
-        @trace
+        @offwork.task
         def inc(x: int) -> int:
             return x + 1
 
@@ -226,7 +226,7 @@ class TestBasicExecution:
         assert r1 == r2 == 11
 
     async def test_stdlib_imports(self, worker: subprocess.Popen[bytes]) -> None:
-        @trace
+        @offwork.task
         def use_stdlib() -> str:
             import json
             import os
@@ -240,7 +240,7 @@ class TestProgressAndCancellation:
     async def test_progress_reporting(self, worker: subprocess.Popen[bytes]) -> None:
 
 
-        @trace
+        @offwork.task
         def slow_with_progress(n: int) -> int:
             import time
             total = 0
@@ -259,7 +259,7 @@ class TestProgressAndCancellation:
         assert result == sum(range(5))
 
     async def test_cancellation(self, worker: subprocess.Popen[bytes]) -> None:
-        @trace
+        @offwork.task
         async def very_slow(n: int) -> int:
             total = 0
             for _ in range(n):
@@ -289,7 +289,7 @@ class TestRetryAndTimeout:
         import uuid
         counter_path = f"/tmp/offwork-retry-{uuid.uuid4().hex}.txt"
 
-        @trace(retries=3, retry_delay=0.1)
+        @offwork.task(retries=3, retry_delay=0.1)
         def fails_then_succeeds(path: str, fail_until: int) -> str:
             import os
             n = 0
@@ -309,7 +309,7 @@ class TestRetryAndTimeout:
 
 class TestScheduling:
     async def test_run_in_delay(self, worker: subprocess.Popen[bytes]) -> None:
-        @trace
+        @offwork.task
         def greet(name: str) -> str:
             return f"hello {name}"
 
@@ -320,7 +320,7 @@ class TestScheduling:
         assert elapsed >= 1.5  # allow some slack
 
     async def test_run_every_recurring(self, worker: subprocess.Popen[bytes]) -> None:
-        @trace
+        @offwork.task
         def tick(n: int) -> int:
             return n
 
@@ -332,7 +332,7 @@ class TestScheduling:
 
 class TestThrottling:
     async def test_throttle_rejects_rapid_calls(self, worker: subprocess.Popen[bytes]) -> None:
-        @trace(throttle=timedelta(seconds=10))
+        @offwork.task(throttle=timedelta(seconds=10))
         def throttled_fn() -> str:
             return "ok"
 
@@ -345,7 +345,7 @@ class TestThrottling:
 
 class TestErrorHandling:
     async def test_remote_error_propagation(self, worker: subprocess.Popen[bytes]) -> None:
-        @trace
+        @offwork.task
         def bad_func() -> None:
             raise ValueError("intentional error")
 
@@ -361,7 +361,7 @@ class TestErrorHandling:
         def _step_b(x: int) -> int:
             return _step_a(x) * 2
 
-        @trace
+        @offwork.task
         def pipeline(x: int) -> int:
             return _step_b(x) + 10
 
@@ -378,7 +378,7 @@ class TestClassMethods:
             def compute(self, x: int) -> int:
                 return self.base + x
 
-        @trace
+        @offwork.task
         def use_calculator(x: int) -> int:
             c = Calculator(100)
             return c.compute(x)

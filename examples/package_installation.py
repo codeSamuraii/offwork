@@ -23,7 +23,6 @@ import asyncio
 from html.parser import HTMLParser
 
 import offwork
-from offwork import trace
 from offwork import install_package_as, worker_only_import
 
 # Some packages have different import and pip names:
@@ -38,7 +37,7 @@ with worker_only_import("PyYAML"):
 # `worker_only_import` skips the local install entirely. The package only
 # needs to be available on the worker. The client gets a stub object that
 # raises WorkerOnlyError if used directly, but is fine to reference inside
-# a @trace function (it's serialized and re-imported on the worker).
+# a @offwork.task function (it's serialized and re-imported on the worker).
 
 # No pip name needed when import name == package name:
 with worker_only_import():
@@ -56,7 +55,7 @@ with worker_only_import("python-dateutil"):
 # no extra configuration is needed. The worker runs `pip install requests`.
 
 
-@trace
+@offwork.task
 def fetch_title(url: str) -> str:
     """Fetch a web page and extract the <title> tag."""
     class TitleParser(HTMLParser):
@@ -85,13 +84,13 @@ def fetch_title(url: str) -> str:
 # -- Mismatched names: install_package_as -----------------------------------
 
 
-@trace
+@offwork.task
 def to_yaml(data: object) -> str:
     """Convert a Python object to YAML. Worker installs PyYAML automatically."""
     return yaml.dump(data, default_flow_style=False)
 
 
-@trace
+@offwork.task
 def parse_date(text: str) -> str:
     """Parse a human-readable date string. Worker installs python-dateutil."""
     dt = date_parser.parse(text)
@@ -101,7 +100,7 @@ def parse_date(text: str) -> str:
 # -- Multiple packages in one function -------------------------------------
 
 
-@trace
+@offwork.task
 def markdown_word_freq(md_text: str) -> str:
     """Strip markdown, count word frequencies, return as YAML.
 

@@ -77,7 +77,7 @@ class TestIsolatedInstallation:
             "import offwork\n"
             "print(offwork.__version__)\n"
             "print(offwork.serialize)\n"
-            "print(offwork.trace)\n"
+            "print(offwork.task)\n"
             "print(offwork.get_graph())\n"
         )
         result = subprocess.run(

@@ -15,7 +15,7 @@ import asyncio
 import time
 
 import offwork
-from offwork import trace, progress
+from offwork import progress
 
 offwork.connect("local://localhost:9748")
 
@@ -26,7 +26,7 @@ def process_item(item: str) -> str:
     return item.upper()
 
 
-@trace
+@offwork.task
 def batch_process(items: list[str]) -> list[str]:
     """Process items one by one, reporting progress after each."""
     results = []
