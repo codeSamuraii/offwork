@@ -1,20 +1,19 @@
 [project]
 name = "offwork"
-version = "0.4.0"
+version = "0.1.0"
 description = "Distributed Python task execution via automatic function serialization"
 readme = "README.md"
 authors = [
     {name = "Rémi Héneault", email = "remi@heneault.fr"}
 ]
 license = {text = "AGPL-3.0-only"}
-requires-python = ">=3.10"
+requires-python = ">=3.11,<4.0"
 dependencies = []
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: GNU Affero General Public License v3",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
