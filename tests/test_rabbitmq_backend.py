@@ -56,6 +56,7 @@ async def backend() -> AsyncIterator["RabbitMQBackend"]:
     b = RabbitMQBackend(
         RABBITMQ_URL,
         task_queue=f"offwork.test.tasks.{suffix}",
+        queue_namespace=f"test.{suffix}",
     )
     yield b
     await b.close()

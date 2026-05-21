@@ -22,8 +22,8 @@ class HttpBackend(Backend):
     The base URL can point either at the broker root or at the service root;
     when no path is provided, ``/api/v1/broker`` is assumed.
 
-    Authentication is intentionally simple for the proof-of-concept:
-    include ``?api_key=...`` in the URL and the backend will move it into the
+    Authentication is currently supported via an API key, which can be provided by
+    including ``?api_key=...`` in the URL and the backend will move it into the
     ``X-Offwork-API-Key`` request header.
     """
 

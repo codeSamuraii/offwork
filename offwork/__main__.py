@@ -54,6 +54,8 @@ async def _run_in_tmp_venv(args: argparse.Namespace) -> None:
     extras: list[str] = []
     if args.backend and args.backend.startswith(("redis://", "rediss://")):
         extras.append("redis")
+    if args.backend and args.backend.startswith(("amqp://", "amqps://")):
+        extras.append("rabbitmq")
 
     async with temp_venv(install_offwork=True, extras=extras) as venv:
         cmd = _build_worker_cmd(str(venv.python), args)
@@ -315,6 +317,8 @@ def _collect_extras(args: argparse.Namespace, script: Path) -> list[str]:
     backend = os.environ.get("OFFWORK_BACKEND", "")
     if backend.startswith(("redis://", "rediss://")) and "redis" not in extras:
         extras.append("redis")
+    if backend.startswith(("amqp://", "amqps://")) and "rabbitmq" not in extras:
+        extras.append("rabbitmq")
     for extra in _detect_offwork_extras(str(script)):
         if extra not in extras:
             extras.append(extra)

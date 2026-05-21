@@ -67,6 +67,7 @@ class RabbitMQBackend(Backend):
         *,
         task_queue: str | None = None,
         result_ttl: int | None = None,
+        queue_namespace: str | None = None,
     ) -> None:
         self._url = url
         self._task_queue_name = task_queue or self.TASK_QUEUE
@@ -74,6 +75,14 @@ class RabbitMQBackend(Backend):
         self._connection: Any = None
         self._channel: Any = None
         self._lock = asyncio.Lock()
+        ns = f"{queue_namespace}." if queue_namespace else ""
+        self._result_prefix = f"{ns}{self.RESULT_PREFIX}"
+        self._heartbeat_prefix = f"{ns}{self.HEARTBEAT_PREFIX}"
+        self._cancel_prefix = f"{ns}{self.CANCEL_PREFIX}"
+        self._progress_prefix = f"{ns}{self.PROGRESS_PREFIX}"
+        self._schedule_prefix = f"{ns}{self.SCHEDULE_PREFIX}"
+        self._throttle_prefix = f"{ns}{self.THROTTLE_PREFIX}"
+        self._notify_exchange = f"{ns}{self.NOTIFY_EXCHANGE}"
 
     # -- connection management --------------------------------------------------
 
@@ -146,7 +155,7 @@ class RabbitMQBackend(Backend):
         redeclares it with the new arguments.
         """
         try:
-            return await channel.declare_queue(name, arguments=arguments)
+            return await channel.declare_queue(name, durable=True, arguments=arguments)
         except Exception:
             # Channel is closed by RabbitMQ after PRECONDITION_FAILED.
             # Reopen a fresh channel, purge the stale queue, and retry.
@@ -157,7 +166,7 @@ class RabbitMQBackend(Backend):
             except Exception:
                 self._channel = None
                 channel = await self._ensure_channel()
-            return await channel.declare_queue(name, arguments=arguments)
+            return await channel.declare_queue(name, durable=True, arguments=arguments)
 
     async def _kv_put(
         self, prefix: str, task_id: str, value: str, ttl_s: int,
@@ -229,8 +238,8 @@ class RabbitMQBackend(Backend):
     async def send_result(self, task_id: str, result_json: str) -> None:
         async with self._lock:
             channel = await self._ensure_channel()
-            name = f"{self.RESULT_PREFIX}{task_id}"
-            await channel.declare_queue(name, arguments=self._result_args())
+            name = f"{self._result_prefix}{task_id}"
+            await channel.declare_queue(name, durable=True, arguments=self._result_args())
             await channel.default_exchange.publish(
                 aio_pika.Message(result_json.encode()),
                 routing_key=name,
@@ -239,9 +248,9 @@ class RabbitMQBackend(Backend):
     async def get_result(self, task_id: str, timeout: float | None = None) -> str:
         channel = await self._new_channel()
         try:
-            name = f"{self.RESULT_PREFIX}{task_id}"
+            name = f"{self._result_prefix}{task_id}"
             queue = await channel.declare_queue(
-                name, arguments=self._result_args(),
+                name, durable=True, arguments=self._result_args(),
             )
             future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
 
@@ -270,9 +279,9 @@ class RabbitMQBackend(Backend):
     async def try_get_result(self, task_id: str) -> str | None:
         async with self._lock:
             channel = await self._ensure_channel()
-            name = f"{self.RESULT_PREFIX}{task_id}"
+            name = f"{self._result_prefix}{task_id}"
             queue = await channel.declare_queue(
-                name, arguments=self._result_args(),
+                name, durable=True, arguments=self._result_args(),
             )
             msg = await queue.get(fail=False)
             if msg is None:
@@ -285,17 +294,13 @@ class RabbitMQBackend(Backend):
 
     async def send_heartbeat(self, task_id: str) -> None:
         await self._kv_put(
-            self.HEARTBEAT_PREFIX, task_id,
+            self._heartbeat_prefix, task_id,
             str(time.time()), self.HEARTBEAT_TTL,
         )
 
     async def get_heartbeat(self, task_id: str) -> float | None:
-        # Consume (ack) the heartbeat rather than peeking. This avoids a
-        # RabbitMQ race where nack+requeue bypasses x-max-length=1 and causes
-        # the stale heartbeat to be returned on every subsequent poll, making
-        # stall detection fire spuriously.
         raw = await self._kv_get(
-            self.HEARTBEAT_PREFIX, task_id, self.HEARTBEAT_TTL, peek=False,
+            self._heartbeat_prefix, task_id, self.HEARTBEAT_TTL, peek=True,
         )
         return float(raw) if raw is not None else None
 
@@ -303,12 +308,12 @@ class RabbitMQBackend(Backend):
 
     async def cancel_task(self, task_id: str) -> None:
         await self._kv_put(
-            self.CANCEL_PREFIX, task_id, "1", self.CANCEL_TTL,
+            self._cancel_prefix, task_id, "1", self.CANCEL_TTL,
         )
 
     async def is_cancelled(self, task_id: str) -> bool:
         raw = await self._kv_get(
-            self.CANCEL_PREFIX, task_id, self.CANCEL_TTL, peek=True,
+            self._cancel_prefix, task_id, self.CANCEL_TTL, peek=True,
         )
         return raw is not None
 
@@ -316,24 +321,24 @@ class RabbitMQBackend(Backend):
 
     async def send_progress(self, task_id: str, progress_json: str) -> None:
         await self._kv_put(
-            self.PROGRESS_PREFIX, task_id, progress_json, self.PROGRESS_TTL,
+            self._progress_prefix, task_id, progress_json, self.PROGRESS_TTL,
         )
 
     async def get_progress(self, task_id: str) -> str | None:
         return await self._kv_get(
-            self.PROGRESS_PREFIX, task_id, self.PROGRESS_TTL, peek=True,
+            self._progress_prefix, task_id, self.PROGRESS_TTL, peek=True,
         )
 
     # -- Schedule cancellation -------------------------------------------------
 
     async def cancel_schedule(self, schedule_id: str) -> None:
         await self._kv_put(
-            self.SCHEDULE_PREFIX, schedule_id, "1", self.SCHEDULE_TTL,
+            self._schedule_prefix, schedule_id, "1", self.SCHEDULE_TTL,
         )
 
     async def is_schedule_cancelled(self, schedule_id: str) -> bool:
         raw = await self._kv_get(
-            self.SCHEDULE_PREFIX, schedule_id, self.SCHEDULE_TTL, peek=True,
+            self._schedule_prefix, schedule_id, self.SCHEDULE_TTL, peek=True,
         )
         return raw is not None
 
@@ -352,7 +357,7 @@ class RabbitMQBackend(Backend):
         # message body.  Function names can contain characters rejected by
         # the AMQP queue-name grammar (e.g. ``<locals>``), so we hash them.
         raw = await self._kv_get(
-            self.THROTTLE_PREFIX, self._safe_suffix(function_name),
+            self._throttle_prefix, self._safe_suffix(function_name),
             self.THROTTLE_QUEUE_TTL, peek=True,
         )
         if raw is None:
@@ -364,7 +369,7 @@ class RabbitMQBackend(Backend):
     ) -> None:
         expiry = time.time() + throttle_seconds
         await self._kv_put(
-            self.THROTTLE_PREFIX, self._safe_suffix(function_name),
+            self._throttle_prefix, self._safe_suffix(function_name),
             str(expiry), self.THROTTLE_QUEUE_TTL,
         )
 
@@ -374,7 +379,7 @@ class RabbitMQBackend(Backend):
         async with self._lock:
             channel = await self._ensure_channel()
             exchange = await channel.declare_exchange(
-                self.NOTIFY_EXCHANGE, aio_pika.ExchangeType.FANOUT,
+                self._notify_exchange, aio_pika.ExchangeType.FANOUT,
             )
             await exchange.publish(
                 aio_pika.Message(task_id.encode()),
@@ -385,7 +390,7 @@ class RabbitMQBackend(Backend):
         channel = await self._new_channel()
         try:
             exchange = await channel.declare_exchange(
-                self.NOTIFY_EXCHANGE, aio_pika.ExchangeType.FANOUT,
+                self._notify_exchange, aio_pika.ExchangeType.FANOUT,
             )
             queue = await channel.declare_queue(exclusive=True)
             await queue.bind(exchange)
