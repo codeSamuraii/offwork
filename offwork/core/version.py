@@ -1,7 +1,7 @@
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 
-_FALLBACK_VERSION = "0.1.0"
+_FALLBACK_VERSION = "0.1.2"
 
 try:
     _VERSION: str = _pkg_version("offwork")
