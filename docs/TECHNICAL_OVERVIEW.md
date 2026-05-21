@@ -297,7 +297,7 @@ When arguments contain class instances, a custom JSON encoder serializes them vi
 ```json
 {
   "id": "a1b2c3d4e5f6",
-  "graph": "{\"version\": \"0.1.0\", \"objects\": {...}, ...}",
+  "graph": "{\"version\": \"0.1.2\", \"objects\": {...}, ...}",
   "function": "mymodule.hypotenuse",
   "args": [3.0, 4.0],
   "kwargs": {},
@@ -382,7 +382,7 @@ Functions are stored in a content-addressable JSON format. Each function is iden
 
 ```json
 {
-  "version": "0.1.0",
+  "version": "0.1.2",
   "objects": {
     "a1b2...": {
       "name": "add",

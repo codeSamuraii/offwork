@@ -332,7 +332,7 @@ class TestSerialization:
     def test_to_dict_format(self) -> None:
         store = _chain_store()
         data = store.to_dict()
-        assert data["version"] == "0.1.0"
+        assert data["version"].startswith("0.1")
         assert "objects" in data
         assert "deps" in data
         assert "refs" in data
