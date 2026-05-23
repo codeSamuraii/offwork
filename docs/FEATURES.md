@@ -1,4 +1,6 @@
-# Quick Start
+# Features
+
+Full feature guide and API walkthrough for offwork. For architecture internals see [Technical Overview](TECHNICAL_OVERVIEW.md).
 
 ## Install
 
@@ -8,11 +10,11 @@ pip install offwork[redis]      # Redis backend (multi-machine)
 pip install offwork[rabbitmq]   # RabbitMQ backend (multi-machine, AMQP)
 ```
 
-offwork itself has zero runtime dependencies. Backend extras are only needed when you actually use the corresponding URL scheme.
+offwork has zero required runtime dependencies. Backend extras are only needed when you use the corresponding URL scheme.
 
 ## Remote execution
 
-Add `@offwork.task` to the entry point. Everything it calls is captured automatically.
+Add `@offwork.task` to the entry point. Everything it calls is captured automatically: helper functions, imports, constants, closures — the full dependency tree, resolved by AST analysis.
 
 ```python
 import asyncio, math, offwork
@@ -37,7 +39,7 @@ offwork worker --backend local://localhost:9748 --tmp   # Terminal 1
 python my_script.py                                    # Terminal 2 → 5.0
 ```
 
-`--tmp` runs the worker in an isolated venv, cleaned up on exit. For multi-machine, swap `local://` for `redis://`.
+`--tmp` runs the worker in an isolated venv, cleaned up on exit. For multi-machine, swap `local://` for `redis://` or `amqp://` and point to the broker's address.
 
 ## Async API
 
@@ -219,8 +221,22 @@ offwork run examples/remote_execution.py                # Terminal 2
 
 `offwork run` creates a temporary venv, auto-detects dependencies, installs them, and runs the script.
 
+## What gets captured automatically
+
+`@offwork.task` only needs to be on the **entry point**. offwork captures everything else automatically:
+
+- **Helper functions** — any function called from the traced function, recursively
+- **Classes** — constructors, methods, base classes, class attributes, decorators
+- **Imports** — only what the function actually uses
+- **Module-level constants** — referenced variables like `MAX_RETRIES = 5`
+- **Closures** — variables captured from enclosing scopes (via `repr()`, pickle, or dependency edges)
+- **Third-party packages** — detected and auto-installed on the worker
+
+Not captured: standard library and third-party packages (kept as imports).
+
 ## Next steps
 
 - **[Technical Overview](TECHNICAL_OVERVIEW.md)** — Architecture, serialization format, internals
 - **[Sandbox](SANDBOX.md)** — Docker container isolation setup and management
 - **[Signing & Pairing](SIGNING.md)** — Cryptographic task authentication protocol
+- **[Examples](../examples/README.md)** — Runnable example scripts

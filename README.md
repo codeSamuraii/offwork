@@ -1,31 +1,34 @@
 # offwork
 
-**Run any Python function on a remote worker — zero setup, zero deployment.**
-
 [![PyPI](https://img.shields.io/pypi/v/offwork)](https://pypi.org/project/offwork/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-green)](LICENSE)
 [![Typed](https://img.shields.io/badge/typing-strict%20mypy-blue)](https://mypy-lang.org/)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)]()
 
-Add `@offwork.task` to a function. offwork captures its source, all dependencies, and all imports automatically. Workers reconstruct and execute everything from scratch — no shared filesystem, no deployment pipeline. Missing packages are installed on the fly.
+**Run any Python function on a remote worker with just two lines of code.**
+
+Put `.connect()` somewhere at the start of your script, add `@offwork.task` to your function, that's it.
+You can now run it remotely — no shared codebase, no deployment pipeline.
+
+`offwork` captures its entire dependency graph (helpers, imports, closures, constants) and ships it to the worker as a self-contained payload. The worker doesn't need to have any prior knowledge of your code.
 
 ## Quick start
 
 ```bash
 pip install offwork
+offwork worker --backend local://localhost:9748 --tmp  # start a worker in a temp venv
 ```
 
 ```python
 import asyncio, math, offwork
-import offwork
 
 offwork.connect("local://localhost:9748")
 
-def add(a, b):
+def add(a: float, b: float) -> float:
     return a + b
 
-@offwork.task
+@offwork.task  # only the entry point needs this - add() is captured automatically
 def hypotenuse(a: float, b: float) -> float:
     return math.sqrt(add(a**2, b**2))
 
@@ -35,36 +38,37 @@ async def main():
 asyncio.run(main())
 ```
 
-Only the entry point needs `@offwork.task` — everything it calls is captured automatically.
+`.run()` serializes the function graph, submits it to the worker, and returns the result. The worker reconstructs source, installs any missing packages, and executes.
+
+### Multi-machine
+
+Swap `local://` for Redis or RabbitMQ to run on a remote worker:
 
 ```bash
-offwork worker --backend local://localhost:9748 --tmp   # start a worker
-python my_script.py                                    # → 5.0
+pip install offwork[redis]
+offwork worker --backend redis://other-machine:6379
 ```
 
-For multi-machine, swap `local://` for `redis://` or an `https://` managed broker URL.
+See [Features](docs/FEATURES.md) for the full API.
 
 ## Features
 
 | | |
 |-|-|
-| **Auto dependency capture** | Functions, classes, constants, closures — recursive AST analysis |
 | **Package auto-install** | Workers `pip install` missing packages before execution |
-| **Async-native** | `.run()`, `.start()`, `.map()`, `asyncio.gather` |
+| **Async-native** | `.run()`, `.start()`, `.map()`, `asyncio.gather` — all coroutines |
 | **Retry & timeout** | `@offwork.task(timeout=30, retries=3)` with exponential backoff |
-| **Scheduling** | `.run_in(delay)`, `.run_at(datetime)`, `.run_every(freq)` with cancellation |
+| **Scheduling** | `.run_in(delay)`, `.run_at(datetime)`, `.run_every(interval)` with cancellation |
 | **Throttling** | `@offwork.task(throttle=timedelta(hours=24)/50)` — rate-limit executions |
 | **Progress & cancellation** | `offwork.progress(3, 10)` inside tasks; `await future.cancel()` on client |
-| **Heartbeat & stall detection** | Workers heartbeat; clients raise `TaskStalled` on silence |
-| **Content-hash caching** | Same code = cache hit, regardless of client |
-| **Pluggable backends** | `local://` (TCP), `redis://`, `amqp://` (RabbitMQ), `https://` (hosted) |
-| **Docker sandbox** | Container isolation, transparent to clients |
+| **Heartbeat & stall detection** | Workers heartbeat every second; clients raise `TaskStalled` on silence |
+| **Pluggable backends** | `local://` (built-in TCP), `redis://`, `amqp://` (RabbitMQ) |
+| **Docker sandbox** | Optional container isolation, fully transparent to clients |
 | **Signed execution** | Pre-shared token or PIN pairing + HMAC-SHA256 task authentication |
-| **Graceful shutdown** | Ctrl+C drains in-flight tasks; second Ctrl+C force-quits |
 
 ## Sandbox
 
-Run tasks inside Docker containers for isolation — transparent to clients:
+Optional Docker isolation — transparent to clients:
 
 ```bash
 offwork sandbox setup                                      # build image (once)
@@ -75,26 +79,26 @@ See [Sandbox](docs/SANDBOX.md) for configuration.
 
 ## Signing
 
-Pre-shared token or PIN-based pairing + HMAC-SHA256 — workers reject untrusted or tampered tasks:
+HMAC-SHA256 task signing. Workers reject untrusted or tampered tasks. Two setup modes:
 
 ```bash
-# Token-based (recommended for CI/CD)
+# Token (CI/CD)
 offwork token generate
-export OFFWORK_SIGNING_TOKEN=<token>                         # set on client & worker
+export OFFWORK_SIGNING_TOKEN=<token>                         # client & worker
 offwork worker --backend redis://localhost:6379 --require-signing
 
-# PIN-based pairing (interactive)
-offwork worker --backend redis://localhost:6379 --pair       # displays a 6-digit PIN
-offwork pair --backend redis://localhost:6379                # on client: enter the PIN
+# PIN pairing (interactive)
+offwork worker --backend redis://localhost:6379 --pair       # shows 6-digit PIN
+offwork pair --backend redis://localhost:6379                # client: enter PIN
 ```
 
-After setup, tasks are signed automatically. No client-side code changes. See [Signing & Pairing](docs/SIGNING.md).
+After pairing, tasks are signed automatically with no client code changes. See [Signing & Pairing](docs/SIGNING.md).
 
 ## Documentation
 
 | | |
 |-|-|
-| **[Quick Start](docs/QUICK_START.md)** | Tutorial and API walkthrough |
+| **[Features](docs/FEATURES.md)** | Full feature guide and API walkthrough |
 | **[Technical Overview](docs/TECHNICAL_OVERVIEW.md)** | Architecture, serialization format, internals |
 | **[Signing & Pairing](docs/SIGNING.md)** | Cryptographic task signing protocol |
 | **[Sandbox](docs/SANDBOX.md)** | Docker container isolation |
@@ -102,11 +106,11 @@ After setup, tasks are signed automatically. No client-side code changes. See [S
 ## Examples
 
 ```bash
-offwork worker --backend local://localhost:9748 --tmp
-offwork run examples/remote_execution.py
+offwork worker --backend local://localhost:9748 --tmp  # start worker
+offwork run examples/remote_execution.py              # run any example
 ```
 
-[`remote_execution.py`](examples/remote_execution.py) · [`async_execution.py`](examples/async_execution.py) · [`package_installation.py`](examples/package_installation.py) · [`progress_reporting.py`](examples/progress_reporting.py) · [`cancellation.py`](examples/cancellation.py) · [`scheduling.py`](examples/scheduling.py) · [`throttling_and_retry.py`](examples/throttling_and_retry.py) · [`large_module.py`](examples/large_module.py)
+See [examples/README.md](examples/README.md) for a guide to all examples.
 
 ## License
 

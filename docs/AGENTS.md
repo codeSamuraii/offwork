@@ -1,6 +1,6 @@
 # offwork — Context for Coding Assistants
 
-This file is a compact, technical orientation for AI coding assistants. For user-facing docs see [README.md](../README.md), [docs/QUICK_START.md](QUICK_START.md), [docs/TECHNICAL_OVERVIEW.md](TECHNICAL_OVERVIEW.md), [docs/SIGNING.md](SIGNING.md), [docs/SANDBOX.md](SANDBOX.md).
+This file is a compact, technical orientation for AI coding assistants. For user-facing docs see [README.md](../README.md), [docs/FEATURES.md](FEATURES.md), [docs/TECHNICAL_OVERVIEW.md](TECHNICAL_OVERVIEW.md), [docs/SIGNING.md](SIGNING.md), [docs/SANDBOX.md](SANDBOX.md).
 
 ## What offwork is
 

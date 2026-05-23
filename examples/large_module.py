@@ -4,25 +4,14 @@ The stress_test_module has 47 functions across 7 files, 3 classes, and deep
 dependency chains. Only the entry point below is decorated with @offwork.task --
 offwork discovers everything else automatically.
 
-Requires Redis on localhost:6379.  Install: pip install redis
-
 Usage:
     # Terminal 1 -- start a worker
-    offwork worker --backend redis://localhost:6379
+    offwork worker --backend local://localhost:9748
 
     # Terminal 2 -- run this script
     python examples/large_module.py
 """
 import asyncio
-import sys
-from pathlib import Path
-
-# Make ``tests.fixtures.stress_test_module`` importable when running this
-# script directly from a checkout, without needing PYTHONPATH gymnastics.
-# _REPO_ROOT = Path(__file__).resolve().parent.parent
-# if str(_REPO_ROOT) not in sys.path:
-#     sys.path.insert(0, str(_REPO_ROOT))
-
 import offwork
 
 from tests.fixtures.stress_test_module.analyzers import build_report, detect_anomalies, analyze_measurements

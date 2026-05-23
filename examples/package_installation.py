@@ -13,7 +13,7 @@ Requires Redis on localhost:6379.  Install: pip install redis
 
 Usage:
     # Terminal 1 -- start a worker
-    offwork worker --backend redis://localhost:6379
+    offwork worker --backend local://localhost:9748
 
     # Terminal 2 -- run this script
     python examples/package_installation.py

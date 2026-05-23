@@ -5,7 +5,7 @@ back to the client in real time.
 
 Usage:
     # Terminal 1 -- start a worker
-    offwork worker --backend redis://localhost:6379 --tmp
+    offwork worker --backend local://localhost:9748 --tmp
 
     # Terminal 2 -- run this script
     offwork run examples/progress_reporting.py
@@ -46,9 +46,9 @@ async def main() -> None:
 
     # Poll for progress until done
     while not await future.done():
-        p = await future.progress()
+        p = await future.progress()  # returns a `ProgressInfo` object or None if no update
         if p is not None:
-            print(p)
+            print(f"Progress: {p.percent}% ({p.current}/{p.total}) - {p.message}")
         await asyncio.sleep(0.5)
 
     # Get the final result

@@ -14,7 +14,7 @@ Endpoints:
     POST /reports   -- accept JSON, return application/pdf
 
 Usage:
-    offwork worker --backend redis://localhost:6379 --tmp
+    offwork worker --backend local://localhost:9748 --tmp
     python examples/pdf_report.py
 
 The script starts the FastAPI app in-process, posts a sample report,

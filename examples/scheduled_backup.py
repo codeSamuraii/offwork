@@ -9,7 +9,7 @@ Replace the ``_upload`` body with real ``boto3`` calls when wiring this
 into production.
 
 Usage:
-    offwork worker --backend redis://localhost:6379 --tmp
+    offwork worker --backend local://localhost:9748 --tmp
     python examples/scheduled_backup.py
 
 The script generates a small directory of fake data in ``/tmp``,

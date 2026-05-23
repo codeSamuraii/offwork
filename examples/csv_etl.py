@@ -10,7 +10,7 @@ offwork picks them up by walking the call graph of the entry point and
 sends them along with the task.
 
 Usage:
-    offwork worker --backend redis://localhost:6379 --tmp
+    offwork worker --backend local://localhost:9748 --tmp
     python -m offwork run --tmp examples/csv_etl.py
 """
 

@@ -7,7 +7,7 @@ Demonstrates:
 
 Usage:
     # Terminal 1 -- start a worker
-    offwork worker --backend redis://localhost:6379 --tmp
+    offwork worker --backend local://localhost:9748 --tmp
 
     # Terminal 2 -- run this script
     offwork run examples/throttling_and_retry.py

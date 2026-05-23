@@ -13,7 +13,7 @@ that are not decorated.  offwork discovers them by walking the AST and
 ships their source as part of the same task envelope.
 
 Usage:
-    offwork worker --backend redis://localhost:6379 --tmp
+    offwork worker --backend local://localhost:9748 --tmp
     python examples/email_attachments.py
 
 The script synthesizes a handful of emails with attachments in-memory

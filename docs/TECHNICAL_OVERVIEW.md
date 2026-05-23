@@ -1,6 +1,6 @@
 # Technical Overview
 
-This document covers offwork's internal architecture, execution flow, serialization format, and transport backends. For a usage-oriented guide, see the [Quick Start](QUICK_START.md).
+This document covers offwork's internal architecture, execution flow, serialization format, and transport backends. For a usage-oriented guide, see the [Features](FEATURES.md).
 
 ## How it works
 
