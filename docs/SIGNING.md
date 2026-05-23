@@ -1,25 +1,29 @@
 # Signing & Pairing
 
-Cryptographically sign serialized tasks so that workers only execute code from trusted clients. Two key distribution methods are available:
+Cryptographically sign serialized tasks so that workers only execute code from trusted clients.  Two key-distribution methods are available:
 
-- **Token-based** (recommended for automation): Generate a shared token offline, distribute via environment variables or secrets management. No real-time coordination needed.
-- **PIN-based pairing** (recommended for interactive use): A client and worker exchange keys via a 6-digit PIN displayed on one side and entered on the other.
+- **Token-based** (recommended, works for CI/CD): a shared 32-byte token serves as an *enrollment credential*; each client additionally has its own Ed25519 keypair.  The worker pins each client's public key on first contact (TOFU).
+- **PIN-based pairing** (interactive): client and worker exchange a shared key via a 6-digit PIN.  The pairing key is then used like a token.
 
-Both methods use the same underlying HMAC-SHA256 signing — they differ only in how the shared secret is established.
+Both methods produce the same on-the-wire envelope.
 
-## Overview
+## Why it's strong even with a shared token
 
-By default, offwork workers execute any task they receive from the backend. When signing is enabled:
+The shared token is **never** the only thing that authenticates a task:
 
-1. A client and worker share a cryptographic key (via **token** or **pairing**).
-2. The client **signs** every task with HMAC-SHA256 before submitting it.
-3. The worker **verifies** the signature before executing the task.
+1. The client signs each envelope with an HMAC derived from `(token, client_id)` — different clients sign with different keys.
+2. The client also signs with its **own Ed25519 private key**.  The matching public key is pinned by the worker on first sight (TOFU) and locked in.
+3. Each envelope carries an issued-at timestamp and a nonce.  The worker enforces a clock-skew window and remembers nonces to reject replays.
 
-Tasks with missing or invalid signatures are rejected.
+Consequences:
 
-## Quick start — Token (recommended for CI/CD)
+- A leaked token cannot impersonate an **already-enrolled** client — the attacker would also need that client's Ed25519 private key.
+- Revoking a single client (`offwork clients revoke <id>`) never forces a global token rotation.
+- Captured envelopes cannot be replayed.
 
-### 1. Generate a token
+## Quick start — Token
+
+### 1. Generate a token (once)
 
 ```bash
 offwork token generate
@@ -36,313 +40,163 @@ offwork token generate
 
 ### 2. Distribute the token
 
-Copy the token to both the client and worker machines. The recommended method is an environment variable:
-
 ```bash
-# On both client and worker
+# Set on every client and worker
 export OFFWORK_SIGNING_TOKEN=a1b2c3d4e5f6...
 ```
 
-For CI/CD, store the token as a secret in your CI provider (GitHub Actions secrets, GitLab CI variables, etc.) and inject it as `OFFWORK_SIGNING_TOKEN`.
+For CI/CD, store the token as a secret in your CI provider and inject it as `OFFWORK_SIGNING_TOKEN`.
 
-Alternatively, copy the `~/.offwork/token` file to both machines.
-
-### 3. Start the worker with signing
+### 3. Start the worker
 
 ```bash
 offwork worker --backend redis://localhost:6379 --require-signing
 ```
 
-### 4. Run tasks (no changes needed)
+### 4. Run tasks (no code changes)
 
 ```bash
 python examples/remote_execution.py
 ```
 
-The client automatically loads the token and signs tasks before submission. No code changes are needed.
+The client auto-generates a `~/.offwork/client_id` and `~/.offwork/identity.key` on first use and signs each envelope with both.  The worker pins the client's public key on first contact.
 
 ## Quick start — PIN-based pairing
 
-### 1. Start a worker with pairing
-
-On the **worker** machine:
+On the **worker**:
 
 ```bash
 offwork worker --backend redis://localhost:6379 --pair
 ```
 
-This generates a 6-digit PIN and waits for a client:
-
-```
-  Pairing PIN:  482913
-
-  Enter this PIN on the client with:
-    offwork pair --backend redis://localhost:6379
-
-  Waiting for client...
-```
-
-Once paired, the worker starts automatically with signing enabled.
-
-### 2. Pair the client
-
-On the **client** machine (within 60 seconds):
+A 6-digit PIN appears; type it on the **client** within the timeout:
 
 ```bash
 offwork pair --backend redis://localhost:6379
 ```
 
-```
-  Enter pairing PIN: 482913
-  Waiting for worker...
+Both sides now hold the same shared key in `~/.offwork/`.  Submissions are signed automatically.
 
-  ✓ Paired successfully as 'client'.
-    Peer role: worker
-    Key saved to ~/.offwork/client.key
-```
+## Envelope on the wire
 
-Both machines now share a cryptographic key stored in `~/.offwork/`.
-
-### 3. Run tasks (no changes needed)
-
-```bash
-python examples/remote_execution.py
-```
-
-The client automatically loads `~/.offwork/client.key` and signs tasks before submission. No code changes are needed.
-
-### Alternative: manual pairing and worker start
-
-If you need more control, you can pair and start the worker separately:
-
-```bash
-# Pair the worker
-offwork pair --backend redis://localhost:6379 --role worker
-
-# Pair the client (same PIN)
-offwork pair --backend redis://localhost:6379
-
-# Start the worker with signing enforcement
-offwork worker --backend redis://localhost:6379 --require-signing
+```json
+{
+  "id": "<task id>",
+  "graph": "...",
+  "function": "module.func",
+  "args": [...], "kwargs": {...},
+  "client_id":  "<32 hex chars>",
+  "iat":        1716480000.123,
+  "nonce":      "<16 hex chars>",
+  "pubkey":     "<64 hex chars>",
+  "ed_sig":     "<128 hex chars>",
+  "signature":  "<HMAC hex>"
+}
 ```
 
-## How it works
+The HMAC and Ed25519 signatures both cover the canonical JSON of every other field (sorted, no whitespace), with the two signature fields stripped.
 
-### Key resolution
+## Worker verification order
 
-When signing is enabled, both client and worker resolve the signing key using the following precedence order:
+For each incoming envelope:
 
-1. **`OFFWORK_SIGNING_TOKEN` environment variable** — hex-encoded token (highest priority)
-2. **`~/.offwork/token` file** — hex-encoded token written by `offwork token generate`
-3. **`~/.offwork/{client,worker}.key` file** — raw bytes from PIN-based pairing
+1. Reject if `client_id` is on the denylist (`offwork clients revoke`).
+2. Reject if `|now − iat| > clock_skew` (default 300 s; tunable via `--clock-skew`).
+3. Reject if `(client_id, nonce)` has already been seen (in-memory TTL cache).
+4. Verify HMAC under `derive_key(token, "offwork-v1|client:" + client_id)`.
+5. Look up `client_id` in `~/.offwork/known_clients.json`:
+   - **First sight (TOFU)**: verify Ed25519 against the embedded `pubkey`, then store.
+   - **Known**: verify Ed25519 against the *stored* pubkey; reject if the envelope's `pubkey` doesn't match.
+6. Record the nonce and update `last_seen`.
 
-This means you can migrate from pairing to tokens without disruption: set the environment variable and it takes precedence over any existing pairing key.
-
-### Token signing
-
-```
-Generate (once)                       Distribute
-──────────────                        ──────────
-offwork token generate                 Copy token to CI secrets,
-    │                                 env vars, or config
-    └─→ random 32-byte token          │
-        saved to ~/.offwork/token       │
-                                       ▼
-Client                                Worker
-──────                                ──────
-Load token                            Load token
-    │                                     │
-    ├── HMAC-SHA256(key, task_json)       │
-    ├── attach signature                  │
-    ├── submit to backend ──────────────→ │
-    │                                     ├── extract signature
-    │                                     ├── HMAC-SHA256(key, task_json)
-    │                                     ├── constant-time compare
-    │                                     │
-    │                                     ├── match? → execute
-    │                                     └── mismatch? → reject
-```
-
-### Pairing protocol
-
-The pairing protocol is inspired by SPAKE2 and SAS-based verification:
-
-```
-Worker (Initiator)                    Client (Responder)
-──────────────────                    ──────────────────
-Enter PIN: 482913                     Enter PIN: 482913
-        │                                     │
-        ├── derive intermediate key ──────────┤
-        │   HMAC-SHA256(salt, PIN)            │
-        │                                     │
-        ├── generate random challenge         │
-        │   (32 bytes)                        │
-        │                                     │
-        ├── publish challenge ───────────────→│
-        │                                     ├── compute response
-        │                                     │   HMAC(intermediate, challenge)
-        │                                     │
-        │←──────────────────── send response ─┤
-        │                                     │
-        ├── verify response                   │
-        │   (constant-time compare)           │
-        │                                     │
-        ├── derive shared secret              │
-        │   HMAC(intermediate,                │
-        │        challenge ‖ "confirmed")     │
-        │                                     │
-        ├── send confirmation ───────────────→│
-        │                                     ├── derive shared secret
-        │                                     │   (same computation)
-        │                                     │
-    Save ~/.offwork/worker.key          Save ~/.offwork/client.key
-```
-
-**Security properties:**
-- A passive eavesdropper observing the challenge and response cannot recover the PIN or derive the shared secret.
-- The challenge nonce is random per session, preventing replay attacks.
-- Response verification uses constant-time comparison to prevent timing attacks.
-- The shared key is never transmitted — both sides derive it independently.
-
-### Task signing
-
-Once a shared key is established (via token or pairing), the client signs tasks with HMAC-SHA256:
-
-```
-Client                                Worker
-──────                                ──────
-Task JSON ──→ HMAC-SHA256(key, json)  │
-         ──→ attach signature         │
-         ──→ submit to backend ──────→│
-                                      ├── extract signature
-                                      ├── re-serialize payload
-                                      ├── HMAC-SHA256(key, json)
-                                      ├── constant-time compare
-                                      │
-                                      ├── match? → execute
-                                      └── mismatch? → reject
-```
-
-The signature covers the entire task payload — graph JSON, function name, arguments, and metadata. Any tampering is detected.
+Each rejection raises a specific subclass of `SignatureError`: `ReplayError`, `StaleTaskError`, `ClientRevokedError`, `IdentityMismatchError`.
 
 ## CLI reference
 
-### `offwork token generate`
+### `offwork token`
 
 ```bash
-offwork token generate [--force]
+offwork token generate [--force]    # Generate ~/.offwork/token
+offwork token show                  # Token source + local client_id/fingerprint
+offwork token clear                 # Remove ~/.offwork/token
 ```
-
-Generates a random 32-byte signing token and saves it to `~/.offwork/token`. Prints the hex-encoded token and usage instructions.
-
-| Flag | Description |
-|------|-------------|
-| `--force` | Overwrite an existing token |
-
-### `offwork token show`
-
-```bash
-offwork token show
-```
-
-Displays the current token source (environment variable or file) and a truncated preview.
-
-### `offwork token clear`
-
-```bash
-offwork token clear
-```
-
-Removes the saved `~/.offwork/token` file.
-
-### `offwork worker --pair`
-
-```bash
-offwork worker --backend URL --pair
-```
-
-Generates a PIN, pairs with a client, then starts serving with signing automatically enabled. This is the recommended way to set up a signed worker interactively.
-
-### `offwork pair`
-
-```bash
-offwork pair --backend URL [--pin PIN] [--timeout SECS] [--force] [--clear]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--backend` | Backend URL for the pairing channel |
-| `--pin` | Specify a PIN (prompted interactively if omitted) |
-| `--timeout` | Seconds to wait for the peer (default: 60) |
-| `--force` | Overwrite an existing shared key |
-| `--clear` | Remove the shared key for this role |
-| `--role` | `client` (default) or `worker` — use `offwork worker --pair` instead of `--role worker` |
 
 ### `offwork worker --require-signing`
 
 ```bash
-offwork worker --backend URL --require-signing
+offwork worker --backend URL --require-signing [--clock-skew SECONDS]
 ```
 
-When `--require-signing` is set, the worker loads signing key material using the standard resolution order (env var → token file → pairing key) and rejects any task that is unsigned or has an invalid signature. If no key material is found, the worker exits with an error.
+| Flag             | Description                                                            |
+|------------------|------------------------------------------------------------------------|
+| `--require-signing` | Enforce signed envelopes                                            |
+| `--clock-skew`      | Max `\|now − iat\|` (default 300s)                                  |
+
+### `offwork pair`
+
+```bash
+offwork worker --backend URL --pair          # Worker side
+offwork pair --backend URL [--pin PIN]       # Client side
+offwork pair --backend URL --clear           # Remove pairing key
+```
+
+### `offwork clients` (worker-side)
+
+```bash
+offwork clients list                # Table of all enrolled clients
+offwork clients show <client_id>    # Full record (pubkey, fingerprint, seen times, revoked)
+offwork clients revoke <client_id>  # Reject future submissions from this client
+offwork clients approve <client_id> # Un-revoke
+```
 
 ## Programmatic usage
 
-### Signing tasks manually
+### Sign / verify with the new envelope
 
 ```python
-from offwork.core.signing import derive_key, compute_signature, verify_signature
-
-# After pairing or with a token, both sides have the same shared_key
-signing_key = derive_key(shared_key)
-
-# Sign
-signature = compute_signature(payload, signing_key)
-
-# Verify
-is_valid = verify_signature(payload, signature, signing_key)
-```
-
-### Using Task signing
-
-```python
+import offwork
+from offwork.core.envelope import build_signed_envelope, verify_task_envelope
+from offwork.core.signing import NonceLRU
+from offwork.core.clients import KnownClients
+from offwork.core.identity import (
+    get_client_id, get_identity_seed, get_public_key,
+)
+from offwork.core.token import resolve_root_token
 from offwork.core.task import Task
-from offwork.core.signing import derive_key
 
-key = derive_key(shared_secret)
+# Client side
+task = Task(graph_json=offwork.serialize(my_func),
+            function_name="m.my_func", args=(1, 2))
+envelope = build_signed_envelope(
+    task,
+    root_token=resolve_root_token("client"),
+    client_id=get_client_id(),
+    identity_seed=get_identity_seed(),
+    public_key=get_public_key(),
+)
 
-# Client: sign on serialization
-task = Task(graph_json=graph, function_name="my.func", args=(1, 2))
-signed_json = task.to_json(signing_key=key)
-
-# Worker: verify on deserialization
-task = Task.from_json(signed_json, signing_key=key)  # raises SignatureError on failure
-```
-
-### Resolving keys programmatically
-
-```python
-from offwork.core.token import resolve_signing_key
-
-# Resolves from env var → token file → pairing key
-key = resolve_signing_key("client")  # or "worker"
-if key is not None:
-    signed_json = task.to_json(signing_key=key)
+# Worker side
+known = KnownClients()
+nonces = NonceLRU()
+restored = verify_task_envelope(
+    envelope,
+    root_token=resolve_root_token("worker"),
+    known_clients=known,
+    nonce_lru=nonces,
+)
 ```
 
 ### Token management
 
 ```python
-from offwork.core.token import generate_token, save_token, load_token, clear_token
+from offwork.core.token import (
+    generate_token, save_token, load_token, clear_token, resolve_root_token,
+)
 
-# Generate and save
 token = generate_token()
 save_token(token)
-
-# Load (checks env var first, then file)
-token = load_token()
-
-# Clean up
+loaded = load_token()                # checks env var first
+raw = resolve_root_token("client")   # raw 32 bytes, ready for derive_key
 clear_token()
 ```
 
@@ -350,40 +204,38 @@ clear_token()
 
 ```python
 from offwork.core.pairing import (
-    generate_pin,
-    initiate_pairing,
-    respond_to_pairing,
-    save_shared_key,
+    generate_pin, initiate_pairing, respond_to_pairing, save_shared_key,
 )
 
-# Worker side (initiator)
-pin = generate_pin()
-result = await initiate_pairing(backend, pin, timeout=60.0)
+# Worker (initiator)
+result = await initiate_pairing(backend, generate_pin(), timeout=60.0)
 save_shared_key(result.shared_key, "worker")
 
-# Client side (responder)
+# Client (responder)
 result = await respond_to_pairing(backend, pin, timeout=60.0)
 save_shared_key(result.shared_key, "client")
 ```
 
-## Key management
+## Files and environment
 
-| File | Purpose |
-|------|---------|
-| `~/.offwork/token` | Pre-shared signing token (hex-encoded, 64 chars) |
-| `~/.offwork/client.key` | Client's pairing key (32 bytes, from `offwork pair`) |
-| `~/.offwork/worker.key` | Worker's pairing key (32 bytes, from `offwork pair`) |
+| File                              | Purpose                                                    |
+|-----------------------------------|------------------------------------------------------------|
+| `~/.offwork/token`                | Pre-shared root token (hex, 64 chars)                      |
+| `~/.offwork/client_id`            | This machine's stable 32-hex client id (auto-generated)    |
+| `~/.offwork/identity.key`         | This machine's Ed25519 seed (raw 32 bytes, auto-generated) |
+| `~/.offwork/client.key`           | Pairing key, client role                                   |
+| `~/.offwork/worker.key`           | Pairing key, worker role                                   |
+| `~/.offwork/known_clients.json`   | Worker-side TOFU registry + denylist                       |
 
-All files are created with `0600` permissions (owner-only read/write).
+All files are created with `0600` permissions.
 
-| Environment variable | Purpose |
-|---------------------|---------|
-| `OFFWORK_SIGNING_TOKEN` | Hex-encoded signing token (overrides file) |
+| Environment variable        | Purpose                                       |
+|-----------------------------|-----------------------------------------------|
+| `OFFWORK_SIGNING_TOKEN`     | Hex-encoded root token (overrides file)       |
 
 ### CI/CD example (GitHub Actions)
 
 ```yaml
-# .github/workflows/deploy.yml
 jobs:
   run-task:
     runs-on: ubuntu-latest
@@ -396,38 +248,21 @@ jobs:
       - run: python my_task.py
 ```
 
-### Regenerating tokens
+### Rotating credentials
 
 ```bash
-offwork token generate --force
-```
-
-Then update the `OFFWORK_SIGNING_TOKEN` secret in your CI provider and restart workers.
-
-### Clearing credentials
-
-```bash
-# Token
-offwork token clear
-
-# Pairing keys
-offwork pair --clear
-offwork pair --role worker --clear
+offwork token generate --force          # New token; update CI secret and restart workers
+offwork pair --clear                    # Remove pairing key
+offwork clients revoke <client_id>      # Revoke a single client
 ```
 
 ## Troubleshooting
 
-**"Signing is enabled but no key material found"**
-- Set `OFFWORK_SIGNING_TOKEN`, run `offwork token generate`, or run `offwork pair` to establish key material.
-
-**"Task is unsigned but signing is enabled"**
-- The client is not signing tasks. Ensure the token is set via `OFFWORK_SIGNING_TOKEN` or `~/.offwork/token`, or that `~/.offwork/client.key` exists (from pairing).
-
-**"Task signature verification failed"**
-- The client and worker have different keys. Ensure both sides use the same token or re-pair.
-
-**"PIN mismatch — pairing failed"**
-- The PINs entered on client and worker don't match. Try again.
-
-**"Pairing timed out"**
-- Both sides must run pairing within the timeout window (default: 60s). Consider using tokens instead for automated setups.
+| Error                       | Likely cause                                                          |
+|-----------------------------|-----------------------------------------------------------------------|
+| `SignatureError`            | Token mismatch, tampered envelope, or invalid Ed25519 signature.      |
+| `StaleTaskError`            | Client and worker clocks differ by more than `--clock-skew`.          |
+| `ReplayError`               | The same envelope was submitted twice.                                |
+| `IdentityMismatchError`     | A pinned `client_id` is now presenting a different public key (e.g. the user deleted `~/.offwork/identity.key`). Re-enrol by picking a new `client_id` (delete `~/.offwork/client_id`) or remove the worker's pin. |
+| `ClientRevokedError`        | The client has been revoked with `offwork clients revoke`.            |
+| `Signing is enabled but no key material found` | Set `OFFWORK_SIGNING_TOKEN`, run `offwork token generate`, or run `offwork pair`. |

@@ -15,8 +15,16 @@ from typing import TYPE_CHECKING, Any
 from collections.abc import Callable, Awaitable
 
 from offwork.core.task import Task
-from offwork.core.token import resolve_signing_key
+from offwork.core.token import resolve_root_token
 from offwork.core.version import _VERSION
+from offwork.core.clients import KnownClients
+from offwork.core.signing import NonceLRU
+from offwork.core.envelope import (
+    DEFAULT_CLOCK_SKEW,
+    build_signed_envelope,
+    verify_task_envelope,
+)
+from offwork.core.identity import get_client_id, get_identity_seed, get_public_key
 from offwork.core.progress import _progress_callback
 from offwork.worker.result import Result, ResultEnvelope
 from offwork.worker.worker import Worker
@@ -145,12 +153,25 @@ def get_backend() -> Backend:
     return _active_backend  # type: ignore[return-value]
 
 
+def _encode_task(task: Task, root_token: bytes | None) -> str:
+    """Return the wire JSON for *task*, signed if *root_token* is set."""
+    if root_token is None:
+        return task.to_json()
+    return build_signed_envelope(
+        task,
+        root_token=root_token,
+        client_id=get_client_id(),
+        identity_seed=get_identity_seed(),
+        public_key=get_public_key(),
+    )
+
+
 async def submit_remote(
     func: Callable[..., object],
     wrapper: Callable[..., object],
     *args: Any,
     _backend: str | Backend | None = None,
-    _signing_key: bytes | None = None,
+    _root_token: bytes | None = None,
     **kwargs: Any,
 ) -> Result:
     """Pack and submit a function to the remote backend.
@@ -159,9 +180,10 @@ async def submit_remote(
 
     Parameters
     ----------
-    _signing_key
-        When provided, the task JSON is HMAC-signed so the worker can
-        verify the origin.  Typically loaded from disk after pairing.
+    _root_token
+        When provided (or auto-loaded), the envelope is signed with a
+        per-client HMAC plus an Ed25519 signature bound to this
+        machine's stable identity.
     """
     from offwork.graph.graph import Graph  # circular
 
@@ -172,9 +194,8 @@ async def submit_remote(
     else:
         backend = get_backend()
 
-    # Auto-load client signing key if not explicitly provided
-    if _signing_key is None:
-        _signing_key = resolve_signing_key("client")
+    if _root_token is None:
+        _root_token = resolve_root_token("client")
 
     unwrapped = inspect.unwrap(func)
     function_name = f"{unwrapped.__module__}.{unwrapped.__qualname__}"
@@ -194,7 +215,7 @@ async def submit_remote(
     )
 
     logger.debug("Submitting task %s → %s", task.task_id[:8], function_name)
-    await backend.submit(task.to_json(signing_key=_signing_key))
+    await backend.submit(_encode_task(task, _root_token))
     logger.info("Submitted task %s for %s", task.task_id, function_name)
     return Result(task.task_id, backend)
 
@@ -204,7 +225,7 @@ async def submit_remote_scheduled(
     wrapper: Callable[..., object],
     *args: Any,
     _backend: str | Backend | None = None,
-    _signing_key: bytes | None = None,
+    _root_token: bytes | None = None,
     _scheduled_at: float | None = None,
     **kwargs: Any,
 ) -> Result:
@@ -218,8 +239,8 @@ async def submit_remote_scheduled(
     else:
         backend = get_backend()
 
-    if _signing_key is None:
-        _signing_key = resolve_signing_key("client")
+    if _root_token is None:
+        _root_token = resolve_root_token("client")
 
     unwrapped = inspect.unwrap(func)
     function_name = f"{unwrapped.__module__}.{unwrapped.__qualname__}"
@@ -243,7 +264,7 @@ async def submit_remote_scheduled(
         "Submitting scheduled task %s → %s (at %.3f)",
         task.task_id[:8], function_name, _scheduled_at or 0,
     )
-    await backend.submit(task.to_json(signing_key=_signing_key))
+    await backend.submit(_encode_task(task, _root_token))
     logger.info(
         "Submitted scheduled task %s for %s (at %.0f)",
         task.task_id, function_name, _scheduled_at or 0,
@@ -256,7 +277,7 @@ async def submit_recurring(
     wrapper: Callable[..., object],
     *args: Any,
     _backend: str | Backend | None = None,
-    _signing_key: bytes | None = None,
+    _root_token: bytes | None = None,
     _interval: float = 0,
     _start_at: float | None = None,
     **kwargs: Any,
@@ -271,8 +292,8 @@ async def submit_recurring(
     else:
         backend = get_backend()
 
-    if _signing_key is None:
-        _signing_key = resolve_signing_key("client")
+    if _root_token is None:
+        _root_token = resolve_root_token("client")
 
     unwrapped = inspect.unwrap(func)
     function_name = f"{unwrapped.__module__}.{unwrapped.__qualname__}"
@@ -301,7 +322,7 @@ async def submit_recurring(
         "Submitting recurring task %s → %s (every %.1fs, schedule=%s)",
         task.task_id[:8], function_name, _interval, schedule_id,
     )
-    await backend.submit(task.to_json(signing_key=_signing_key))
+    await backend.submit(_encode_task(task, _root_token))
     logger.info(
         "Submitted recurring task %s for %s (every %.1fs, schedule=%s)",
         task.task_id, function_name, _interval, schedule_id,
@@ -462,18 +483,32 @@ async def _handle_task(
     worker: Worker,
     backend: Backend,
     task_json: str,
-    signing_key: bytes | None = None,
+    root_token: bytes | None = None,
+    known_clients: KnownClients | None = None,
+    nonce_lru: NonceLRU | None = None,
+    clock_skew: float = DEFAULT_CLOCK_SKEW,
 ) -> None:
     """Process a single task: deserialize, execute with policy, send result.
 
     Parameters
     ----------
-    signing_key
-        When provided, the task must carry a valid HMAC-SHA256 signature.
-        Unsigned or mis-signed tasks are rejected with an error result.
+    root_token
+        When provided, every task must carry a valid signed envelope
+        (per-client HMAC + Ed25519).  Unsigned or invalid envelopes are
+        rejected with an error result.
     """
     try:
-        task = Task.from_json(task_json, signing_key=signing_key)
+        if root_token is not None:
+            assert known_clients is not None and nonce_lru is not None
+            task = verify_task_envelope(
+                task_json,
+                root_token=root_token,
+                known_clients=known_clients,
+                nonce_lru=nonce_lru,
+                clock_skew=clock_skew,
+            )
+        else:
+            task = Task.from_json(task_json)
     except Exception as exc:
         # If we can extract a task_id, send an error envelope so the
         # client gets feedback instead of hanging forever.
@@ -597,7 +632,7 @@ async def _handle_task(
     if task.throttle is not None and envelope.status == "ok":
         await backend.record_throttle(task.function_name, task.throttle)
 
-    # Re-enqueue recurring task
+    # Re-enqueue recurring task — worker re-signs with its own identity.
     if task.recur_interval is not None and task.schedule_id is not None:
         if not await backend.is_schedule_cancelled(task.schedule_id):
             next_task = Task(
@@ -613,7 +648,7 @@ async def _handle_task(
                 recur_interval=task.recur_interval,
                 schedule_id=task.schedule_id,
             )
-            await backend.submit(next_task.to_json(signing_key=signing_key))
+            await backend.submit(_encode_task(next_task, root_token))
             logger.debug(
                 "Re-enqueued recurring task %s (schedule=%s, next in %.1fs)",
                 next_task.task_id, task.schedule_id, task.recur_interval,
@@ -624,7 +659,10 @@ async def _worker_loop(
     worker: Worker,
     backend: Backend,
     concurrency: int,
-    signing_key: bytes | None = None,
+    root_token: bytes | None = None,
+    known_clients: KnownClients | None = None,
+    nonce_lru: NonceLRU | None = None,
+    clock_skew: float = DEFAULT_CLOCK_SKEW,
 ) -> None:
     """Consume tasks from *backend* and dispatch to *worker*.
 
@@ -634,8 +672,9 @@ async def _worker_loop(
 
     Parameters
     ----------
-    signing_key
-        When provided, every incoming task must carry a valid signature.
+    root_token
+        When provided, every incoming task must carry a valid signed
+        envelope (per-client HMAC + Ed25519).
     """
     shutdown = asyncio.Event()
     pending: set[asyncio.Task[None]] = set()
@@ -665,7 +704,13 @@ async def _worker_loop(
 
     async def bounded_handle(task_json: str) -> None:
         async with sem:
-            await _handle_task(worker, backend, task_json, signing_key=signing_key)
+            await _handle_task(
+                worker, backend, task_json,
+                root_token=root_token,
+                known_clients=known_clients,
+                nonce_lru=nonce_lru,
+                clock_skew=clock_skew,
+            )
 
     async def _listen() -> None:
         async for task_json in backend.listen():
@@ -716,6 +761,7 @@ async def serve(
     import_to_package: dict[str, str] | None = None,
     sandbox: "DockerSandbox | bool | None" = None,
     require_signing: bool = False,
+    clock_skew: float = DEFAULT_CLOCK_SKEW,
 ) -> None:
     """Start a worker loop that pops tasks from the backend and executes them.
 
@@ -734,9 +780,12 @@ async def serve(
         ``True`` or a :class:`~offwork.worker.sandbox.DockerSandbox`
         instance to execute tasks inside a Docker container.
     require_signing
-        When ``True``, only execute tasks that carry a valid HMAC
-        signature from a paired client.  The shared key is loaded from
-        ``~/.offwork/worker.key`` (written by ``offwork pair``).
+        When ``True``, every incoming task must carry a valid signed
+        envelope (per-client HMAC + Ed25519).  Key material is loaded
+        from the environment or ``~/.offwork``.
+    clock_skew
+        Maximum allowed ``|now - iat|`` for signed envelopes, in
+        seconds.  Defaults to 300s.
     """
     from offwork.worker.sandbox import DockerSandbox
 
@@ -750,18 +799,25 @@ async def serve(
         _VERSION, resolved, concurrency, auto_tag, sandbox_tag, signing_tag,
     )
 
-    # Load signing key if required
-    signing_key: bytes | None = None
+    root_token: bytes | None = None
+    known_clients: KnownClients | None = None
+    nonce_lru: NonceLRU | None = None
     if require_signing:
-        signing_key = resolve_signing_key("worker")
-        if signing_key is None:
+        root_token = resolve_root_token("worker")
+        if root_token is None:
             logger.error(
                 "Signing is enabled but no key material found. "
                 "Set OFFWORK_SIGNING_TOKEN, run 'offwork token generate', "
                 "or run 'offwork pair' to pair with a client."
             )
             sys.exit(1)
-        logger.info("Task signing enabled — only signed tasks will be executed")
+        known_clients = KnownClients()
+        nonce_lru = NonceLRU()
+        logger.info(
+            "Task signing enabled — only valid envelopes will be executed "
+            "(known_clients=%s)",
+            known_clients.path,
+        )
 
     try:
         backend = connect(resolved)
@@ -784,7 +840,13 @@ async def serve(
     logger.info("Listening for tasks \u2014 Ctrl+C to stop.")
 
     try:
-        await _worker_loop(worker, backend, concurrency, signing_key=signing_key)
+        await _worker_loop(
+            worker, backend, concurrency,
+            root_token=root_token,
+            known_clients=known_clients,
+            nonce_lru=nonce_lru,
+            clock_skew=clock_skew,
+        )
     finally:
         if worker.sandboxed:
             assert worker._sandbox is not None

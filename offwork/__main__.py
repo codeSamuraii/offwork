@@ -44,6 +44,8 @@ def _build_worker_cmd(python: str, args: argparse.Namespace) -> list[str]:
         cmd.extend(["--log-level", args.log_level])
     if args.require_signing:
         cmd.append("--require-signing")
+    if args.clock_skew != 300.0:
+        cmd.extend(["--clock-skew", str(args.clock_skew)])
     if args.sandbox:
         cmd.append("--sandbox")
     return cmd
@@ -108,6 +110,7 @@ def _cmd_worker(args: argparse.Namespace) -> None:
         auto_install=not args.no_auto_install,
         sandbox=bool(args.sandbox),
         require_signing=bool(args.require_signing),
+        clock_skew=float(args.clock_skew),
     ))
 
 
@@ -142,6 +145,7 @@ async def _pair_then_serve(args: argparse.Namespace) -> None:
         auto_install=not args.no_auto_install,
         sandbox=bool(args.sandbox),
         require_signing=True,
+        clock_skew=float(args.clock_skew),
     )
 
 
@@ -395,7 +399,9 @@ def _add_worker_parser(sub: "argparse._SubParsersAction[argparse.ArgumentParser]
     p.add_argument("--sandbox", action="store_true", default=False,
                     help="Run function execution inside an isolated Docker sandbox.")
     p.add_argument("--require-signing", action="store_true", default=False,
-                    help="Only accept tasks with valid HMAC signatures from paired clients.")
+                    help="Only accept tasks with valid signed envelopes (per-client HMAC + Ed25519).")
+    p.add_argument("--clock-skew", type=float, default=300.0, metavar="SECONDS",
+                    help="Maximum clock skew between client and worker (default: 300s)")
     p.add_argument("--pair", action="store_true", default=False,
                     help="Generate a pairing PIN, wait for a client to pair, then start "
                          "serving with signing enabled.")
@@ -649,6 +655,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_sandbox_parser(sub)
     _add_pair_parser(sub)
     _add_token_parser(sub)
+    _add_clients_parser(sub)
     return parser
 
 
@@ -703,22 +710,27 @@ def _cmd_token_generate(args: argparse.Namespace) -> None:
 
 
 def _cmd_token_show(_args: argparse.Namespace) -> None:
-    """Show the current signing token status."""
+    """Show the current signing token + local identity status."""
     from offwork.core.token import load_token, _TOKEN_ENV_VAR
+    from offwork.core.identity import get_client_id, get_identity_fingerprint
 
     env_val = os.environ.get(_TOKEN_ENV_VAR)
     if env_val is not None:
         print(f"  Source: {_TOKEN_ENV_VAR} environment variable")
         print(f"  Token:  {env_val.strip()[:16]}... (truncated)")
-        return
-
-    token = load_token()
-    if token is not None:
-        print(f"  Source: ~/.offwork/token")
-        print(f"  Token:  {token[:16]}... (truncated)")
     else:
-        print("  No signing token configured.")
-        print("  Generate one with: offwork token generate")
+        token = load_token()
+        if token is not None:
+            print(f"  Source: ~/.offwork/token")
+            print(f"  Token:  {token[:16]}... (truncated)")
+        else:
+            print("  No signing token configured.")
+            print("  Generate one with: offwork token generate")
+
+    print()
+    print("  Local identity:")
+    print(f"    client_id:    {get_client_id()}")
+    print(f"    fingerprint:  {get_identity_fingerprint()}")
 
 
 def _cmd_token_clear(_args: argparse.Namespace) -> None:
@@ -749,6 +761,98 @@ def _add_token_parser(sub: "argparse._SubParsersAction[argparse.ArgumentParser]"
     token_sub.add_parser("clear", help="Remove the saved token")
 
 
+# -- Clients (known-clients registry) ---------------------------------------
+
+
+def _cmd_clients(args: argparse.Namespace) -> None:
+    """Handle ``offwork clients`` subcommands."""
+    action = getattr(args, "clients_action", None)
+    if action is None:
+        print("Usage: offwork clients {list|show|revoke|approve}", file=sys.stderr)
+        sys.exit(1)
+    handlers = {
+        "list": _cmd_clients_list,
+        "show": _cmd_clients_show,
+        "revoke": _cmd_clients_revoke,
+        "approve": _cmd_clients_approve,
+    }
+    handlers[action](args)
+
+
+def _format_ts(ts: float) -> str:
+    import datetime as _dt
+
+    return _dt.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _cmd_clients_list(_args: argparse.Namespace) -> None:
+    from offwork.core.clients import KnownClients
+
+    entries = KnownClients().list_clients()
+    if not entries:
+        print("No known clients.")
+        return
+    print(f"{'CLIENT_ID':<34} {'FINGERPRINT':<18} "
+          f"{'FIRST_SEEN':<20} {'LAST_SEEN':<20} STATE")
+    import hashlib
+    for e in entries:
+        fp = hashlib.sha256(bytes.fromhex(e.pubkey)).hexdigest()[:16]
+        state = "revoked" if e.revoked else "active"
+        print(f"{e.client_id:<34} {fp:<18} "
+              f"{_format_ts(e.first_seen):<20} {_format_ts(e.last_seen):<20} {state}")
+
+
+def _cmd_clients_show(args: argparse.Namespace) -> None:
+    import hashlib
+
+    from offwork.core.clients import KnownClients
+
+    entry = KnownClients().get(args.client_id)
+    if entry is None:
+        print(f"No client with id {args.client_id!r}.", file=sys.stderr)
+        sys.exit(1)
+    fp = hashlib.sha256(bytes.fromhex(entry.pubkey)).hexdigest()[:16]
+    print(f"  client_id:    {entry.client_id}")
+    print(f"  pubkey:       {entry.pubkey}")
+    print(f"  fingerprint:  {fp}")
+    print(f"  first_seen:   {_format_ts(entry.first_seen)}")
+    print(f"  last_seen:    {_format_ts(entry.last_seen)}")
+    print(f"  revoked:      {entry.revoked}")
+
+
+def _cmd_clients_revoke(args: argparse.Namespace) -> None:
+    from offwork.core.clients import KnownClients
+
+    if KnownClients().revoke(args.client_id):
+        print(f"Revoked client {args.client_id}.")
+    else:
+        print(f"Client {args.client_id} not found or already revoked.")
+
+
+def _cmd_clients_approve(args: argparse.Namespace) -> None:
+    from offwork.core.clients import KnownClients
+
+    if KnownClients().approve(args.client_id):
+        print(f"Un-revoked client {args.client_id}.")
+    else:
+        print(f"Client {args.client_id} not found or not revoked.")
+
+
+def _add_clients_parser(sub: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+    p = sub.add_parser(
+        "clients",
+        help="Inspect and manage the known-clients registry (worker side)",
+    )
+    clients_sub = p.add_subparsers(dest="clients_action")
+    clients_sub.add_parser("list", help="List all known clients")
+    show = clients_sub.add_parser("show", help="Show details for one client")
+    show.add_argument("client_id", help="Client id to show")
+    rev = clients_sub.add_parser("revoke", help="Revoke a client")
+    rev.add_argument("client_id", help="Client id to revoke")
+    appr = clients_sub.add_parser("approve", help="Un-revoke a client")
+    appr.add_argument("client_id", help="Client id to un-revoke")
+
+
 _COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "worker": _cmd_worker,
     "run": _cmd_run,
@@ -758,6 +862,7 @@ _COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "sandbox": _cmd_sandbox,
     "pair": _dispatch_pair,
     "token": _cmd_token,
+    "clients": _cmd_clients,
 }
 
 

@@ -15,8 +15,7 @@ from fractions import Fraction
 from typing import Any, Self
 from dataclasses import field, dataclass
 
-from offwork.core.errors import SignatureError
-from offwork.core.signing import verify_signature, compute_signature
+
 
 _OBJECT_SENTINEL = "__offwork_obj__"
 _BYTES_SENTINEL = "__offwork_bytes__"
@@ -404,9 +403,9 @@ class Task:
     name and its arguments, so the consumer side needs zero knowledge
     of offwork internals to dispatch work.
 
-    When a shared key is provided (via :meth:`to_signed_json`), the
-    serialized payload carries an HMAC-SHA256 signature that the worker
-    can verify before execution.
+    Signing happens at the envelope layer (see
+    :mod:`offwork.core.envelope`); this class only carries the
+    serialisable payload.
     """
 
     graph_json: str
@@ -421,12 +420,11 @@ class Task:
     recur_interval: float | None = None
     schedule_id: str | None = None
     throttle: float | None = None
-    signature: str | None = None
 
     # -- Serialization -------------------------------------------------------
 
     def _to_dict(self) -> dict[str, Any]:
-        """Build the core payload dict (without signature)."""
+        """Build the core payload dict."""
         d: dict[str, Any] = {
             "id": self.task_id,
             "graph": self.graph_json,
@@ -450,59 +448,14 @@ class Task:
             d["throttle"] = self.throttle
         return d
 
-    def to_json(self, *, signing_key: bytes | None = None) -> str:
-        """Serialize the task envelope to a JSON string.
-
-        Parameters
-        ----------
-        signing_key
-            When provided, the payload is HMAC-SHA256 signed and the
-            signature is included in the envelope.  Workers that hold
-            the same key can verify it with :meth:`from_signed_json`.
-        """
-        d = self._to_dict()
-        if signing_key is not None:
-            payload = json.dumps(d, cls=_TaskEncoder, separators=(",", ":"), sort_keys=True)
-            d["signature"] = compute_signature(payload, signing_key)
-        return json.dumps(d, cls=_TaskEncoder)
+    def to_json(self) -> str:
+        """Serialize the (unsigned) task envelope to a JSON string."""
+        return json.dumps(self._to_dict(), cls=_TaskEncoder)
 
     @classmethod
-    def from_json(
-        cls,
-        json_str: str | bytes,
-        *,
-        signing_key: bytes | None = None,
-    ) -> Self:
-        """Deserialize a task envelope from a JSON string.
-
-        Parameters
-        ----------
-        signing_key
-            When provided **and** the envelope contains a ``signature``
-            field, the signature is verified.  If verification fails,
-            :class:`~offwork.core.errors.SignatureError` is raised.
-            Unsigned tasks are accepted when *signing_key* is ``None``.
-
-        Raises
-        ------
-        SignatureError
-            If the signature is present but invalid, or if *signing_key*
-            is provided but the envelope has no signature.
-        """
+    def from_json(cls, json_str: str | bytes) -> Self:
+        """Deserialize a (unsigned) task envelope from a JSON string."""
         data = json.loads(json_str)
-        sig = data.pop("signature", None)
-
-        if signing_key is not None:
-            if not sig:
-                raise SignatureError(
-                    "Task is unsigned but signing is enabled — "
-                    "rejecting unauthenticated task"
-                )
-            # Re-serialize without signature for verification
-            payload = json.dumps(data, cls=_TaskEncoder, separators=(",", ":"), sort_keys=True)
-            if not verify_signature(payload, sig, signing_key):
-                raise SignatureError("Task signature verification failed")
-
         return cls(
             graph_json=data["graph"],
             function_name=data["function"],
@@ -516,5 +469,4 @@ class Task:
             recur_interval=data.get("recur_interval"),
             schedule_id=data.get("schedule_id"),
             throttle=data.get("throttle"),
-            signature=sig or None,  # normalise empty string to None
         )

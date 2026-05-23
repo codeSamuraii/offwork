@@ -118,7 +118,7 @@ offwork.get_graph().to_mermaid(func)       # -> Mermaid diagram string
 ### Worker side: `await serve()` / `offwork worker`
 
 1. **Listen** — `async for task_json in backend.listen()` yields tasks as they arrive.
-2. **Verify signature** — If `--require-signing` is set, call `verify_and_load_json(task_json, key)`; reject with `SignatureError` on failure.
+2. **Verify envelope** — If `--require-signing` is set, call `verify_task_envelope(task_json, ...)` which enforces denylist, clock-skew, replay cache, per-client HMAC, and TOFU-pinned Ed25519. Any failure raises a subclass of `SignatureError`.
 3. **Scheduling wait** — If the task has a `scheduled_at` timestamp in the future, `await asyncio.sleep(delay)` until then.
 4. **Cancellation check** — If `await backend.is_cancelled(task_id)` returns `True`, skip execution.
 5. **Throttle check** — If the task has a `throttle` value and the cooldown hasn't elapsed, return a `"throttled"` result immediately.

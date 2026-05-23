@@ -1,17 +1,12 @@
-"""Pre-shared token for automated task signing.
+"""Pre-shared token used as the enrollment credential.
 
-Tokens provide an alternative to the interactive PIN-based pairing
-protocol (see :mod:`offwork.core.pairing`).  A token is a random
-32-byte secret that can be generated offline, stored in CI secrets or
-configuration management, and distributed to clients and workers
-independently — no real-time pairing step is required.
+A token is a random 32-byte secret that both client and worker hold.
+It is used to derive a per-client HMAC subkey at envelope-signing time
+(see :mod:`offwork.core.envelope`).  By itself, the token cannot
+impersonate an already-enrolled client — clients are additionally
+pinned by their Ed25519 public key on first contact (TOFU).
 
-Once both sides share the same token, the signing and verification
-flow is identical to the pairing-based approach: the client signs
-every task with HMAC-SHA256 and the worker verifies the signature
-before execution.
-
-Key resolution order (highest priority first):
+Resolution order (highest priority first):
 
 1. ``OFFWORK_SIGNING_TOKEN`` environment variable (hex-encoded)
 2. ``~/.offwork/token`` file (hex-encoded)
@@ -23,8 +18,6 @@ All primitives are stdlib-only.
 import os
 import logging
 from pathlib import Path
-
-from offwork.core.signing import derive_key
 
 logger = logging.getLogger(__name__)
 
@@ -126,32 +119,32 @@ def clear_token(key_dir: Path | None = None) -> bool:
     return False
 
 
-def resolve_signing_key(role: str, key_dir: Path | None = None) -> bytes | None:
-    """Resolve the HMAC signing key using the unified precedence order.
+def resolve_root_token(role: str, key_dir: Path | None = None) -> bytes | None:
+    """Resolve the **raw** shared secret used as the enrollment credential.
 
-    Checks token sources first, then falls back to pairing keys:
+    Returns the raw 32 bytes (without any HKDF expansion) so callers can
+    derive multiple subkeys from it — typically one per client_id.
+
+    Precedence:
 
     1. ``OFFWORK_SIGNING_TOKEN`` environment variable
     2. ``~/.offwork/token`` file
     3. ``~/.offwork/{role}.key`` (from pairing)
-
-    Returns a derived 32-byte HMAC key, or ``None`` if no key material
-    is found.
     """
     from offwork.core.pairing import load_shared_key
 
-    # Try token first
     token_hex = load_token(key_dir)
     if token_hex is not None:
-        raw = bytes.fromhex(token_hex)
-        return derive_key(raw)
+        return bytes.fromhex(token_hex)
 
-    # Fall back to pairing key
     raw_key = load_shared_key(role, key_dir)
     if raw_key is not None:
-        return derive_key(raw_key)
+        return raw_key
 
     return None
+
+
+
 
 
 # -- Helpers ----------------------------------------------------------------

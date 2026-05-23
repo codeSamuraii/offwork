@@ -40,7 +40,7 @@ Add `@offwork.task` to one entry-point function. Call `await func.run(...)`. Tha
 | Redis backend | `redis://` | [offwork/worker/backends/redis.py](../offwork/worker/backends/redis.py) |
 | RabbitMQ backend | `amqp://` | [offwork/worker/backends/rabbitmq.py](../offwork/worker/backends/rabbitmq.py) |
 | Docker sandbox isolation | `--sandbox`, `DockerSandbox` | [offwork/worker/sandbox/](../offwork/worker/sandbox/) |
-| HMAC-SHA256 task signing | `--require-signing`, token, pairing | [offwork/core/signing.py](../offwork/core/signing.py), [offwork/core/token.py](../offwork/core/token.py), [offwork/core/pairing.py](../offwork/core/pairing.py) |
+| Signed envelopes (per-client HMAC + Ed25519 + TOFU + replay protection) | `--require-signing`, token, pairing, `offwork clients` | [offwork/core/envelope.py](../offwork/core/envelope.py), [offwork/core/ed25519.py](../offwork/core/ed25519.py), [offwork/core/identity.py](../offwork/core/identity.py), [offwork/core/clients.py](../offwork/core/clients.py), [offwork/core/signing.py](../offwork/core/signing.py), [offwork/core/token.py](../offwork/core/token.py), [offwork/core/pairing.py](../offwork/core/pairing.py) |
 | Temp venv (for `--tmp` and `offwork run`) | `temp_venv` | [offwork/_venv.py](../offwork/_venv.py) |
 | CLI | `python -m offwork ...` | [offwork/__main__.py](../offwork/__main__.py) |
 
@@ -49,17 +49,21 @@ Add `@offwork.task` to one entry-point function. Call `await func.run(...)`. Tha
 ```
 offwork/
     __init__.py          Public API surface (re-exports). __all__ is the contract.
-    __main__.py          CLI: worker, run, pair, token, sandbox, info, serialize, reconstruct.
+    __main__.py          CLI: worker, run, pair, token, clients, sandbox, info, serialize, reconstruct.
     _venv.py             Async temp venv (used by --tmp and `offwork run`).
     typing.py            Public type aliases.
     core/
         models.py        FunctionNode, ImportInfo dataclasses + content hashing.
-        task.py          Task envelope (graph_json + name + args + options).
+        task.py          Task dataclass (graph_json + name + args + options).
         errors.py        Error hierarchy. All exceptions inherit Error.
         progress.py      ProgressInfo + progress() contextvar callback.
         version.py       _VERSION (resolved from package metadata).
-        signing.py       HMAC-SHA256 sign/verify, derive_key.
-        token.py         Token generate/save/load (~/.offwork/token).
+        signing.py       HMAC primitives (compute/verify_signature, derive_key) + NonceLRU.
+        ed25519.py       Pure-Python Ed25519 (RFC 8032, stdlib only).
+        identity.py      Per-machine client_id + Ed25519 seed (~/.offwork/identity.key).
+        clients.py       Worker-side KnownClients (TOFU registry + denylist).
+        envelope.py      build_signed_envelope / verify_task_envelope (wire format).
+        token.py         Token generate/save/load (~/.offwork/token), resolve_root_token.
         pairing.py       6-digit-PIN ECDH-style key exchange.
     graph/
         decorator.py     @offwork.task. Wraps function with .run/.start/.map and traced markers.
@@ -100,13 +104,14 @@ Client side, on `await func.run(*args)`:
 
 1. `Graph.default().serialize(func)` (in [graph/graph.py](../offwork/graph/graph.py)) walks the function's subgraph and emits JSON via `Store`.
 2. `Task(graph_json=..., function_name=..., args=..., kwargs=..., timeout=..., retries=...)` ([core/task.py](../offwork/core/task.py)).
-3. `Backend.submit(task_json)` enqueues. Optionally signed via `sign_json` ([core/signing.py](../offwork/core/signing.py)).
-4. `Result(task_id, backend)` is returned (or awaited directly for `.run`).
+3. If a root token resolves (env var → file → pairing key), `build_signed_envelope` ([core/envelope.py](../offwork/core/envelope.py)) wraps the task with `client_id`, `iat`, `nonce`, `pubkey`, plus a per-client HMAC and an Ed25519 signature. Otherwise `Task.to_json()` emits the bare task.
+4. `Backend.submit(envelope_json)` enqueues.
+5. `Result(task_id, backend)` is returned (or awaited directly for `.run`).
 
 Worker side: `serve` ([worker/remote.py](../offwork/worker/remote.py)) drives the loop and delegates to `Worker.run_with_policy` ([worker/worker.py](../offwork/worker/worker.py)):
 
 1. `async for task_json in backend.listen()` (in `serve`).
-2. Optional `verify_and_load_json` if `--require-signing`.
+2. If `--require-signing`, `verify_task_envelope` ([core/envelope.py](../offwork/core/envelope.py)) checks denylist, freshness, replay, per-client HMAC, and TOFU-pinned Ed25519 — in that order. Otherwise `Task.from_json` parses the raw payload.
 3. Wait for `scheduled_at`; check `is_cancelled`; check `check_throttle` (in `_run_task`, [remote.py](../offwork/worker/remote.py)).
 4. `_heartbeat_loop` runs concurrently for the duration of execution.
 5. `Worker.run_with_policy` looks up subgraph cache (SHA-256 of all reachable content hashes).
@@ -126,8 +131,8 @@ The `__all__` in [offwork/__init__.py](../offwork/__init__.py) is the public sur
 - Power-user: `Task`, `Worker`, `Backend`, `serialize`, `reconstruct`, `pack`, `execute`, `get_graph`, `Graph`.
 - Result: `Result`, `ResultEnvelope`, `ProgressInfo`, `progress`.
 - Scheduling: `ScheduleHandle`.
-- Errors: `Error` (base), `WorkerError`, `RemoteError`, `DependencyError`, `TaskStalled`, `TaskCancelled`, `ThrottleError`, `SignatureError`, `PairingError`, `WorkerOnlyError`.
-- Auth: `generate_token`, `save_token`, `load_token`, `clear_token`, `resolve_signing_key`, `sign_json`, `verify_and_load_json`, `compute_signature`, `verify_signature`, `derive_key`, plus pairing helpers.
+- Errors: `Error` (base), `WorkerError`, `RemoteError`, `DependencyError`, `TaskStalled`, `TaskCancelled`, `ThrottleError`, `SignatureError` and its subclasses `ReplayError`, `StaleTaskError`, `ClientRevokedError`, `IdentityMismatchError`, `PairingError`, `WorkerOnlyError`.
+- Auth: `generate_token`, `save_token`, `load_token`, `clear_token`, `resolve_root_token`, `compute_signature`, `verify_signature`, `derive_key`, `NonceLRU`, `build_signed_envelope`, `verify_task_envelope`, `KnownClients`, `ClientEntry`, `get_client_id`, `get_identity_seed`, `get_public_key`, `get_identity_fingerprint`, `clear_identity`, plus pairing helpers.
 - Sandbox: `DockerSandbox`.
 
 `func.run`, `func.start`, `func.map`, `func.run_in`, `func.run_at`, `func.run_every` are attributes attached by `@offwork.task` ([graph/decorator.py](../offwork/graph/decorator.py)).

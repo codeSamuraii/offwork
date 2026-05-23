@@ -8,14 +8,18 @@ from offwork.core.task import Task
 from offwork.core.errors import (
     Error,
     RemoteError,
+    ReplayError,
     TaskStalled,
     WorkerError,
     PairingError,
+    StaleTaskError,
     TaskCancelled,
     SignatureError,
     DependencyError,
     ThrottleError,
     WorkerOnlyError,
+    ClientRevokedError,
+    IdentityMismatchError,
 )
 from offwork.core.models import ImportInfo, FunctionNode
 from offwork.graph.graph import Graph
@@ -31,18 +35,29 @@ from offwork.core.pairing import (
     respond_to_pairing,
 )
 from offwork.core.signing import (
-    sign_json,
+    NonceLRU,
     derive_key,
     verify_signature,
     compute_signature,
-    verify_and_load_json,
 )
 from offwork.core.token import (
     load_token,
     save_token,
     clear_token,
     generate_token,
-    resolve_signing_key,
+    resolve_root_token,
+)
+from offwork.core.identity import (
+    get_client_id,
+    get_public_key,
+    clear_identity,
+    get_identity_seed,
+    get_identity_fingerprint,
+)
+from offwork.core.clients import KnownClients, ClientEntry
+from offwork.core.envelope import (
+    build_signed_envelope,
+    verify_task_envelope,
 )
 from offwork.core.version import _VERSION
 from offwork.core.progress import ProgressInfo
@@ -131,6 +146,10 @@ __all__ = [
     "TaskCancelled",
     "ThrottleError",
     "SignatureError",
+    "ReplayError",
+    "StaleTaskError",
+    "ClientRevokedError",
+    "IdentityMismatchError",
     "PairingError",
     "WorkerOnlyError",
     # Graph
@@ -139,15 +158,24 @@ __all__ = [
     # Signing
     "compute_signature",
     "verify_signature",
-    "sign_json",
-    "verify_and_load_json",
     "derive_key",
+    "NonceLRU",
+    "build_signed_envelope",
+    "verify_task_envelope",
     # Token
     "generate_token",
     "save_token",
     "load_token",
     "clear_token",
-    "resolve_signing_key",
+    "resolve_root_token",
+    # Identity / clients
+    "get_client_id",
+    "get_identity_seed",
+    "get_public_key",
+    "get_identity_fingerprint",
+    "clear_identity",
+    "KnownClients",
+    "ClientEntry",
     # Pairing
     "generate_pin",
     "save_shared_key",

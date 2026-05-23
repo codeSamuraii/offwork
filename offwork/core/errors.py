@@ -39,7 +39,28 @@ class TaskCancelled(Error):
 
 
 class SignatureError(Error):
-    """Raised when HMAC signature verification of a task fails."""
+    """Raised when signature verification of a task fails.
+
+    Base class for all envelope-level rejections.  Existing callers
+    that ``except SignatureError`` continue to catch every flavour of
+    rejection produced by the per-client signing protocol.
+    """
+
+
+class ReplayError(SignatureError):
+    """Raised when a task nonce has already been seen by the worker."""
+
+
+class StaleTaskError(SignatureError):
+    """Raised when a task's ``iat`` is outside the allowed clock-skew window."""
+
+
+class ClientRevokedError(SignatureError):
+    """Raised when a task originates from a revoked client_id."""
+
+
+class IdentityMismatchError(SignatureError):
+    """Raised when a known client_id submits with a different public key."""
 
 
 class PairingError(Error):
