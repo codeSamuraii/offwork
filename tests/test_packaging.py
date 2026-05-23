@@ -13,7 +13,7 @@ except ModuleNotFoundError:
 import offwork
 import pytest
 
-from offwork.core.version import _FALLBACK_VERSION, _VERSION
+from offwork.core.version import _VERSION
 
 
 def _project_root() -> Path:
@@ -58,12 +58,14 @@ class TestVersionConsistency:
         assert isinstance(offwork.__version__, str)
         assert offwork.__version__  # non-empty
 
-    def test_pyproject_matches_fallback(self) -> None:
-        """The fallback version in version.py must match pyproject.toml."""
+    def test_source_fallback_reads_pyproject(self) -> None:
+        """The source-checkout fallback parses pyproject.toml directly."""
+        from offwork.core.version import _read_pyproject_version
+
         pyproject = _project_root() / "pyproject.toml"
         with open(pyproject, "rb") as f:
-            data = tomllib.load(f)
-        assert data["project"]["version"] == _FALLBACK_VERSION
+            expected = tomllib.load(f)["project"]["version"]
+        assert _read_pyproject_version() == expected
 
 
 class TestIsolatedInstallation:
