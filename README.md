@@ -55,31 +55,22 @@ See [Features](docs/FEATURES.md) for the full API.
 
 | | |
 |-|-|
-| **Package auto-install** | Workers `pip install` missing packages before execution |
 | **Async-native** | `.run()`, `.start()`, `.map()`, `asyncio.gather` — all coroutines |
-| **Retry & timeout** | `@offwork.task(timeout=30, retries=3)` with exponential backoff |
 | **Scheduling** | `.run_in(delay)`, `.run_at(datetime)`, `.run_every(interval)` with cancellation |
+| **Retry & timeout** | `@offwork.task(timeout=30, retries=3)` with exponential backoff |
 | **Throttling** | `@offwork.task(throttle=timedelta(hours=24)/50)` — rate-limit executions |
 | **Progress & cancellation** | `offwork.progress(3, 10)` inside tasks; `await future.cancel()` on client |
 | **Heartbeat & stall detection** | Workers heartbeat every second; clients raise `TaskStalled` on silence |
-| **Pluggable backends** | `local://` (built-in TCP), `redis://`, `amqp://` (RabbitMQ) |
+| **Package auto-install** | Workers `pip install` missing packages before execution |
 | **Docker sandbox** | Optional container isolation, fully transparent to clients |
 | **Signed execution** | Pre-shared token or PIN pairing + HMAC-SHA256 task authentication |
 
-## Sandbox
+### Security
 
-Optional Docker isolation — transparent to clients:
+#### Signing
 
-```bash
-offwork sandbox setup                                      # build image (once)
-offwork worker --backend redis://localhost:6379 --sandbox  # run with isolation
-```
-
-See [Sandbox](docs/SANDBOX.md) for configuration.
-
-## Signing
-
-HMAC-SHA256 task signing. Workers reject untrusted or tampered tasks. Two setup modes:
+To make sure your worker only executes trusted code, use `--require-signing`.<br>
+Configure a shared token or pair interactively with a PIN. See [Signing & Pairing](docs/SIGNING.md) for details.
 
 ```bash
 # Token (CI/CD)
@@ -93,6 +84,17 @@ offwork pair --backend redis://localhost:6379                # client: enter PIN
 ```
 
 After pairing, tasks are signed automatically with no client code changes. See [Signing & Pairing](docs/SIGNING.md).
+
+#### Sandbox
+
+To avoid side-effects on the worker machine, run tasks inside Docker containers:
+
+```bash
+offwork sandbox setup                                      # build image (once)
+offwork worker --backend redis://localhost:6379 --sandbox  # run with isolation
+```
+
+See [Sandbox](docs/SANDBOX.md) for configuration.
 
 ## Documentation
 

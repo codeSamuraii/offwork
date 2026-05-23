@@ -30,7 +30,7 @@ jobs:
           pip install pytest pytest-asyncio
 
       - name: Run unit tests
-        run: pytest tests/ --ignore=tests/test_e2e.py -x -q
+        run: pytest tests/ --ignore=tests/test_e2e.py -v
 
   # -----------------------------------------------------------------------
   # End-to-end matrix
