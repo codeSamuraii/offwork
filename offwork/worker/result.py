@@ -171,13 +171,29 @@ class Result:
         timeout: float | None,
         stall_timeout: float,
     ) -> None:
-        """Poll for result with heartbeat-based stall detection."""
+        """Wait for the result with heartbeat-based stall detection.
+
+        Uses the backend's blocking ``get_result`` (long-poll on HTTP
+        backends) in bounded slices, with a heartbeat check between
+        slices. The slice length is derived from ``stall_timeout`` so
+        we still detect a silent worker in time.
+        """
         deadline = None if timeout is None else time.monotonic() + timeout
+        slice_seconds = max(1.0, min(stall_timeout / 2, 30.0))
         last_hb_value: float | None = None
         last_hb_change: float | None = None
 
         while True:
-            raw = await self._backend.try_get_result(self._task_id)
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0:
+                raise TimeoutError(
+                    f"Timed out waiting for result of task {self._task_id}"
+                )
+            wait_for = slice_seconds if remaining is None else min(slice_seconds, remaining)
+            try:
+                raw = await self._backend.get_result(self._task_id, timeout=wait_for)
+            except TimeoutError:
+                raw = None
             if raw is not None:
                 self._envelope = ResultEnvelope.from_json(raw)
                 logger.debug(
@@ -186,14 +202,6 @@ class Result:
                 )
                 return
 
-            if deadline is not None:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError(
-                        f"Timed out waiting for result of task {self._task_id}"
-                    )
-
-            logger.debug("Polling heartbeat for task %s", self._task_id[:8])
             hb = await self._backend.get_heartbeat(self._task_id)
             now = time.monotonic()
             if hb is not None and hb != last_hb_value:
@@ -205,8 +213,6 @@ class Result:
                     f"Task {self._task_id} stalled: no heartbeat for "
                     f"{elapsed:.1f}s (threshold: {stall_timeout}s)"
                 )
-
-            await asyncio.sleep(1.0)
 
     def __await__(self) -> Generator[Any, None, Any]:
         """Allow ``await result`` as shorthand for ``await result.result()``."""

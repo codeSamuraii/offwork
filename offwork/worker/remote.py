@@ -347,7 +347,7 @@ def _build_detail_tags(worker: Worker) -> str:
     return ", ".join(parts)
 
 
-_HEARTBEAT_INTERVAL = 1.0
+_HEARTBEAT_INTERVAL = 5.0
 
 
 async def _heartbeat_loop(
@@ -358,23 +358,23 @@ async def _heartbeat_loop(
 ) -> None:
     """Send periodic heartbeats and check for cancellation.
 
-    When *exec_task* is provided and the backend reports the task as
-    cancelled, the execution task is cancelled via
+    Backends override ``heartbeat_and_check_cancel`` to combine both
+    into a single round-trip (e.g. an HTTP POST whose response carries
+    the cancel flag). When *exec_task* is provided and the backend
+    reports the task as cancelled, the execution task is cancelled via
     :meth:`asyncio.Task.cancel`, which raises :class:`CancelledError`
     at the next ``await`` in async user functions.
     """
     while not cancel_event.is_set():
         try:
-            await backend.send_heartbeat(task_id)
-        except Exception:
-            logger.debug("Heartbeat send failed for task %s", task_id, exc_info=True)
-        if exec_task is not None:
-            try:
-                if await backend.is_cancelled(task_id):
+            if exec_task is not None:
+                if await backend.heartbeat_and_check_cancel(task_id):
                     exec_task.cancel()
                     return
-            except Exception:
-                logger.debug("Cancellation check failed for task %s", task_id, exc_info=True)
+            else:
+                await backend.send_heartbeat(task_id)
+        except Exception:
+            logger.debug("Heartbeat send failed for task %s", task_id, exc_info=True)
         try:
             await asyncio.wait_for(cancel_event.wait(), timeout=_HEARTBEAT_INTERVAL)
         except asyncio.TimeoutError:

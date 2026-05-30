@@ -171,6 +171,12 @@ class HttpBackend(Backend):
     async def send_heartbeat(self, task_id: str) -> None:
         await self._request("POST", f"/tasks/{task_id}/heartbeat")
 
+    async def heartbeat_and_check_cancel(self, task_id: str) -> bool:
+        _status, body = await self._request(
+            "POST", f"/tasks/{task_id}/heartbeat", allow_not_found=True,
+        )
+        return bool(body and body.get("cancelled"))
+
     async def get_heartbeat(self, task_id: str) -> float | None:
         _status, body = await self._request(
             "GET", f"/tasks/{task_id}/heartbeat", allow_not_found=True,

@@ -41,6 +41,17 @@ class Backend(abc.ABC):
         heartbeat-based stall detection should override this.
         """
 
+    async def heartbeat_and_check_cancel(self, task_id: str) -> bool:
+        """Send a heartbeat and return whether the task is cancelled.
+
+        Backends with a single round-trip combining both (e.g. an
+        HTTP POST whose response carries the cancel flag) should
+        override this to halve worker→broker chatter while a task is
+        running. The default implementation issues two calls.
+        """
+        await self.send_heartbeat(task_id)
+        return await self.is_cancelled(task_id)
+
     async def get_heartbeat(self, task_id: str) -> float | None:
         """Return the timestamp of the last heartbeat for *task_id*.
 

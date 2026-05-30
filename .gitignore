@@ -14,3 +14,4 @@ build/
 .claudeignore
 node_modules/
 cloud_poc/frontend/dist/
+examples/stress_task.py
