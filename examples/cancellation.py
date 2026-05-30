@@ -34,7 +34,7 @@ async def slow_computation(n: int) -> int:
 
 async def main() -> None:
     # Start a slow task
-    future = await slow_computation.start(10)
+    future = await slow_computation.submit(10)
     print(f"Task submitted: {future.task_id}")
 
     # Wait briefly, then cancel it
@@ -50,8 +50,7 @@ async def main() -> None:
         print("Task was cancelled successfully!")
 
     # Verify the status
-    status = await future.status()
-    print(f"Task status: {status}")  # "cancelled"
+    print(f"Task cancelled: {future.cancelled()}")  # True
 
 
 if __name__ == "__main__":

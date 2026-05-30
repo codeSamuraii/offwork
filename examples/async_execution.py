@@ -2,7 +2,7 @@
 
 Demonstrates:
 - Awaiting a single remote task with .run()
-- Fire-and-forget with .start() + await later
+- Fire-and-forget with .submit() + await later
 - Concurrent batch execution with .map()
 - asyncio.gather with multiple tasks
 """
@@ -25,8 +25,8 @@ async def main() -> None:
     result = await hypotenuse.run(3.0, 4.0)
     print(f"hypotenuse(3, 4) = {result}")  # 5.0
 
-    # 2. Start task, get Result handle, await later
-    future = await hypotenuse.start(8.0, 15.0)
+    # 2. Submit task, get Result handle, await later
+    future = await hypotenuse.submit(8.0, 15.0)
     print(f"hypotenuse(8, 15) -> {future}", flush=True)
     await asyncio.sleep(3)  # do other work while waiting
 

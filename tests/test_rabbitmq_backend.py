@@ -182,9 +182,9 @@ class TestConnectDispatch:
             pytest.skip("RabbitMQ not available")
 
         try:
-            backend = _remote.connect(RABBITMQ_URL)
-            assert isinstance(backend, RabbitMQBackend)
-            assert _remote._active_backend is backend
+            ctx = _remote.connect(RABBITMQ_URL)
+            assert isinstance(ctx.backend, RabbitMQBackend)
+            assert _remote._active_backend is ctx.backend
         finally:
             await _remote.disconnect()
 

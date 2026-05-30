@@ -191,7 +191,7 @@ class TestBasicExecution:
         def double(x: int) -> int:
             return x * 2
 
-        future = await double.start(21)
+        future = await double.submit(21)
         result = await future
         assert result == 42
 
@@ -250,7 +250,7 @@ class TestProgressAndCancellation:
                 progress(i + 1, n)
             return total
 
-        future = await slow_with_progress.start(5)
+        future = await slow_with_progress.submit(5)
         await asyncio.sleep(0.5)
 
         p = await future.progress()
@@ -267,15 +267,14 @@ class TestProgressAndCancellation:
                 total += 1
             return total
 
-        future = await very_slow.start(60)
+        future = await very_slow.submit(60)
         await asyncio.sleep(2.0)
         await future.cancel()
 
         with pytest.raises(TaskCancelled):
             await future
 
-        status = await future.status()
-        assert status == "cancelled"
+        assert future.cancelled() is True
 
 
 class TestRetryAndTimeout:
@@ -314,7 +313,7 @@ class TestScheduling:
             return f"hello {name}"
 
         before = time.time()
-        result = await greet.run_in(timedelta(seconds=2), "world")
+        result = await greet.submit("world", run_in=timedelta(seconds=2))
         elapsed = time.time() - before
         assert result == "hello world"
         assert elapsed >= 1.5  # allow some slack
@@ -324,7 +323,7 @@ class TestScheduling:
         def tick(n: int) -> int:
             return n
 
-        schedule = await tick.run_every(timedelta(seconds=1), 42)
+        schedule = await tick.submit(42, run_every=timedelta(seconds=1))
         await asyncio.sleep(3)
         await schedule.cancel()
         # If we got here without error, recurring + cancel works

@@ -49,8 +49,6 @@ pip install offwork[redis]
 offwork worker --backend redis://other-machine:6379
 ```
 
-See [Features](docs/FEATURES.md) for the full API.
-
 ## Features
 
 | | |
@@ -64,6 +62,8 @@ See [Features](docs/FEATURES.md) for the full API.
 | **Package auto-install** | Workers `pip install` missing packages before execution |
 | **Docker sandbox** | Optional container isolation, fully transparent to clients |
 | **Signed execution** | Pre-shared token or PIN pairing + HMAC-SHA256 task authentication |
+| ... | See [Features](docs/FEATURES.md) for more information. |
+
 
 ### Security
 

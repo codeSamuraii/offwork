@@ -172,7 +172,7 @@ class TestResult:
     @pytest.mark.asyncio
     async def test_done_false_when_no_result(self, backend: InMemoryBackend) -> None:
         future = Result("t4", backend)
-        assert await future.done() is False
+        assert future.done() is False
 
     @pytest.mark.asyncio
     async def test_done_true_when_result_available(self, backend: InMemoryBackend) -> None:
@@ -180,14 +180,16 @@ class TestResult:
         await backend.send_result("t5", env.to_json())
 
         future = Result("t5", backend)
-        assert await future.done() is True
+        assert future.done() is False  # not yet fetched from backend
+        await future.check()           # poll backend, populate cache
+        assert future.done() is True
         assert await future.result(stall_timeout=None) is True
 
     @pytest.mark.asyncio
     async def test_timeout_raises(self, backend: InMemoryBackend) -> None:
         future = Result("missing", backend)
         with pytest.raises(TimeoutError):
-            await future.result(timeout=0, stall_timeout=None)
+            await future.result(timeout=0.01, stall_timeout=None)
 
 
 # ---------------------------------------------------------------------------
@@ -253,14 +255,14 @@ class TestConnectDisconnect:
 # ---------------------------------------------------------------------------
 
 
-class TestStartMethod:
-    def test_traced_function_has_start(self) -> None:
+class TestSubmitMethod:
+    def test_traced_function_has_submit(self) -> None:
         @offwork.task
         def my_func(x: int) -> int:
             return x + 1
 
-        assert hasattr(my_func, "start")
-        assert asyncio.iscoroutinefunction(my_func.start)
+        assert hasattr(my_func, "submit")
+        assert asyncio.iscoroutinefunction(my_func.submit)
 
     @pytest.mark.asyncio
     async def test_start_without_backend_raises(self) -> None:
@@ -269,7 +271,7 @@ class TestStartMethod:
             return x + 1
 
         with pytest.raises(RuntimeError, match="No backend connected"):
-            await my_func.start(5)
+            await my_func.submit(5)
 
     @pytest.mark.asyncio
     async def test_start_submits_to_backend(self, backend: InMemoryBackend) -> None:
@@ -279,7 +281,7 @@ class TestStartMethod:
         def double(x: int) -> int:
             return x * 2
 
-        future = await double.start(7)
+        future = await double.submit(7)
         assert isinstance(future, Result)
         assert len(backend._tasks) == 1
 
@@ -296,7 +298,7 @@ class TestStartMethod:
         def add(a: int, b: int) -> int:
             return a + b
 
-        future = await add.start(3, 4)
+        future = await add.submit(3, 4)
         assert isinstance(future, Result)
         assert future.task_id  # non-empty
 

@@ -227,8 +227,8 @@ class TestHttpBackend:
         await backend.cancel_schedule("s1")
         assert await backend.is_schedule_cancelled("s1") is True
 
-        connected = _remote.connect("https://example.com")
+        ctx = _remote.connect("https://example.com")
         try:
-            assert isinstance(connected, HttpBackend)
+            assert isinstance(ctx.backend, HttpBackend)
         finally:
             await _remote.disconnect()

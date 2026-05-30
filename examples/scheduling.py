@@ -36,19 +36,19 @@ async def main() -> None:
 
     # 1. run_in — execute after a 2-second delay
     print("— run_in(2 seconds) —")
-    result = await greet.run_in(timedelta(seconds=2), "Alice")
+    result = await greet.submit("Alice", run_in=timedelta(seconds=2))
     print(result)
 
     # 2. run_at — execute at a specific time (3 seconds from now)
     print("\n— run_at(now + 3s) —")
     target = datetime.now() + timedelta(seconds=3)
     print(f"Scheduled for: {target:%H:%M:%S}")
-    result = await greet.run_at(target, "Bob")
+    result = await greet.submit("Bob", run_at=target)
     print(result)
 
     # 3. run_every — recurring execution every 2 seconds
     print("\n— run_every(2 seconds) for ~6 seconds —")
-    schedule = await tick.run_every(timedelta(seconds=2), 1)
+    schedule = await tick.submit(1, run_every=timedelta(seconds=2))
     print(f"Schedule started: {schedule.schedule_id}")
     await asyncio.sleep(6)
 
