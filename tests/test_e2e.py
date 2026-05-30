@@ -313,7 +313,7 @@ class TestScheduling:
             return f"hello {name}"
 
         before = time.time()
-        result = await greet.submit("world", run_in=timedelta(seconds=2))
+        result = await greet.run("world", run_in=timedelta(seconds=2))
         elapsed = time.time() - before
         assert result == "hello world"
         assert elapsed >= 1.5  # allow some slack
