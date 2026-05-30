@@ -418,6 +418,8 @@ class Task:
     retry_delay: float = 1.0
     scheduled_at: float | None = None
     recur_interval: float | None = None
+    recur_deadline: float | None = None
+    recur_remaining: int | None = None
     schedule_id: str | None = None
     throttle: float | None = None
 
@@ -442,6 +444,10 @@ class Task:
             d["scheduled_at"] = self.scheduled_at
         if self.recur_interval is not None:
             d["recur_interval"] = self.recur_interval
+        if self.recur_deadline is not None:
+            d["recur_deadline"] = self.recur_deadline
+        if self.recur_remaining is not None:
+            d["recur_remaining"] = self.recur_remaining
         if self.schedule_id is not None:
             d["schedule_id"] = self.schedule_id
         if self.throttle is not None:
@@ -467,6 +473,8 @@ class Task:
             retry_delay=data.get("retry_delay", 1.0),
             scheduled_at=data.get("scheduled_at"),
             recur_interval=data.get("recur_interval"),
+            recur_deadline=data.get("recur_deadline"),
+            recur_remaining=data.get("recur_remaining"),
             schedule_id=data.get("schedule_id"),
             throttle=data.get("throttle"),
         )

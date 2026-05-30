@@ -137,6 +137,8 @@ def _make_run_every_method(
         frequency: Any,
         *args: Any,
         _start_at: Any = None,
+        run_for: Any = None,
+        max_runs: int | None = None,
         backend: str | Backend | None = None,
         **kwargs: Any,
     ) -> object:
@@ -146,9 +148,19 @@ def _make_run_every_method(
         start_ts: float | None = None
         if _start_at is not None:
             start_ts = _start_at.timestamp() if isinstance(_start_at, datetime) else float(_start_at)
+        if run_for is None and max_runs is None:
+            run_for = timedelta(hours=1)
+        run_for_seconds: float | None = None
+        if run_for is not None:
+            run_for_seconds = run_for.total_seconds() if isinstance(run_for, timedelta) else float(run_for)
+            if run_for_seconds <= 0:
+                raise ValueError(f"run_for must be positive, got {run_for}")
+        if max_runs is not None and max_runs <= 0:
+            raise ValueError(f"max_runs must be positive, got {max_runs}")
         return await submit_recurring(
             func, wrapper, *args,
             _backend=backend, _interval=interval, _start_at=start_ts,
+            _run_for=run_for_seconds, _max_runs=max_runs,
             **kwargs,
         )
 

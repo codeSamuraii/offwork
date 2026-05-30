@@ -214,22 +214,52 @@ class Result:
 
     # -- cancellation ----------------------------------------------------------
 
-    async def cancel(self) -> None:
+    async def cancel(self, wait: bool | float = False) -> bool:
         """Cancel the task.
 
-        Marks the task as cancelled in the backend.  If the worker
-        hasn't started execution yet, it will skip the task.  If
-        execution is already in progress, it will continue but the
-        client will receive a :class:`TaskCancelled` error.
+        Marks the task as cancelled in the backend.  The worker
+        observes the flag via its heartbeat loop and aborts execution
+        cooperatively.
 
-        Awaiting the result after cancellation raises
-        :class:`TaskCancelled`.
+        Parameters
+        ----------
+        wait
+            If ``False`` (default), return immediately after signalling
+            cancellation. If ``True``, block until the worker confirms
+            (default 30s timeout). If a number, wait that many seconds
+            for confirmation.
+
+        Returns
+        -------
+        bool
+            ``True`` if cancellation was confirmed by the worker (or
+            ``wait=False``).  ``False`` if the wait timed out.
         """
         await self._backend.cancel_task(self._task_id)
-        await self._backend.send_result(
-            self._task_id,
-            ResultEnvelope.cancelled(self._task_id).to_json(),
-        )
+        if wait is False:
+            # Pre-seed a cancelled envelope so a client that never awaits
+            # confirmation still gets TaskCancelled when it reads.
+            await self._backend.send_result(
+                self._task_id,
+                ResultEnvelope.cancelled(self._task_id).to_json(),
+            )
+            return True
+        timeout = 30.0 if wait is True else float(wait)
+        deadline = time.monotonic() + timeout
+        while True:
+            raw = await self._backend.try_get_result(self._task_id)
+            if raw is not None:
+                self._envelope = ResultEnvelope.from_json(raw)
+                return True
+            if time.monotonic() >= deadline:
+                # Fall back: seed a cancelled envelope so subsequent reads
+                # don't hang forever, and tell the caller we timed out.
+                await self._backend.send_result(
+                    self._task_id,
+                    ResultEnvelope.cancelled(self._task_id).to_json(),
+                )
+                return False
+            await asyncio.sleep(0.5)
 
     # -- progress --------------------------------------------------------------
 

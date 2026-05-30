@@ -38,6 +38,8 @@ class TracedFunction(Protocol[P, R]):
         frequency: timedelta | float,
         *args: Any,
         _start_at: datetime | None = ...,
+        run_for: timedelta | float | None = ...,
+        max_runs: int | None = ...,
         **kwargs: Any,
     ) -> ScheduleHandle: ...
 

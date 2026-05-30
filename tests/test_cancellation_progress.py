@@ -243,6 +243,41 @@ class TestCancellation:
         assert await result.status() == "cancelled"
 
     @pytest.mark.asyncio
+    async def test_cancel_wait_true_returns_when_worker_confirms(
+        self, backend: InMemoryBackend,
+    ) -> None:
+        """cancel(wait=True) blocks until a result envelope appears."""
+        result = Result("task1", backend)
+
+        async def worker_confirms() -> None:
+            await asyncio.sleep(0.05)
+            await backend.send_result(
+                "task1", ResultEnvelope.cancelled("task1").to_json(),
+            )
+
+        asyncio.create_task(worker_confirms())
+        # Sentinel: clear the pre-seed by stealing the result before cancel.
+        # cancel(wait=...) must not pre-seed when wait is set.
+        ok = await result.cancel(wait=2.0)
+        assert ok is True
+
+    @pytest.mark.asyncio
+    async def test_cancel_wait_times_out(self, backend: InMemoryBackend) -> None:
+        """cancel(wait=N) returns False if no confirmation arrives in time."""
+
+        # Block send_result so nothing confirms during the wait window.
+        class SilentBackend(InMemoryBackend):
+            async def try_get_result(self, task_id: str) -> str | None:
+                return None
+
+        b = SilentBackend()
+        result = Result("task1", b)
+        ok = await result.cancel(wait=0.2)
+        assert ok is False
+        # Fallback seed so future reads don't hang.
+        assert "task1" in b.results
+
+    @pytest.mark.asyncio
     async def test_handle_task_skips_cancelled(self, backend: InMemoryBackend) -> None:
         """Worker skips execution for already-cancelled tasks."""
         _, json_str = _sync_store()

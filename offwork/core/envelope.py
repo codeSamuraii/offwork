@@ -171,6 +171,8 @@ def verify_task_envelope(
         retry_delay=data.get("retry_delay", 1.0),
         scheduled_at=data.get("scheduled_at"),
         recur_interval=data.get("recur_interval"),
+        recur_deadline=data.get("recur_deadline"),
+        recur_remaining=data.get("recur_remaining"),
         schedule_id=data.get("schedule_id"),
         throttle=data.get("throttle"),
     )

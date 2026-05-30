@@ -280,6 +280,8 @@ async def submit_recurring(
     _root_token: bytes | None = None,
     _interval: float = 0,
     _start_at: float | None = None,
+    _run_for: float | None = None,
+    _max_runs: int | None = None,
     **kwargs: Any,
 ) -> ScheduleHandle:
     """Submit a recurring task and return a :class:`ScheduleHandle`."""
@@ -302,6 +304,7 @@ async def submit_recurring(
 
     schedule_id = uuid.uuid4().hex[:12]
     scheduled_at = _start_at or time.time()
+    recur_deadline = scheduled_at + _run_for if _run_for is not None else None
 
     opts = getattr(wrapper, "__offwork_options__", {})
     task = Task(
@@ -315,6 +318,8 @@ async def submit_recurring(
         throttle=opts.get("throttle"),
         scheduled_at=scheduled_at,
         recur_interval=_interval,
+        recur_deadline=recur_deadline,
+        recur_remaining=_max_runs,
         schedule_id=schedule_id,
     )
 
@@ -634,7 +639,18 @@ async def _handle_task(
 
     # Re-enqueue recurring task — worker re-signs with its own identity.
     if task.recur_interval is not None and task.schedule_id is not None:
-        if not await backend.is_schedule_cancelled(task.schedule_id):
+        next_at = time.time() + task.recur_interval
+        remaining = task.recur_remaining
+        deadline_exceeded = task.recur_deadline is not None and next_at > task.recur_deadline
+        runs_exhausted = remaining is not None and remaining <= 1
+        if deadline_exceeded or runs_exhausted:
+            await backend.cancel_schedule(task.schedule_id)
+            logger.info(
+                "Recurring schedule %s exhausted (%s)",
+                task.schedule_id,
+                "deadline" if deadline_exceeded else "max_runs",
+            )
+        elif not await backend.is_schedule_cancelled(task.schedule_id):
             next_task = Task(
                 graph_json=task.graph_json,
                 function_name=task.function_name,
@@ -644,8 +660,10 @@ async def _handle_task(
                 retries=task.retries,
                 retry_delay=task.retry_delay,
                 throttle=task.throttle,
-                scheduled_at=time.time() + task.recur_interval,
+                scheduled_at=next_at,
                 recur_interval=task.recur_interval,
+                recur_deadline=task.recur_deadline,
+                recur_remaining=remaining - 1 if remaining is not None else None,
                 schedule_id=task.schedule_id,
             )
             await backend.submit(_encode_task(next_task, root_token))
