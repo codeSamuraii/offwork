@@ -88,7 +88,7 @@ jobs:
       # --- Sandbox setup --------------------------------------------------
       - name: Build sandbox Docker image
         if: matrix.sandbox
-        run: bash scripts/setup_sandbox_docker.sh
+        run: bash helpers/setup_sandbox_docker.sh
 
       # --- Signing setup --------------------------------------------------
       - name: Generate signing token

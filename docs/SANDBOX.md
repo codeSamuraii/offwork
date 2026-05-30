@@ -22,7 +22,7 @@ This builds the `offwork-sandbox` Docker image from the bundled Dockerfile. The 
 You can also build manually:
 
 ```bash
-bash scripts/setup_sandbox_docker.sh
+bash helpers/setup_sandbox_docker.sh
 ```
 
 Or let the worker build automatically on first use (the image is built lazily if it doesn't exist).

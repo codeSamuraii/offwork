@@ -13,7 +13,7 @@
 #   offwork worker --backend redis://... --sandbox
 #
 # Usage:
-#   bash scripts/setup_sandbox_docker.sh
+#   bash helpers/setup_sandbox_docker.sh
 #
 set -euo pipefail
 
