@@ -134,7 +134,7 @@ class Result:
     async def result(
         self,
         timeout: float | None = None,
-        stall_timeout: float | None = 10.0,
+        stall_timeout: float | None = 600.0,
     ) -> Any:
         """Await the result.
 
