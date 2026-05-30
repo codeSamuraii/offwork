@@ -325,6 +325,14 @@ async def install_packages(
             result.failed[module] = stderr.strip()
             logger.error("Failed to install %s: %s", package, stderr.strip()[:200])
 
+    if result.installed:
+        # Drop importlib's cached "this directory doesn't exist / has no such
+        # module" entries so the next ``find_spec``/``import`` picks up files
+        # pip just wrote. Required when the target site-packages directory
+        # was created at install time (e.g. an emptyDir volume mounted over
+        # an empty user-site).
+        importlib.invalidate_caches()
+
     _raise_on_failures(result.failed)
     return result
 

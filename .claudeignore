@@ -1,7 +1,0 @@
-.mypy_cache/
-.pytest_cache/
-.vscode/
-__pycache__/
-dump.rdb
-poetry.lock
-tests/fixtures/stress_test_module/
