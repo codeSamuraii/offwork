@@ -30,7 +30,7 @@ All four async execution patterns side by side:
 
 ```python
 result  = await func.run(3, 4)                   # submit + await
-future  = await func.start(3, 4)                 # submit → handle
+future  = await func.submit(3, 4)                # submit → handle
 result  = await future                           # await later
 results = await func.map([(3, 4), (5, 12)])      # batch
 r1, r2  = await asyncio.gather(func.run(3, 4), func.run(5, 12))
@@ -61,9 +61,8 @@ def process(n: int) -> int:
         offwork.progress(i + 1, n, message=f"step {i+1}/{n}")
         ...
 
-future = await process.start(100)
-while not await future.done():
-    p = await future.progress()
+future = await process.submit(100)
+async for p in future.progress():    # streams each update until done
     print(f"{p.percent:.0f}%")
 ```
 
@@ -72,9 +71,9 @@ while not await future.done():
 Cooperative task cancellation. The client cancels a pending or in-flight task; awaiting it raises `TaskCancelled`:
 
 ```python
-future = await slow_task.start()
+future = await slow_task.submit()
 await asyncio.sleep(1)
-await future.cancel()
+await future.cancel()           # wait up to 30 s for worker confirmation
 
 try:
     await future
@@ -87,10 +86,10 @@ except offwork.TaskCancelled:
 Three scheduling modes — delayed, point-in-time, and recurring:
 
 ```python
-await func.run_in(timedelta(seconds=5), *args)            # after a delay
-await func.run_at(datetime(2026, 6, 1, 9, 0), *args)      # at a specific time
+await func.run(*args, run_in=timedelta(seconds=5))             # after a delay
+await func.run(*args, run_at=datetime(2026, 6, 1, 9, 0))       # at a specific time
 
-schedule = await func.run_every(timedelta(minutes=10), *args)
+schedule = await func.submit(*args, run_every=timedelta(minutes=10))
 await asyncio.sleep(35)
 await schedule.cancel()    # stop after ~3 executions
 ```
@@ -156,9 +155,9 @@ def process_attachment(filename: str, data: bytes) -> dict:
 
 ## [scheduled_backup.py](scheduled_backup.py)
 
-Recurring backup job via `.run_every()`. The task is small; it delegates to three plain helpers (`_archive`, `_compress`, `_upload`) that offwork discovers automatically:
+Recurring backup job via `submit(run_every=...)`. The task is small; it delegates to three plain helpers (`_archive`, `_compress`, `_upload`) that offwork discovers automatically:
 
 ```python
-schedule = await snapshot_directory.run_every(timedelta(hours=6), source_path)
+schedule = await snapshot_directory.submit(source_path, run_every=timedelta(hours=6))
 # runs every 6 hours; call await schedule.cancel() to stop
 ```
