@@ -2,22 +2,35 @@
 
 import json
 import time
-import base64
 import asyncio
+import socket
+import threading
+from collections import deque
+from http.client import HTTPConnection, HTTPException, HTTPSConnection
 from typing import Any
-from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
-from urllib.request import Request, urlopen
 from collections.abc import AsyncIterator
 
 from offwork.worker.backends.base import Backend
 
 _DEFAULT_BROKER_PATH = "/api/v1/broker"
 _DEFAULT_LONG_POLL_SECONDS = 30.0
+# Cap on concurrent persistent TCP connections per backend instance.
+# 8 is plenty for a worker that runs claim (long-poll) + heartbeat +
+# progress + a result write in parallel without ever serialising.
+_MAX_POOL_SIZE = 8
 
 
 class HttpBackend(Backend):
     """HTTP(S)-based backend for hosted offwork brokers.
+
+    Uses a small pool of persistent ``http.client`` connections so each
+    request reuses an already-open TCP socket. ``urllib.request.urlopen``
+    (the previous implementation) opens a fresh socket per call, which
+    means every API hit pays a TCP handshake — and on lossy paths a
+    dropped SYN turns into a 1/3/7 s retransmit stall. With keepalive
+    enabled the socket is established once and amortised over many
+    requests.
 
     The base URL can point either at the broker root or at the service root;
     when no path is provided, ``/api/v1/broker`` is assumed.
@@ -42,11 +55,73 @@ class HttpBackend(Backend):
             filtered_query.append((key, value))
 
         path = parsed.path.rstrip("/") or _DEFAULT_BROKER_PATH
+        # _base_url is kept only for ``_url()`` (still used to build the
+        # request path with the broker root prefix). Host/port/scheme
+        # are also cached separately for the connection pool.
         self._base_url = urlunparse(parsed._replace(path=path, query=urlencode(filtered_query)))
         self._api_key = api_key or None
+        self._scheme = parsed.scheme
+        self._host = parsed.hostname or ""
+        self._port = parsed.port or (443 if self._scheme == "https" else 80)
+        self._path_prefix = path
+        # Encoded base query string (everything except api_key); we
+        # always append per-request query params onto this.
+        self._base_query = urlencode(filtered_query)
+
+        # Pool of idle, keepalive-ready connections. Guarded by a plain
+        # threading.Lock because acquire/release runs on the
+        # ``asyncio.to_thread`` worker pool, not the event loop.
+        self._pool: deque[HTTPConnection] = deque()
+        self._pool_lock = threading.Lock()
+        self._pool_size = 0  # total connections (idle + in-use)
+
+    # ------------------------------------------------------------------ #
+    # Connection pool (called from the threadpool, not the event loop)
+    # ------------------------------------------------------------------ #
+
+    def _new_connection(self, timeout: float | None) -> HTTPConnection:
+        cls = HTTPSConnection if self._scheme == "https" else HTTPConnection
+        # http.client treats timeout=None as "no timeout"; we pass it
+        # through unchanged so long-poll calls can supply their own.
+        return cls(self._host, self._port, timeout=timeout)
+
+    def _acquire(self, timeout: float | None) -> HTTPConnection:
+        with self._pool_lock:
+            if self._pool:
+                conn = self._pool.popleft()
+                # Reset the socket timeout for the current request — the
+                # value carried over from the previous user is stale.
+                if conn.sock is not None:
+                    conn.sock.settimeout(timeout)
+                return conn
+            self._pool_size += 1
+        return self._new_connection(timeout)
+
+    def _release(self, conn: HTTPConnection, *, broken: bool) -> None:
+        if broken:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            with self._pool_lock:
+                self._pool_size = max(0, self._pool_size - 1)
+            return
+        with self._pool_lock:
+            if len(self._pool) >= _MAX_POOL_SIZE:
+                # Pool full — drop this one rather than grow unbounded.
+                self._pool_size = max(0, self._pool_size - 1)
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                return
+            self._pool.append(conn)
 
     def _headers(self) -> dict[str, str]:
-        headers = {"Content-Type": "application/json"}
+        headers = {
+            "Content-Type": "application/json",
+            "Connection": "keep-alive",
+        }
         if self._api_key:
             headers["X-Offwork-API-Key"] = self._api_key
         return headers
@@ -59,6 +134,17 @@ class HttpBackend(Backend):
         separator = "&" if "?" in url else "?"
         return f"{url}{separator}{encoded}"
 
+    def _request_path(
+        self, suffix: str, query: dict[str, str | float | int] | None,
+    ) -> str:
+        path = f"{self._path_prefix}{suffix}"
+        params = dict(parse_qsl(self._base_query, keep_blank_values=True))
+        if query:
+            params.update({k: str(v) for k, v in query.items()})
+        if not params:
+            return path
+        return f"{path}?{urlencode(params)}"
+
     def _do_request(
         self,
         method: str,
@@ -69,28 +155,49 @@ class HttpBackend(Backend):
         timeout: float | None = None,
         allow_not_found: bool = False,
     ) -> tuple[int, Any | None]:
-        data = None if payload is None else json.dumps(payload).encode("utf-8")
-        request = Request(
-            self._url(suffix, query=query),
-            data=data,
-            method=method,
-            headers=self._headers(),
-        )
-        try:
-            with urlopen(request, timeout=timeout) as response:
+        data = b"" if payload is None else json.dumps(payload).encode("utf-8")
+        path = self._request_path(suffix, query)
+        headers = self._headers()
+        if data:
+            headers["Content-Length"] = str(len(data))
+
+        # Try once on a pooled connection. If the server closed the
+        # socket between calls (common with long-idle keepalive), retry
+        # once on a fresh connection.
+        for attempt in (0, 1):
+            conn = self._acquire(timeout)
+            broken = False
+            try:
+                conn.request(method, path, body=data or None, headers=headers)
+                response = conn.getresponse()
+                status = response.status
                 raw = response.read()
-                if not raw:
-                    return response.status, None
-                return response.status, json.loads(raw.decode("utf-8"))
-        except HTTPError as exc:
-            if exc.code in {204, 404} and allow_not_found:
-                return exc.code, None
-            message = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(
-                f"HTTP backend request failed: {method} {suffix} -> {exc.code} {message}"
-            ) from exc
-        except URLError as exc:
-            raise ConnectionError(f"HTTP backend connection failed: {exc.reason}") from exc
+            except (HTTPException, ConnectionError, OSError, socket.timeout) as exc:
+                broken = True
+                self._release(conn, broken=True)
+                if attempt == 0 and isinstance(exc, (HTTPException, ConnectionResetError, BrokenPipeError)):
+                    # Stale keepalive socket — retry once with a new one.
+                    continue
+                if isinstance(exc, socket.timeout):
+                    raise ConnectionError(f"HTTP backend connection failed: timed out") from exc
+                raise ConnectionError(f"HTTP backend connection failed: {exc}") from exc
+            finally:
+                if not broken:
+                    self._release(conn, broken=False)
+
+            if status in {204, 404} and allow_not_found:
+                return status, None
+            if status >= 400:
+                message = raw.decode("utf-8", errors="replace") if raw else ""
+                raise RuntimeError(
+                    f"HTTP backend request failed: {method} {suffix} -> {status} {message}"
+                )
+            if not raw:
+                return status, None
+            return status, json.loads(raw.decode("utf-8"))
+
+        # Unreachable: the for-loop either returns or raises.
+        raise ConnectionError("HTTP backend connection failed: retry exhausted")
 
     async def _request(
         self,
@@ -240,4 +347,12 @@ class HttpBackend(Backend):
         )
 
     async def close(self) -> None:
-        return None
+        with self._pool_lock:
+            pool = list(self._pool)
+            self._pool.clear()
+            self._pool_size = 0
+        for conn in pool:
+            try:
+                conn.close()
+            except Exception:
+                pass
