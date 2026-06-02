@@ -70,13 +70,14 @@ def _create_backend(url: str, **kwargs: Any) -> Backend:
         from offwork.worker.backends.rabbitmq import RabbitMQBackend
 
         return RabbitMQBackend(url, **kwargs)
-    if scheme in ("http", "https"):
-        from offwork.worker.backends.http import HttpBackend
+    if scheme in ("ws", "wss"):
+        from offwork.worker.backends.ws import WebSocketBackend
 
-        return HttpBackend(url)
+        role = kwargs.pop("role", "client")
+        return WebSocketBackend(url, role=role, **kwargs)
     raise ValueError(
         f"Unknown backend scheme: {scheme!r}. "
-        f"Supported: redis://, rediss://, local://, amqp://, amqps://, http://, https://"
+        f"Supported: redis://, rediss://, local://, amqp://, amqps://, ws://, wss://"
     )
 
 
@@ -152,7 +153,7 @@ def connect(url: str | None = None, **kwargs: Any) -> _ConnectionContext:
         - ``redis://`` / ``rediss://`` — :class:`RedisBackend`
         - ``local://`` — :class:`LocalBackend` (same-machine IPC)
         - ``amqp://`` / ``amqps://`` — :class:`RabbitMQBackend`
-        - ``http://`` / ``https://`` — :class:`HttpBackend`
+        - ``ws://`` / ``wss://`` — :class:`WebSocketBackend`
 
         When ``None``, the ``OFFWORK_BACKEND`` environment variable is used.
 
@@ -209,7 +210,7 @@ def get_backend() -> Backend:
             connect(env_url)
         else:
             raise RuntimeError(
-                "No backend connected. Call offwork.connect('redis://...') or offwork.connect('https://...') "
+                "No backend connected. Call offwork.connect('redis://...') or offwork.connect('wss://...') "
                 f"or set the {_ENV_VAR} environment variable."
             )
     return _active_backend  # type: ignore[return-value]
@@ -899,8 +900,10 @@ async def serve(
             known_clients.path,
         )
 
+    scheme = resolved.split("://", 1)[0].lower()
+    connect_kwargs: dict[str, Any] = {"role": "worker"} if scheme in {"ws", "wss"} else {}
     try:
-        backend = connect(resolved).backend
+        backend = connect(resolved, **connect_kwargs).backend
     except Exception as exc:
         logger.error("Could not connect to %s: %s", resolved, exc)
         sys.exit(1)

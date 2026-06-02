@@ -17,12 +17,14 @@ import asyncio
 import math
 import os
 import signal
+import socket
 import subprocess
 import sys
 import threading
 import time
 from datetime import timedelta
 from typing import Any
+from urllib.parse import urlparse
 
 import pytest
 
@@ -41,6 +43,55 @@ USE_SIGNING = os.environ.get("OFFWORK_TEST_SIGNING", "") == "1"
 USE_SANDBOX = os.environ.get("OFFWORK_TEST_SANDBOX", "") == "1"
 
 pytestmark = pytest.mark.skipif(not BACKEND_URL, reason="OFFWORK_TEST_BACKEND not set")
+
+
+def _resolve_dynamic_port(url: str) -> str:
+    """Pick a free port for ``ws://host:0`` so worker + client agree on it."""
+    if not url:
+        return url
+    parsed = urlparse(url)
+    if parsed.port != 0:
+        return url
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    host = parsed.hostname or "127.0.0.1"
+    return parsed._replace(netloc=f"{host}:{port}").geturl()
+
+
+BACKEND_URL = _resolve_dynamic_port(BACKEND_URL)
+
+
+# ---------------------------------------------------------------------------
+# WS broker subprocess (when OFFWORK_TEST_BACKEND uses ws://)
+# ---------------------------------------------------------------------------
+
+
+def _start_ws_broker(url: str) -> subprocess.Popen[bytes]:
+    parsed = urlparse(url)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 9876
+    cmd = [
+        sys.executable, "-m", "tests.fixtures._ws_broker",
+        "--host", host, "--port", str(port),
+    ]
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    env = os.environ.copy()
+    env["PYTHONPATH"] = repo_root + os.pathsep + env.get("PYTHONPATH", "")
+    proc = subprocess.Popen(
+        cmd, cwd=repo_root, env=env,
+        stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
+    )
+    # Wait until the broker accepts a TCP connection.
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=0.25):
+                return proc
+        except OSError:
+            time.sleep(0.05)
+    proc.kill()
+    raise RuntimeError(f"ws broker did not come up on {host}:{port}")
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +190,26 @@ def signing_token() -> str | None:
 
 
 @pytest.fixture(scope="module")
-def worker(signing_token: str | None) -> subprocess.Popen[bytes]:
+def ws_broker() -> Any:
+    """When the backend is ws://, start an in-process broker subprocess."""
+    scheme = BACKEND_URL.split("://", 1)[0].lower() if BACKEND_URL else ""
+    if scheme not in {"ws", "wss"}:
+        yield None
+        return
+    proc = _start_ws_broker(BACKEND_URL)
+    try:
+        yield proc
+    finally:
+        proc.send_signal(signal.SIGINT)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+
+
+@pytest.fixture(scope="module")
+def worker(signing_token: str | None, ws_broker: Any) -> subprocess.Popen[bytes]:
     """Module-scoped worker process."""
     proc = _start_worker(
         BACKEND_URL,
@@ -151,7 +221,7 @@ def worker(signing_token: str | None) -> subprocess.Popen[bytes]:
 
 
 @pytest.fixture(autouse=True)
-def _connect_backend(signing_token: str | None) -> None:
+def _connect_backend(signing_token: str | None, ws_broker: Any) -> None:
     """Connect the client to the backend before each test."""
     env = os.environ.copy()
     if signing_token:
@@ -407,9 +477,16 @@ if __name__ == "__main__":
             except Exception:
                 pass
 
+    def _pick_ws_url() -> str:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+        return f"ws://127.0.0.1:{port}"
+
     BACKENDS = [
         ("redis", "redis://localhost:6379"),
         ("rabbitmq", "amqp://localhost:5672"),
+        ("ws", _pick_ws_url()),
     ]
     SIGNING_OPTIONS = [False, True]
     SANDBOX_OPTIONS = [False, True]
