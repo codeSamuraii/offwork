@@ -70,38 +70,101 @@ def _create_backend(url: str, **kwargs: Any) -> Backend:
         from offwork.worker.backends.rabbitmq import RabbitMQBackend
 
         return RabbitMQBackend(url, **kwargs)
-    if scheme in ("http", "https"):
-        from offwork.worker.backends.http import HttpBackend
+    if scheme in ("ws", "wss"):
+        from offwork.worker.backends.ws import WebSocketBackend
 
-        return HttpBackend(url)
+        role = kwargs.pop("role", "client")
+        return WebSocketBackend(url, role=role, **kwargs)
     raise ValueError(
         f"Unknown backend scheme: {scheme!r}. "
-        f"Supported: redis://, rediss://, local://, amqp://, amqps://, http://, https://"
+        f"Supported: redis://, rediss://, local://, amqp://, amqps://, ws://, wss://"
     )
 
 
-def connect(url: str | None = None, **kwargs: Any) -> Backend:
-    """Configure the global transport backend.
+class _ConnectionContext:
+    """Return type of :func:`connect`.
+
+    Supports both simple one-liner usage and explicit async context-manager
+    usage for deterministic cleanup:
+
+    .. code-block:: python
+
+        # Simple: connection lives for the script's lifetime (atexit closes it)
+        offwork.connect("redis://localhost:6379")
+
+        # Explicit: closed deterministically on exit (even on exception)
+        async with offwork.connect("redis://localhost:6379") as backend:
+            result = await my_task.run(42)
+
+    The object also proxies attribute access to the underlying
+    :class:`~offwork.Backend` so the return value can be used directly::
+
+        backend = offwork.connect("redis://localhost:6379")
+        await backend.submit(task_json)   # proxied to the real backend
+    """
+
+    def __init__(self, backend: Backend) -> None:
+        self._backend = backend
+
+    @property
+    def backend(self) -> Backend:
+        """The underlying :class:`~offwork.Backend` instance."""
+        return self._backend
+
+    def __getattr__(self, name: str) -> Any:
+        # Proxy attribute access so callers can treat this as a Backend.
+        return getattr(self._backend, name)
+
+    async def __aenter__(self) -> Backend:
+        return self._backend
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
+        await disconnect()
+
+
+def connect(url: str | None = None, **kwargs: Any) -> _ConnectionContext:
+    """Configure the global transport backend and return a connection handle.
+
+    The returned :class:`_ConnectionContext` can be used in three ways:
+
+    .. code-block:: python
+
+        # 1. Simple: atexit handles cleanup automatically
+        offwork.connect("redis://localhost:6379")
+
+        # 2. Proxy access to the backend
+        ctx = offwork.connect("redis://localhost:6379")
+        await ctx.submit(task_json)
+
+        # 3. Explicit cleanup via async context manager
+        async with offwork.connect("redis://localhost:6379") as backend:
+            result = await my_task.run(42)
 
     Parameters
     ----------
     url
         Backend URL.  Supported schemes:
 
-        - ``redis://`` / ``rediss://`` -- :class:`RedisBackend`
-        - ``local://`` -- :class:`LocalBackend` (same-machine IPC)
-        - ``amqp://`` / ``amqps://`` -- :class:`RabbitMQBackend`
-        - ``http://`` / ``https://`` -- :class:`HttpBackend`
+        - ``redis://`` / ``rediss://`` — :class:`RedisBackend`
+        - ``local://`` — :class:`LocalBackend` (same-machine IPC)
+        - ``amqp://`` / ``amqps://`` — :class:`RabbitMQBackend`
+        - ``ws://`` / ``wss://`` — :class:`WebSocketBackend`
 
-        When *None*, the ``OFFWORK_BACKEND`` environment variable is used.
+        When ``None``, the ``OFFWORK_BACKEND`` environment variable is used.
 
     **kwargs
         Passed to the backend constructor.
 
     Returns
     -------
-    Backend
-        The connected backend instance.
+    _ConnectionContext
+        A handle that wraps the backend and optionally acts as an
+        ``async with`` context manager.
     """
     global _active_backend, _atexit_registered
     resolved = _resolve_url(url)
@@ -110,7 +173,7 @@ def connect(url: str | None = None, **kwargs: Any) -> Backend:
         atexit.register(_sync_disconnect)
         _atexit_registered = True
     logger.debug("Connected to backend: %s", resolved)
-    return _active_backend
+    return _ConnectionContext(_active_backend)
 
 
 async def disconnect() -> None:
@@ -147,7 +210,7 @@ def get_backend() -> Backend:
             connect(env_url)
         else:
             raise RuntimeError(
-                "No backend connected. Call offwork.connect('redis://...') or offwork.connect('https://...') "
+                "No backend connected. Call offwork.connect('redis://...') or offwork.connect('wss://...') "
                 f"or set the {_ENV_VAR} environment variable."
             )
     return _active_backend  # type: ignore[return-value]
@@ -837,8 +900,10 @@ async def serve(
             known_clients.path,
         )
 
+    scheme = resolved.split("://", 1)[0].lower()
+    connect_kwargs: dict[str, Any] = {"role": "worker"} if scheme in {"ws", "wss"} else {}
     try:
-        backend = connect(resolved)
+        backend = connect(resolved, **connect_kwargs).backend
     except Exception as exc:
         logger.error("Could not connect to %s: %s", resolved, exc)
         sys.exit(1)

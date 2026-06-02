@@ -3,6 +3,7 @@
 import asyncio
 import time
 
+from offwork.core._timeout import TimeoutIn, resolve_timeout
 from offwork.worker.backends.base import Backend
 
 
@@ -15,37 +16,40 @@ class ScheduleHandle:
 
     @property
     def schedule_id(self) -> str:
+        """The unique identifier for this recurring schedule."""
         return self._schedule_id
 
-    async def cancel(self, wait: bool | float = False) -> bool:
+    async def cancel(self, timeout: TimeoutIn = 0.0) -> bool:
         """Cancel this recurring schedule.
 
-        The worker stops re-enqueuing new occurrences after the
-        current one completes.
+        The worker stops re-enqueuing new occurrences after the current
+        one completes.
 
         Parameters
         ----------
-        wait
-            If ``False`` (default), return immediately. If ``True``,
-            block until the backend confirms the schedule is marked
-            cancelled (default 30s timeout). If a number, wait that
-            many seconds.
+        timeout
+            How long to wait for the backend to confirm cancellation.
+            Defaults to ``0.0`` (fire-and-forget: signal sent, return
+            immediately).  ``False`` or ``-1`` wait indefinitely.
+            ``True`` or ``0`` are equivalent to the default.
+            See :data:`~offwork.TimeoutIn` for the full convention.
 
         Returns
         -------
         bool
-            ``True`` if cancellation was acknowledged (or
-            ``wait=False``). ``False`` on timeout.
+            ``True`` if cancellation was acknowledged or
+            *timeout* is non-blocking.  ``False`` if *timeout* elapsed
+            before confirmation arrived.
         """
         await self._backend.cancel_schedule(self._schedule_id)
-        if wait is False:
+        resolved = resolve_timeout(timeout)
+        if resolved == 0.0:
             return True
-        timeout = 30.0 if wait is True else float(wait)
-        deadline = time.monotonic() + timeout
+        deadline = None if resolved is None else time.monotonic() + resolved
         while True:
             if await self._backend.is_schedule_cancelled(self._schedule_id):
                 return True
-            if time.monotonic() >= deadline:
+            if deadline is not None and time.monotonic() >= deadline:
                 return False
             await asyncio.sleep(0.5)
 

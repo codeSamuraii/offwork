@@ -28,39 +28,141 @@ _R = TypeVar("_R")
 _BUILTIN_NAMES = set(dir(builtins))
 
 
-def _make_start_method(
+def _make_submit_method(
     wrapper: Callable[..., object], func: Callable[..., object]
 ) -> Callable[..., object]:
-    """Create the ``.start()`` async method that submits and returns a Result."""
+    """Create the ``.submit()`` async method.
 
-    async def start(*args: Any, backend: str | Backend | None = None, **kwargs: Any) -> object:
+    Submits the function to a remote worker and returns a :class:`Result`
+    handle (or a :class:`ScheduleHandle` when *run_every* is set).
+
+    Scheduling keywords (all optional, at most one of ``run_at`` /
+    ``run_in`` / ``run_every`` may be given):
+
+    ``run_at``
+        :class:`~datetime.datetime` — run once at a specific point in time.
+    ``run_in``
+        :class:`~datetime.timedelta` or ``float`` (seconds) — run once after
+        a delay.
+    ``run_every``
+        :class:`~datetime.timedelta` or ``float`` (seconds) — repeat at this
+        interval.  Returns a :class:`ScheduleHandle` instead of a
+        :class:`Result`.
+
+    Additional keywords for recurring schedules:
+
+    ``_start_at``
+        :class:`~datetime.datetime` — first occurrence for *run_every*.
+    ``run_for``
+        :class:`~datetime.timedelta` or ``float`` (seconds) — stop recurring
+        after this wall-clock duration.
+    ``max_runs``
+        ``int`` — stop recurring after this many executions.
+    ``backend``
+        Override the global backend for this submission.
+    """
+
+    async def submit(
+        *args: Any,
+        run_at: datetime | None = None,
+        run_in: timedelta | float | None = None,
+        run_every: timedelta | float | None = None,
+        _start_at: datetime | None = None,
+        run_for: timedelta | float | None = None,
+        max_runs: int | None = None,
+        backend: str | Backend | None = None,
+        **kwargs: Any,
+    ) -> object:
+        if sum(x is not None for x in (run_at, run_in, run_every)) > 1:
+            raise ValueError(
+                "At most one of run_at, run_in, run_every may be specified"
+            )
+
+        if run_every is not None:
+            from offwork.worker.remote import submit_recurring  # circular
+
+            interval = (
+                run_every.total_seconds()
+                if isinstance(run_every, timedelta)
+                else float(run_every)
+            )
+            start_ts: float | None = None
+            if _start_at is not None:
+                start_ts = (
+                    _start_at.timestamp()
+                    if isinstance(_start_at, datetime)
+                    else float(_start_at)
+                )
+            if run_for is None and max_runs is None:
+                run_for = timedelta(hours=1)
+            run_for_seconds: float | None = None
+            if run_for is not None:
+                run_for_seconds = (
+                    run_for.total_seconds()
+                    if isinstance(run_for, timedelta)
+                    else float(run_for)
+                )
+                if run_for_seconds <= 0:
+                    raise ValueError(f"run_for must be positive, got {run_for}")
+            if max_runs is not None and max_runs <= 0:
+                raise ValueError(f"max_runs must be positive, got {max_runs}")
+            return await submit_recurring(
+                func, wrapper, *args,
+                _backend=backend, _interval=interval, _start_at=start_ts,
+                _run_for=run_for_seconds, _max_runs=max_runs,
+                **kwargs,
+            )
+
+        if run_at is not None or run_in is not None:
+            from offwork.worker.remote import submit_remote_scheduled  # circular
+
+            if run_at is not None:
+                scheduled_at = (
+                    run_at.timestamp()
+                    if isinstance(run_at, datetime)
+                    else float(run_at)
+                )
+            else:
+                assert run_in is not None
+                delay = (
+                    run_in.total_seconds()
+                    if isinstance(run_in, timedelta)
+                    else float(run_in)
+                )
+                scheduled_at = _time.time() + delay
+            return await submit_remote_scheduled(
+                func, wrapper, *args,
+                _backend=backend, _scheduled_at=scheduled_at,
+                **kwargs,
+            )
+
         from offwork.worker.remote import submit_remote  # circular
 
         return await submit_remote(func, wrapper, *args, _backend=backend, **kwargs)
 
-    return start
+    return submit
 
 
 def _make_run_method(
-    start_method: Callable[..., object],
+    submit_method: Callable[..., object],
 ) -> Callable[..., object]:
     """Create the ``.run()`` async method that submits and awaits the result."""
 
     async def run(*args: object, **kwargs: object) -> object:
-        result = await start_method(*args, **kwargs)  # type: ignore[misc]
+        result = await submit_method(*args, **kwargs)  # type: ignore[misc]
         return await result
 
     return run
 
 
 def _make_map_method(
-    start_method: Callable[..., object],
+    submit_method: Callable[..., object],
 ) -> Callable[..., object]:
     """Create the ``.map()`` async method for batch submission and collection."""
 
     async def map(args_list: list[tuple[object, ...]], **kwargs: object) -> list[object]:
         coros: list[Awaitable[object]] = [
-            cast(Awaitable[object], start_method(*args, **kwargs))
+            cast(Awaitable[object], submit_method(*args, **kwargs))
             for args in args_list
         ]
         results = await asyncio.gather(*coros)
@@ -72,120 +174,15 @@ def _make_map_method(
     return map
 
 
-def _make_start_at_method(
-    wrapper: Callable[..., object], func: Callable[..., object]
-) -> Callable[..., object]:
-    """Create the ``.start_at()`` method that submits a task scheduled for a specific time."""
-
-    async def start_at(dt: Any, *args: Any, backend: str | Backend | None = None, **kwargs: Any) -> object:
-        from offwork.worker.remote import submit_remote_scheduled  # circular
-
-        ts = dt.timestamp() if isinstance(dt, datetime) else float(dt)
-        return await submit_remote_scheduled(
-            func, wrapper, *args, _backend=backend, _scheduled_at=ts, **kwargs,
-        )
-
-    return start_at
-
-
-def _make_run_at_method(
-    start_at_method: Callable[..., object],
-) -> Callable[..., object]:
-    """Create the ``.run_at()`` method that submits at a time and awaits the result."""
-
-    async def run_at(dt: Any, *args: object, **kwargs: object) -> object:
-        result = await start_at_method(dt, *args, **kwargs)  # type: ignore[misc]
-        return await result
-
-    return run_at
-
-
-def _make_start_in_method(
-    wrapper: Callable[..., object], func: Callable[..., object]
-) -> Callable[..., object]:
-    """Create the ``.start_in()`` method that submits a task after a delay."""
-
-    async def start_in(delay: Any, *args: Any, backend: str | Backend | None = None, **kwargs: Any) -> object:
-        from offwork.worker.remote import submit_remote_scheduled  # circular
-
-        seconds = delay.total_seconds() if isinstance(delay, timedelta) else float(delay)
-        return await submit_remote_scheduled(
-            func, wrapper, *args, _backend=backend, _scheduled_at=_time.time() + seconds, **kwargs,
-        )
-
-    return start_in
-
-
-def _make_run_in_method(
-    start_in_method: Callable[..., object],
-) -> Callable[..., object]:
-    """Create the ``.run_in()`` method that submits after a delay and awaits."""
-
-    async def run_in(delay: Any, *args: object, **kwargs: object) -> object:
-        result = await start_in_method(delay, *args, **kwargs)  # type: ignore[misc]
-        return await result
-
-    return run_in
-
-
-def _make_run_every_method(
-    wrapper: Callable[..., object], func: Callable[..., object]
-) -> Callable[..., object]:
-    """Create the ``.run_every()`` method for recurring execution."""
-
-    async def run_every(
-        frequency: Any,
-        *args: Any,
-        _start_at: Any = None,
-        run_for: Any = None,
-        max_runs: int | None = None,
-        backend: str | Backend | None = None,
-        **kwargs: Any,
-    ) -> object:
-        from offwork.worker.remote import submit_recurring  # circular
-
-        interval = frequency.total_seconds() if isinstance(frequency, timedelta) else float(frequency)
-        start_ts: float | None = None
-        if _start_at is not None:
-            start_ts = _start_at.timestamp() if isinstance(_start_at, datetime) else float(_start_at)
-        if run_for is None and max_runs is None:
-            run_for = timedelta(hours=1)
-        run_for_seconds: float | None = None
-        if run_for is not None:
-            run_for_seconds = run_for.total_seconds() if isinstance(run_for, timedelta) else float(run_for)
-            if run_for_seconds <= 0:
-                raise ValueError(f"run_for must be positive, got {run_for}")
-        if max_runs is not None and max_runs <= 0:
-            raise ValueError(f"max_runs must be positive, got {max_runs}")
-        return await submit_recurring(
-            func, wrapper, *args,
-            _backend=backend, _interval=interval, _start_at=start_ts,
-            _run_for=run_for_seconds, _max_runs=max_runs,
-            **kwargs,
-        )
-
-    return run_every
-
-
 def _attach_traced_attrs(
     wrapper: Callable[..., object], func: Callable[..., object]
 ) -> None:
-    """Attach offwork metadata and .start()/.run()/.map() to a traced wrapper."""
+    """Attach offwork metadata and remote-execution methods to a traced wrapper."""
     wrapper.__offwork_traced__ = True  # type: ignore[attr-defined]
-    start = _make_start_method(wrapper, func)
-    wrapper.start = start  # type: ignore[attr-defined]
-    wrapper.run = _make_run_method(start)  # type: ignore[attr-defined]
-    wrapper.map = _make_map_method(start)  # type: ignore[attr-defined]
-
-    start_at = _make_start_at_method(wrapper, func)
-    wrapper.start_at = start_at  # type: ignore[attr-defined]
-    wrapper.run_at = _make_run_at_method(start_at)  # type: ignore[attr-defined]
-
-    start_in = _make_start_in_method(wrapper, func)
-    wrapper.start_in = start_in  # type: ignore[attr-defined]
-    wrapper.run_in = _make_run_in_method(start_in)  # type: ignore[attr-defined]
-
-    wrapper.run_every = _make_run_every_method(wrapper, func)  # type: ignore[attr-defined]
+    submit = _make_submit_method(wrapper, func)
+    wrapper.submit = submit  # type: ignore[attr-defined]
+    wrapper.run = _make_run_method(submit)  # type: ignore[attr-defined]
+    wrapper.map = _make_map_method(submit)  # type: ignore[attr-defined]
 
 
 def _get_stdlib_dirs() -> list[str]:

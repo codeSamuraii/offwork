@@ -153,10 +153,10 @@ class TestConnectDispatch:
     @pytest.mark.asyncio
     async def test_connect_local(self) -> None:
         port = _free_port()
-        backend = _remote.connect(f"local://127.0.0.1:{port}")
+        ctx = _remote.connect(f"local://127.0.0.1:{port}")
         try:
-            assert isinstance(backend, LocalBackend)
-            assert _remote._active_backend is backend
+            assert isinstance(ctx.backend, LocalBackend)
+            assert _remote._active_backend is ctx.backend
         finally:
             await _remote.disconnect()
 

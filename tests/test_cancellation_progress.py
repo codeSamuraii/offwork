@@ -217,13 +217,13 @@ class TestCancellation:
     @pytest.mark.asyncio
     async def test_cancel_sets_flag(self, backend: InMemoryBackend) -> None:
         result = Result("task1", backend)
-        await result.cancel()
+        await result.cancel(timeout=0)  # fire-and-forget (no worker to confirm)
         assert await backend.is_cancelled("task1")
 
     @pytest.mark.asyncio
     async def test_cancel_stores_result(self, backend: InMemoryBackend) -> None:
         result = Result("task1", backend)
-        await result.cancel()
+        await result.cancel(timeout=0)  # fire-and-forget (no worker to confirm)
         raw = await backend.try_get_result("task1")
         assert raw is not None
         env = ResultEnvelope.from_json(raw)
@@ -232,15 +232,15 @@ class TestCancellation:
     @pytest.mark.asyncio
     async def test_await_cancelled_raises(self, backend: InMemoryBackend) -> None:
         result = Result("task1", backend)
-        await result.cancel()
+        await result.cancel(timeout=0)  # fire-and-forget (no worker to confirm)
         with pytest.raises(TaskCancelled, match="task1"):
             await result
 
     @pytest.mark.asyncio
-    async def test_status_returns_cancelled(self, backend: InMemoryBackend) -> None:
+    async def test_cancelled_returns_true(self, backend: InMemoryBackend) -> None:
         result = Result("task1", backend)
-        await result.cancel()
-        assert await result.status() == "cancelled"
+        await result.cancel(timeout=0)  # fire-and-forget (no worker to confirm)
+        assert result.cancelled() is True
 
     @pytest.mark.asyncio
     async def test_cancel_wait_true_returns_when_worker_confirms(
@@ -258,7 +258,7 @@ class TestCancellation:
         asyncio.create_task(worker_confirms())
         # Sentinel: clear the pre-seed by stealing the result before cancel.
         # cancel(wait=...) must not pre-seed when wait is set.
-        ok = await result.cancel(wait=2.0)
+        ok = await result.cancel(timeout=2.0)
         assert ok is True
 
     @pytest.mark.asyncio
@@ -272,7 +272,7 @@ class TestCancellation:
 
         b = SilentBackend()
         result = Result("task1", b)
-        ok = await result.cancel(wait=0.2)
+        ok = await result.cancel(timeout=0.2)
         assert ok is False
         # Fallback seed so future reads don't hang.
         assert "task1" in b.results

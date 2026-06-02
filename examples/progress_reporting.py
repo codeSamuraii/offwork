@@ -41,15 +41,12 @@ async def main() -> None:
     items = ["alpha", "bravo", "charlie", "delta", "echo"]
 
     # Start the task (returns immediately)
-    future = await batch_process.start(items)
+    future = await batch_process.submit(items)
     print(f"Task submitted: {future.task_id}")
 
-    # Poll for progress until done
-    while not await future.done():
-        p = await future.progress()  # returns a `ProgressInfo` object or None if no update
-        if p is not None:
-            print(f"Progress: {p.percent}% ({p.current}/{p.total}) - {p.message}")
-        await asyncio.sleep(0.5)
+    # Stream progress updates until the task finishes
+    async for p in future.progress():
+        print(f"Progress: {p.percent}% ({p.current}/{p.total}) - {p.message}")
 
     # Get the final result
     result = await future

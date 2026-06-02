@@ -49,21 +49,21 @@ pip install offwork[redis]
 offwork worker --backend redis://other-machine:6379
 ```
 
-See [Features](docs/FEATURES.md) for the full API.
-
 ## Features
 
 | | |
 |-|-|
-| **Async-native** | `.run()`, `.start()`, `.map()`, `asyncio.gather` — all coroutines |
-| **Scheduling** | `.run_in(delay)`, `.run_at(datetime)`, `.run_every(interval)` with cancellation |
+| **Async-native** | `.run()`, `.submit()`, `.map()`, `asyncio.gather` — all coroutines |
+| **Scheduling** | `submit(run_in=delay)`, `submit(run_at=dt)`, `submit(run_every=interval)` with cancellation |
 | **Retry & timeout** | `@offwork.task(timeout=30, retries=3)` with exponential backoff |
 | **Throttling** | `@offwork.task(throttle=timedelta(hours=24)/50)` — rate-limit executions |
-| **Progress & cancellation** | `offwork.progress(3, 10)` inside tasks; `await future.cancel()` on client |
+| **Progress & cancellation** | `offwork.progress(3, 10)` inside tasks; `fut.cancel()` / `await fut.cancel()` on client |
 | **Heartbeat & stall detection** | Workers heartbeat every second; clients raise `TaskStalled` on silence |
 | **Package auto-install** | Workers `pip install` missing packages before execution |
 | **Docker sandbox** | Optional container isolation, fully transparent to clients |
 | **Signed execution** | Pre-shared token or PIN pairing + HMAC-SHA256 task authentication |
+| ... | See [Features](docs/FEATURES.md) for more information. |
+
 
 ### Security
 

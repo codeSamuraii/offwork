@@ -84,11 +84,11 @@ async def main() -> None:
     src = _populate_sample_dir()
     print(f"Source dir: {src}")
 
-    schedule = await snapshot_directory.run_every(
-        timedelta(seconds=5),
+    schedule = await snapshot_directory.submit(
         src,
         "my-backups",
         "myapp/demo",
+        run_every=timedelta(seconds=5),
     )
     print(f"Scheduled backup every 5s: {schedule.schedule_id}")
 

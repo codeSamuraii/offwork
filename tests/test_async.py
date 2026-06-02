@@ -278,25 +278,25 @@ class TestHandleTaskAsync:
 # ---------------------------------------------------------------------------
 
 
-class TestStartMethod:
+class TestSubmitMethod:
     @pytest.mark.asyncio
-    async def test_start_exists(self) -> None:
+    async def test_submit_exists(self) -> None:
         @offwork.task
         def my_func(x: int) -> int:
             return x + 1
 
-        assert hasattr(my_func, "start")
-        assert asyncio.iscoroutinefunction(my_func.start)
+        assert hasattr(my_func, "submit")
+        assert asyncio.iscoroutinefunction(my_func.submit)
 
     @pytest.mark.asyncio
-    async def test_start_submits_and_returns_result(self, backend: InMemoryBackend) -> None:
+    async def test_submit_submits_and_returns_result(self, backend: InMemoryBackend) -> None:
         _remote._active_backend = backend
 
         @offwork.task
         def double(x: int) -> int:
             return x * 2
 
-        future = await double.start(5)
+        future = await double.submit(5)
         assert isinstance(future, Result)
         assert len(backend._tasks) == 1
 
@@ -309,15 +309,15 @@ class TestStartMethod:
         assert result == 10
 
     @pytest.mark.asyncio
-    async def test_start_on_async_func(self, backend: InMemoryBackend) -> None:
+    async def test_submit_on_async_func(self, backend: InMemoryBackend) -> None:
         _remote._active_backend = backend
 
         @offwork.task
         async def async_triple(x: int) -> int:
             return x * 3
 
-        assert hasattr(async_triple, "start")
-        assert asyncio.iscoroutinefunction(async_triple.start)
+        assert hasattr(async_triple, "submit")
+        assert asyncio.iscoroutinefunction(async_triple.submit)
 
 
 class TestRunMethod:
@@ -361,8 +361,8 @@ class TestGather:
         def square(x: int) -> int:
             return x ** 2
 
-        f1 = await square.start(3)
-        f2 = await square.start(4)
+        f1 = await square.submit(3)
+        f2 = await square.submit(4)
 
         # Simulate worker responses
         for task_json in list(backend._tasks):

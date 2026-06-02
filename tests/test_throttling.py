@@ -62,13 +62,14 @@ class TestResultUnwrapThrottled:
             await result.result(stall_timeout=None)
 
     @pytest.mark.asyncio
-    async def test_throttled_status_string(self) -> None:
+    async def test_throttled_exception(self) -> None:
         class MockBackend:
             async def try_get_result(self, task_id: str) -> str | None:
                 return ResultEnvelope.throttled(task_id).to_json()
 
         result = Result("t1", MockBackend())  # type: ignore[arg-type]
-        assert await result.status() == "throttled"
+        await result.check()
+        assert isinstance(result.exception(), ThrottleError)
 
 
 class TestBrokerThrottle:

@@ -62,7 +62,8 @@ from offwork.core.envelope import (
 from offwork.core.version import _VERSION
 from offwork.core.progress import ProgressInfo
 from offwork.core.progress import progress as progress
-from offwork.worker.remote import serve, connect, disconnect
+from offwork.core._timeout import TimeoutIn, WaitForever, ReturnImmediately
+from offwork.worker.remote import serve, connect, disconnect, _ConnectionContext
 from offwork.worker.result import Result, ResultEnvelope
 from offwork.worker.worker import Worker
 from offwork.worker.worker import execute as execute
@@ -129,6 +130,12 @@ __all__ = [
     "install_package_as",
     "worker_only_import",
     "progress",
+    # Timeout types
+    "TimeoutIn",
+    "WaitForever",
+    "ReturnImmediately",
+    # Connection handle
+    "_ConnectionContext",
     # Serialization
     "serialize",
     "reconstruct",

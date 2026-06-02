@@ -124,7 +124,7 @@ class TestRunEveryValidation:
         def tick(n: int) -> int: return n
 
         backend = FakeBackend()
-        await tick.run_every(1.0, 42, backend=backend)
+        await tick.submit(42, run_every=1.0, backend=backend)
         data = json.loads(backend.submitted[0])
         # Default cap is 1 hour deadline, no max_runs.
         assert data["recur_deadline"] - data["scheduled_at"] == pytest.approx(3600.0)
@@ -148,7 +148,7 @@ class TestRunEveryValidation:
         def tick2(n: int) -> int: return n
 
         backend = FakeBackend()
-        await tick2.run_every(1.0, 7, max_runs=3, backend=backend)
+        await tick2.submit(7, run_every=1.0, max_runs=3, backend=backend)
         data = json.loads(backend.submitted[0])
         assert data["recur_remaining"] == 3
         assert "recur_deadline" not in data
@@ -161,9 +161,9 @@ class TestRunEveryValidation:
         def tick3(n: int) -> int: return n
 
         with pytest.raises(ValueError):
-            await tick3.run_every(1.0, 1, run_for=0)
+            await tick3.submit(1, run_every=1.0, run_for=0)
         with pytest.raises(ValueError):
-            await tick3.run_every(1.0, 1, max_runs=0)
+            await tick3.submit(1, run_every=1.0, max_runs=0)
 
 
 class TestBrokerScheduleCancellation:

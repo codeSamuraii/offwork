@@ -44,11 +44,14 @@ python my_script.py                                    # Terminal 2 → 5.0
 ## Async API
 
 ```python
-result = await func.run(3.0, 4.0)                          # submit + await
-future = await func.start(3.0, 4.0)                        # submit, get handle
-result = await future                                       # await later
+result  = await func.run(3.0, 4.0)                          # submit + await
+
+future  = await func.submit(3.0, 4.0)                       # submit, get handle
+result  = await future                                      # await later
+
 results = await func.map([(3, 4), (5, 12)])                 # batch
-r1, r2 = await asyncio.gather(func.run(3, 4), func.run(5, 12))  # concurrent
+
+r1, r2  = await asyncio.gather(func.run(3, 4), func.run(5, 12))  # concurrent
 ```
 
 `async def` functions are awaited directly on the worker.
@@ -64,23 +67,31 @@ Retries use exponential backoff (1s, 2s, 4s).
 
 ## Scheduling
 
-Execute tasks on a delay, at a specific time, or on a recurring schedule:
+Pass scheduling keywords to `.submit()` (or `.run()` for a one-liner):
 
 ```python
 from datetime import datetime, timedelta
 
 # Run after a delay
-result = await func.run_in(timedelta(minutes=5), *args)
+result = await func.run(*args, run_in=timedelta(minutes=5))
 
 # Run at a specific time
-result = await func.run_at(datetime(2026, 4, 21, 9, 0), *args)
+result = await func.run(*args, run_at=datetime(2026, 4, 21, 9, 0))
 
-# Recurring execution (every hour)
-schedule = await func.run_every(timedelta(hours=1), *args)
+# Submit and get a handle without awaiting
+future = await func.submit(*args, run_in=timedelta(minutes=5))
+
+# Recurring execution (every hour) — returns a ScheduleHandle
+schedule = await func.submit(*args, run_every=timedelta(hours=1))
 await schedule.cancel()  # stop the schedule
 ```
 
-`run_at` and `run_in` return a `Result` handle (like `.start()`).
+`run_in` and `run_at` return a `Result` handle; `run_every` returns a `ScheduleHandle`.
+
+Additional keywords for recurring schedules:
+- `_start_at` — first occurrence (`datetime`)
+- `run_for` — stop after this wall-clock duration (`timedelta` or seconds)
+- `max_runs` — stop after this many executions (`int`)
 
 ## Throttling
 
@@ -140,12 +151,28 @@ def train(epochs: int) -> float:
     return accuracy
 
 # On the client
-future = await train.start(100)
+future = await train.submit(100)
 
+# Progress — snapshot or async stream
 p = await future.progress()             # ProgressInfo or None
 if p: print(f"{p.percent:.0f}%")
 
-await future.cancel()                   # cooperative cancellation
+async for p in future.progress():       # stream each update until done
+    print(f"{p.percent:.0f}%")
+
+# Cancellation — fire-and-forget or await confirmation
+future.cancel()                         # signal cancellation (background)
+await future.cancel()                   # wait up to 30 s for worker to confirm
+await future.cancel(timeout=False)      # wait indefinitely
+
+# State queries (synchronous, no I/O)
+future.done()                           # True once result is cached locally
+future.cancelled()                      # True if task was cancelled
+future.exception()                      # RemoteError / TaskCancelled / None
+
+# Waiting
+await future.wait()                     # block until done, return self
+await future.check()                    # non-blocking poll, update cache, return self
 
 try:
     result = await future.result(timeout=60, stall_timeout=10)
@@ -153,6 +180,19 @@ except TaskCancelled: ...               # task was cancelled
 except TaskStalled: ...                 # worker stopped responding
 except RemoteError as e: print(e)       # includes remote traceback
 ```
+
+### Timeout convention
+
+Every wait-style method (`result`, `wait`, `check`, `cancel`) accepts a `timeout` argument with a uniform convention:
+
+| Value | Meaning |
+|---|---|
+| `False` or `-1` | Wait indefinitely |
+| `True` or `0` | Return immediately (non-blocking) |
+| `timedelta` | Wait at most this duration |
+| `float > 0` | Wait at most this many seconds |
+
+The default differs per method: `result(timeout=False)` waits forever; `cancel(timeout=30.0)` waits 30 s; `check(timeout=0.0)` is non-blocking.
 
 ## Sandbox
 
