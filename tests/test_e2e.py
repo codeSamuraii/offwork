@@ -23,7 +23,7 @@ import sys
 import threading
 import time
 from datetime import timedelta
-from typing import Any
+from typing import Any, Generator
 from urllib.parse import urlparse
 
 import pytest
@@ -209,7 +209,7 @@ def ws_broker() -> Any:
 
 
 @pytest.fixture(scope="module")
-def worker(signing_token: str | None, ws_broker: Any) -> subprocess.Popen[bytes]:
+def worker(signing_token: str | None, ws_broker: Any) -> Generator[subprocess.Popen[bytes], None, None]:
     """Module-scoped worker process."""
     proc = _start_worker(
         BACKEND_URL,
