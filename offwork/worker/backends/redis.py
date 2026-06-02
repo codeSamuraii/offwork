@@ -1,12 +1,15 @@
 """Redis-backed transport using ``RPUSH``/``BLPOP`` for tasks and results."""
 
+import math
 import time
 import asyncio
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 from collections.abc import AsyncIterator
 
 try:
     import redis.asyncio as _redis
+    from redis.exceptions import TimeoutError as RedisTimeoutError
 except ImportError:
     raise ImportError(
         "redis package is required for RedisBackend. "
@@ -50,7 +53,11 @@ class RedisBackend(Backend):
         queue_key: str | None = None,
         result_ttl: int | None = None,
     ) -> None:
-        self._redis: Any = _redis.Redis.from_url(url)
+        query = parse_qs(urlparse(url).query)
+        connect_kwargs: dict[str, Any] = {}
+        if "socket_timeout" not in query:
+            connect_kwargs["socket_timeout"] = None
+        self._redis: Any = _redis.Redis.from_url(url, **connect_kwargs)
         self._queue_key = queue_key or self.DEFAULT_QUEUE_KEY
         self._result_ttl = result_ttl or self.DEFAULT_RESULT_TTL
 
@@ -60,7 +67,13 @@ class RedisBackend(Backend):
     async def listen(self) -> AsyncIterator[str]:
         """Block on ``BLPOP`` and yield task JSON strings as they arrive."""
         while True:
-            result = await self._redis.blpop(self._queue_key)
+            try:
+                result = await self._redis.blpop(self._queue_key)
+            except RedisTimeoutError:
+                task = asyncio.current_task()
+                if task is not None and task.cancelling():
+                    raise asyncio.CancelledError() from None
+                continue
             if result is None:
                 continue
             _, raw = result
@@ -73,14 +86,34 @@ class RedisBackend(Backend):
 
     async def get_result(self, task_id: str, timeout: float | None = None) -> str:
         key = f"{self.RESULT_PREFIX}{task_id}"
-        t = int(timeout) if timeout else 0
-        result = await self._redis.blpop(key, timeout=t)
-        if result is None:
-            raise TimeoutError(
-                f"Timed out waiting for result of task {task_id}"
-            )
-        _, raw = result
-        return raw.decode() if isinstance(raw, bytes) else raw
+        deadline = None if timeout is None else time.monotonic() + max(0.0, timeout)
+        while True:
+            if deadline is None:
+                block_seconds = 0
+            else:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"Timed out waiting for result of task {task_id}"
+                    )
+                block_seconds = max(1, math.ceil(remaining))
+            try:
+                result = await self._redis.blpop(key, timeout=block_seconds)
+            except RedisTimeoutError:
+                task = asyncio.current_task()
+                if task is not None and task.cancelling():
+                    raise asyncio.CancelledError() from None
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"Timed out waiting for result of task {task_id}"
+                    ) from None
+                continue
+            if result is None:
+                raise TimeoutError(
+                    f"Timed out waiting for result of task {task_id}"
+                )
+            _, raw = result
+            return raw.decode() if isinstance(raw, bytes) else raw
 
     async def try_get_result(self, task_id: str) -> str | None:
         """Non-blocking ``LPOP``; returns ``None`` if not yet available."""
