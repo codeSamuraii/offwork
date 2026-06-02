@@ -31,6 +31,14 @@ from collections.abc import AsyncIterator
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
+try:
+    import websockets
+except ImportError:
+    raise ImportError(
+        "websockets package is required for RabbitMQBackend. "
+        "Install it with: pip install websockets"
+    ) from None
+
 from offwork.core.version import _VERSION
 from offwork.worker.backends.base import Backend
 
@@ -86,13 +94,6 @@ class WebSocketBackend(Backend):
     # ------------------------------------------------------------------ #
 
     async def _connect(self) -> Any:
-        try:
-            import websockets
-        except ImportError as exc:
-            raise RuntimeError(
-                "WebSocketBackend requires the 'websockets' package. "
-                "Install with: pip install 'offwork[ws]'"
-            ) from exc
         ws = await websockets.connect(
             self._url,
             max_size=None,  # broker payloads (graph_json) can be large

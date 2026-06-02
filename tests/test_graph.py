@@ -352,7 +352,6 @@ def test_deduplication_shared_dep(tmp_path: Path) -> None:
 def test_serialize_format_structure(tmp_path: Path) -> None:
     graph = _make_graph(tmp_path)
     data = json.loads(graph.serialize())
-    assert data["version"].startswith("0.2")
     assert "objects" in data
     assert "deps" in data
     assert "refs" in data

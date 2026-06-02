@@ -126,7 +126,7 @@ jobs:
 
       - name: Install offwork + dev deps
         run: |
-          pip install -e ".[redis,rabbitmq]"
+          pip install -e ".[redis,rabbitmq,ws]"
           pip install mypy pytest pytest-asyncio
 
       - name: Run mypy
