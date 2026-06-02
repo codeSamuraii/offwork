@@ -91,7 +91,7 @@ class WebSocketBackend(Backend):
         except ImportError as exc:
             raise RuntimeError(
                 "WebSocketBackend requires the 'websockets' package. "
-                "Install with: pip install offwork[ws]"
+                "Install with: pip install 'offwork[ws]'"
             ) from exc
         ws = await websockets.connect(
             self._url,
