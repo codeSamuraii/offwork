@@ -8,6 +8,7 @@ Full feature guide and API walkthrough for offwork. For architecture internals s
 pip install offwork
 pip install offwork[redis]      # Redis backend (multi-machine)
 pip install offwork[rabbitmq]   # RabbitMQ backend (multi-machine, AMQP)
+pip install offwork[ws]         # WebSocket backend (hosted cloud broker)
 ```
 
 offwork has zero required runtime dependencies. Backend extras are only needed when you use the corresponding URL scheme.
@@ -44,9 +45,9 @@ python my_script.py                                    # Terminal 2 → 5.0
 ## Async API
 
 ```python
-result  = await func.run(3.0, 4.0)                          # submit + await
+result  = await func.run(3.0, 4.0)                          # submit + await result
 
-future  = await func.submit(3.0, 4.0)                       # submit, get handle
+future  = await func.submit(3.0, 4.0)                       # submit, get Result handle
 result  = await future                                      # await later
 
 results = await func.map([(3, 4), (5, 12)])                 # batch
@@ -55,6 +56,10 @@ r1, r2  = await asyncio.gather(func.run(3, 4), func.run(5, 12))  # concurrent
 ```
 
 `async def` functions are awaited directly on the worker.
+
+`func.submit()` is the non-blocking form of `func.run()`. It enqueues the task
+and returns a `Result` handle immediately, letting you do other work while the
+task executes and `await` the result later.
 
 ## Retry and timeout
 
@@ -229,14 +234,41 @@ After setup, tasks are signed automatically. No client-side code changes. See [S
 | Local | `local://host:port` | (built-in) | Same-machine IPC (async TCP, no deps) |
 | Redis | `redis://host:port` | `pip install offwork[redis]` | Multi-machine production |
 | RabbitMQ | `amqp://host:port` | `pip install offwork[rabbitmq]` | Multi-machine production with AMQP |
+| WebSocket | `ws://host/path` or `wss://` | `pip install offwork[ws]` | Hosted cloud broker (one persistent socket) |
 
 ```python
 offwork.connect("local://localhost:9748")
 offwork.connect("redis://localhost:6379")
 offwork.connect("amqp://guest:guest@localhost/")
+offwork.connect("ws://localhost:8000/api/v1/broker/ws?api_key=<key>")  # hosted
 ```
 
 Or: `export OFFWORK_BACKEND=redis://localhost:6379`
+
+### Hosted broker (WebSocket)
+
+When connecting to a hosted broker such as cloud_poc, use a `ws://` or `wss://`
+URL. `WebSocketBackend` opens one persistent socket per process and multiplexes
+all broker operations over it by request id. Authentication is via
+`?api_key=<key>` in the URL (stripped from the URL and sent in the handshake).
+
+```python
+import offwork
+
+# URL returned by /api/v1/users/register or /api/v1/users/me
+offwork.connect("wss://example.com/api/v1/broker/ws?api_key=<your key>")
+
+@offwork.task
+def hello(name: str) -> str:
+    return f"hello {name}"
+
+async def main():
+    print(await hello.run("world"))  # executes on a cloud worker pod
+```
+
+Reconnect is automatic with bounded backoff. Mutating ops that were in-flight
+when the socket dropped surface as `ConnectionError` — the caller decides
+whether to retry.
 
 ## Worker options
 

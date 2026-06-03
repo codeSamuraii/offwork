@@ -56,6 +56,7 @@ offwork/
             redis.py         RedisBackend: redis.asyncio (RPUSH/BLPOP, Pub/Sub, MGET)
             local.py         LocalBackend: async TCP broker for same-machine IPC
             rabbitmq.py      RabbitMQBackend: aio-pika (durable queue, fanout exchange)
+            ws.py            WebSocketBackend: one persistent WS, request-id multiplexing
         sandbox/
             docker.py        DockerSandbox: build image, start container, TCP exec
             guest_agent.py   Stdlib-only agent running inside the container
@@ -74,15 +75,15 @@ offwork/
 # Remote execution (all async)
 offwork.connect("redis://localhost:6379")  # configure backend (sync)
 await offwork.serve("redis://...", concurrency=4)  # start worker loop
-await func.run(*args)                     # submit + await result
-future = await func.start(*args)          # submit, returns Result handle
-results = await func.map([(a1, b1), ...]) # batch submit + await all
+await func.run(*args)                       # submit + await result
+future = await func.submit(*args)           # submit, returns Result handle
+results = await func.map([(a1, b1), ...])   # batch submit + await all
 
 # Scheduling
-await func.run_in(timedelta(minutes=5), *args)       # execute after delay
-await func.run_at(datetime(2026, 1, 1), *args)       # execute at specific time
-schedule = await func.run_every(timedelta(hours=1), *args)  # recurring
-await schedule.cancel()                               # stop recurring
+await func.run(*args, run_in=timedelta(minutes=5))     # execute after delay
+await func.run(*args, run_at=datetime(2026, 1, 1))      # execute at specific time
+schedule = await func.submit(*args, run_every=timedelta(hours=1))  # recurring
+await schedule.cancel()                                 # stop recurring
 
 # Result handling
 result = await future                     # await result value
@@ -108,12 +109,12 @@ offwork.get_graph().to_mermaid(func)       # -> Mermaid diagram string
 
 ## Remote execution flow
 
-### Client side: `await func.run(*args)` / `await func.start(*args)`
+### Client side: `await func.run(*args)` / `await func.submit(*args)`
 
 1. **Serialize** -- `Graph.serialize(func)` captures the function's subgraph (source, imports, dependencies) as JSON.
 2. **Pack** -- A `Task` envelope bundles the serialized graph, function name, arguments, and execution options (timeout, retries).
 3. **Submit** -- `await backend.submit(task_json)` sends the task to the transport layer.
-4. **Return** -- `.run()` awaits the result and returns the value directly. `.start()` returns a `Result` handle immediately.
+4. **Return** -- `.run()` awaits the result and returns the value directly. `.submit()` returns a `Result` handle immediately.
 
 ### Worker side: `await serve()` / `offwork worker`
 
@@ -199,13 +200,35 @@ Uses `aio-pika` (async AMQP 0-9-1). Tasks go through a single durable queue (`of
 
 URL scheme: `amqp://` or `amqps://` (e.g. `amqp://guest:guest@localhost/`). The `aio-pika` package is an optional dependency installed via `pip install offwork[rabbitmq]`.
 
+### WebSocketBackend
+
+Single persistent WebSocket to a hosted broker (e.g. cloud_poc's
+`/api/v1/broker/ws`). All ops are multiplexed over one socket by request id;
+no TCP handshake per call.
+
+- URL schemes: `ws://` and `wss://`
+- Install: `pip install offwork[ws]` (uses `websockets >= 15.0`)
+- Authentication: `?api_key=<key>` in the URL, stripped and sent in the
+  handshake `hello` frame
+- Reconnects automatically with bounded backoff (0.5 s → 30 s). Mutating ops
+  in-flight when the socket drops surface as `ConnectionError`; the backend
+  never silently replays them
+- Workers opened via `serve()` or `offwork worker --backend ws://...`
+  connect with `role="worker"` in the handshake
+
+```python
+offwork.connect("wss://example.com/api/v1/broker/ws?api_key=<key>")
+```
+
+The `websockets` package is imported lazily and is an optional dependency.
+
 ### Custom backends
 
-Subclass `Backend` to implement any transport (HTTP, NATS, gRPC, etc.):
+Subclass `Backend` to implement any transport (NATS, gRPC, etc.):
 
 ```python
 offwork.connect("redis://...")  # built-in
-await func.start(*args, backend=my_custom_backend)  # per-call override
+await func.submit(*args, _backend=my_custom_backend)  # per-call override
 ```
 
 ## How `@offwork.task` works
@@ -269,7 +292,7 @@ For generators and async generators, a proxy pattern intercepts each iteration s
 
 The returned wrapper gains:
 - `.run(*args)` -- submit to remote worker and await result (coroutine)
-- `.start(*args)` -- submit to remote worker, returns `Result` handle (coroutine)
+- `.submit(*args)` -- submit to remote worker, returns `Result` handle (coroutine)
 - `.map(args_list)` -- batch submit and await all results (coroutine)
 - `__offwork_traced__ = True` -- marker attribute
 

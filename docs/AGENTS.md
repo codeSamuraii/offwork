@@ -26,7 +26,7 @@ Add `@offwork.task` to one entry-point function. Call `await func.run(...)`. Tha
 | Auto-capture (source, imports, closures, classes, module vars) | `Graph.serialize` | [offwork/graph/analyzer.py](../offwork/graph/analyzer.py), [offwork/graph/graph.py](../offwork/graph/graph.py) |
 | Reconstruction → self-contained source | `Graph.reconstruct` | [offwork/graph/store.py](../offwork/graph/store.py) |
 | Runtime call-stack tracing | `contextvars` | [offwork/graph/tracing.py](../offwork/graph/tracing.py) |
-| Remote submit / await | `func.run`, `func.start`, `func.map` | [offwork/worker/remote.py](../offwork/worker/remote.py), [offwork/graph/decorator.py](../offwork/graph/decorator.py) |
+| Remote submit / await | `func.run`, `func.submit`, `func.map` | [offwork/worker/remote.py](../offwork/worker/remote.py), [offwork/graph/decorator.py](../offwork/graph/decorator.py) |
 | Worker loop (signing, scheduling, throttle, heartbeat) | `serve` | [offwork/worker/remote.py](../offwork/worker/remote.py) |
 | Subgraph caching, reconstruct, retry, timeout | `Worker.run_with_policy` | [offwork/worker/worker.py](../offwork/worker/worker.py) |
 | Auto-install of third-party packages | `install_package_as`, `ensure_dependencies` | [offwork/worker/deps.py](../offwork/worker/deps.py) |
@@ -39,6 +39,7 @@ Add `@offwork.task` to one entry-point function. Call `await func.run(...)`. Tha
 | Local TCP backend | `local://` | [offwork/worker/backends/local.py](../offwork/worker/backends/local.py) |
 | Redis backend | `redis://` | [offwork/worker/backends/redis.py](../offwork/worker/backends/redis.py) |
 | RabbitMQ backend | `amqp://` | [offwork/worker/backends/rabbitmq.py](../offwork/worker/backends/rabbitmq.py) |
+| WebSocket backend (hosted broker) | `ws://` / `wss://` | [offwork/worker/backends/ws.py](../offwork/worker/backends/ws.py) |
 | Docker sandbox isolation | `--sandbox`, `DockerSandbox` | [offwork/worker/sandbox/](../offwork/worker/sandbox/) |
 | Signed envelopes (per-client HMAC + Ed25519 + TOFU + replay protection) | `--require-signing`, token, pairing, `offwork clients` | [offwork/core/envelope.py](../offwork/core/envelope.py), [offwork/core/ed25519.py](../offwork/core/ed25519.py), [offwork/core/identity.py](../offwork/core/identity.py), [offwork/core/clients.py](../offwork/core/clients.py), [offwork/core/signing.py](../offwork/core/signing.py), [offwork/core/token.py](../offwork/core/token.py), [offwork/core/pairing.py](../offwork/core/pairing.py) |
 | Temp venv (for `--tmp` and `offwork run`) | `temp_venv` | [offwork/_venv.py](../offwork/_venv.py) |
@@ -88,6 +89,7 @@ offwork/
             local.py     Async TCP broker (auto-spawned subprocess).
             redis.py     redis.asyncio (RPUSH/BLPOP, Pub/Sub, MGET).
             rabbitmq.py  aio-pika (durable queue, fanout exchange, TTL queues).
+            ws.py        WebSocketBackend — one persistent WS, multiplexed by request id.
         sandbox/
             docker.py    DockerSandbox: build image, start container, TCP exec.
             guest_agent.py   Stdlib-only agent running inside the container.
@@ -128,6 +130,9 @@ The `__all__` in [offwork/__init__.py](../offwork/__init__.py) is the public sur
 
 - Decorator: `task`.
 - Lifecycle: `connect(url)`, `disconnect()`, `serve(url, concurrency=, sandbox=, ...)`.
+  `connect()` accepts `local://`, `redis://`, `rediss://`, `amqp://`, `amqps://`,
+  `ws://`, `wss://`. The `ws://` / `wss://` schemes instantiate `WebSocketBackend`
+  (requires `pip install offwork[ws]`).
 - Power-user: `Task`, `Worker`, `Backend`, `serialize`, `reconstruct`, `pack`, `execute`, `get_graph`, `Graph`.
 - Result: `Result`, `ResultEnvelope`, `ProgressInfo`, `progress`.
 - Scheduling: `ScheduleHandle`.
@@ -135,7 +140,11 @@ The `__all__` in [offwork/__init__.py](../offwork/__init__.py) is the public sur
 - Auth: `generate_token`, `save_token`, `load_token`, `clear_token`, `resolve_root_token`, `compute_signature`, `verify_signature`, `derive_key`, `NonceLRU`, `build_signed_envelope`, `verify_task_envelope`, `KnownClients`, `ClientEntry`, `get_client_id`, `get_identity_seed`, `get_public_key`, `get_identity_fingerprint`, `clear_identity`, plus pairing helpers.
 - Sandbox: `DockerSandbox`.
 
-`func.run`, `func.start`, `func.map`, `func.run_in`, `func.run_at`, `func.run_every` are attributes attached by `@offwork.task` ([graph/decorator.py](../offwork/graph/decorator.py)).
+`func.run`, `func.submit`, `func.map`, `func.run_in`, `func.run_at`,
+`func.run_every` are attributes attached by `@offwork.task`
+([graph/decorator.py](../offwork/graph/decorator.py)).
+`func.submit` is the non-blocking form of `func.run` — it returns a
+`Result` handle without awaiting the result.
 
 ## Conventions and invariants
 
