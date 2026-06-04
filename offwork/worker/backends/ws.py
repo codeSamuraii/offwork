@@ -296,6 +296,9 @@ class WebSocketBackend(Backend):
         body = await self._request("is_cancelled", {"task_id": task_id})
         return bool(body and body.get("cancelled"))
 
+    async def send_log_line(self, task_id: str, line: str) -> None:
+        await self._request("send_log_line", {"task_id": task_id, "line": line})
+
     async def send_progress(self, task_id: str, progress_json: str) -> None:
         await self._request(
             "send_progress",

@@ -26,6 +26,7 @@ from offwork.core.envelope import (
 )
 from offwork.core.identity import get_client_id, get_identity_seed, get_public_key
 from offwork.core.progress import _progress_callback
+from offwork.core.log_capture import TaskLogHandler, _log_callback
 from offwork.worker.result import Result, ResultEnvelope
 from offwork.worker.worker import Worker
 from offwork.worker.schedule import ScheduleHandle
@@ -646,6 +647,35 @@ async def _handle_task(
     progress_cb, flush = _make_progress_callback(backend, task.task_id, loop)
     token = _progress_callback.set(progress_cb)
 
+    # Set up per-task log capture: route logging records to send_log_line.
+    # Mirror the progress callback pattern: schedule on the event loop
+    # from either the loop thread (async tasks) or an executor thread
+    # (sync tasks wrapped in run_in_executor).
+    _log_send_tasks: set[asyncio.Task[None]] = set()
+
+    async def _do_send_log(line: str) -> None:
+        try:
+            await backend.send_log_line(task.task_id, line)
+        except Exception:
+            logger.warning("Log line send failed for task %s", task.task_id, exc_info=True)
+
+    def _fire_log_send(line: str) -> None:
+        t = asyncio.create_task(_do_send_log(line))
+        _log_send_tasks.add(t)
+        t.add_done_callback(_log_send_tasks.discard)
+
+    def _log_cb(line: str) -> None:
+        try:
+            asyncio.get_running_loop()
+            _fire_log_send(line)
+        except RuntimeError:
+            loop.call_soon_threadsafe(_fire_log_send, line)
+
+    log_token = _log_callback.set(_log_cb)
+    log_handler = TaskLogHandler()
+    root_logger = logging.getLogger()
+    root_logger.addHandler(log_handler)
+
     # Run execution as a task so the heartbeat loop can cancel it
     exec_task: asyncio.Task[Any] = asyncio.create_task(worker.run_with_policy(task))
 
@@ -664,6 +694,13 @@ async def _handle_task(
         logger.debug("Task %s failed", task.task_id, exc_info=True)
         envelope = ResultEnvelope.failure(task.task_id, exc)
     finally:
+        root_logger.removeHandler(log_handler)
+        _log_callback.reset(log_token)
+        # Drain in-flight log sends so the server-side buffer is
+        # complete before put_result flushes it to MongoDB.
+        if _log_send_tasks:
+            await asyncio.gather(*_log_send_tasks, return_exceptions=True)
+            _log_send_tasks.clear()
         _progress_callback.reset(token)
         cancel_event.set()
         # Do not hb_task.cancel() — cancelling can interrupt an

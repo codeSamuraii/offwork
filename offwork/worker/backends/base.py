@@ -100,6 +100,17 @@ class Backend(abc.ABC):
         """
         return None
 
+    # -- Log capture -----------------------------------------------------------
+
+    async def send_log_line(self, task_id: str, line: str) -> None:
+        """Ship one captured log line from the executing task.
+
+        Called by the worker when user code emits a log record (via the
+        ``logging`` module) while a task is running. The default is a
+        no-op; the :class:`WebSocketBackend` overrides this to forward
+        the line to the hosted broker.
+        """
+
     # -- Schedule cancellation ------------------------------------------------
 
     async def cancel_schedule(self, schedule_id: str) -> None:
