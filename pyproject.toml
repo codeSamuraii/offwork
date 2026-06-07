@@ -1,6 +1,6 @@
 [project]
 name = "offwork"
-version = "0.2.1"
+version = "0.2.2"
 description = "Distributed Python task execution via automatic function serialization"
 readme = "README.md"
 authors = [
