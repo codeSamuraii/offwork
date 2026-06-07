@@ -363,12 +363,14 @@ async def _cmd_run_async(args: argparse.Namespace) -> None:
         print(f"Error: script not found: {script}", file=sys.stderr)
         sys.exit(1)
 
+    print(f"== Running: {script.relative_to(Path.cwd())} - venv: ...", end="", file=sys.stderr, flush=True)
     extras = _collect_extras(args, script)
     detected = _detect_script_packages(str(script))
 
     async with temp_venv(install_offwork=True, extras=extras) as venv:
+        print("\b"*3 + f"{venv.venv_dir}", file=sys.stderr, flush=True)
         if detected:
-            print(f"Installing detected dependencies: {', '.join(detected)}", file=sys.stderr)
+            print(f"== Installing dependencies: {', '.join(detected)}", file=sys.stderr)
             await venv.pip_install(*detected, extra_args=["--quiet"])
 
         script_args = list(args.script_args or [])

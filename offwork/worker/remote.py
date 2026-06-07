@@ -44,7 +44,10 @@ _ENV_VAR = "OFFWORK_BACKEND"
 
 
 def _resolve_url(url: str | None) -> str:
-    """Return *url* if given, otherwise read from the environment variable."""
+    """Return BROKER_URL, then url, then OFFWORK_BACKEND env var."""
+    broker_url = os.environ.get("BROKER_URL")
+    if broker_url:
+        return broker_url
     if url is not None:
         return url
     env_url = os.environ.get(_ENV_VAR)

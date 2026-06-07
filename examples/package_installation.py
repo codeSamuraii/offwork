@@ -75,7 +75,7 @@ def fetch_title(url: str) -> str:
             if tag == "title":
                 self.in_title = False
 
-    resp = requests.get(url, timeout=10)
+    resp = requests.get(url, timeout=5.0)
     parser = TitleParser()
     parser.feed(resp.text)
     return parser.title.strip()
@@ -134,7 +134,7 @@ async def main() -> None:
 
     # Simple package (import name == pip name)
     print("--- requests (auto-detected) ---")
-    title = await fetch_title.run("http://example.com")
+    title = await fetch_title.run("https://example.com")
     print(f"  Page title: {title}")
 
     # Mismatched package names
