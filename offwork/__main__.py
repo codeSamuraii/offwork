@@ -318,11 +318,13 @@ def _detect_offwork_extras(script: str) -> list[str]:
 def _collect_extras(args: argparse.Namespace, script: Path) -> list[str]:
     """Gather offwork extras and third-party packages for a script."""
     extras: list[str] = list(args.extra or [])
-    backend = os.environ.get("OFFWORK_BACKEND", "")
+    backend = os.environ.get("OFFWORK_BACKEND", os.environ.get("BROKER_URL", "")) or ""
     if backend.startswith(("redis://", "rediss://")) and "redis" not in extras:
         extras.append("redis")
     if backend.startswith(("amqp://", "amqps://")) and "rabbitmq" not in extras:
         extras.append("rabbitmq")
+    if backend.startswith(("ws://", "wss://")) and "ws" not in extras:
+        extras.append("ws")
     for extra in _detect_offwork_extras(str(script)):
         if extra not in extras:
             extras.append(extra)

@@ -634,6 +634,11 @@ async def _execute_task(
             )
             return
 
+    logger.info(
+        "\u25b6  %-40s          %s  starting",
+        task.function_name, task.task_id[:8],
+    )
+
     # Set up rate-limited progress callback
     loop = asyncio.get_running_loop()
     progress_cb, flush = _make_progress_callback(backend, task.task_id, loop)
