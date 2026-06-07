@@ -21,9 +21,9 @@ from offwork.core.errors import (
     ClientRevokedError,
     IdentityMismatchError,
 )
-from offwork.core.models import ImportInfo, FunctionNode
+from offwork.core.models import ImportInfo, FunctionNode  # noqa: F401  re-exported
 from offwork.graph.graph import Graph
-from offwork.graph.store import Store, MergeResult
+from offwork.graph.store import Store, MergeResult  # noqa: F401  re-exported
 from offwork.worker.deps import install_package_as, worker_only_import
 from offwork.core.pairing import (
     PairingResult,
@@ -143,6 +143,7 @@ __all__ = [
     "execute",
     # Result
     "Result",
+    "ResultEnvelope",
     "ProgressInfo",
     # Errors
     "Error",

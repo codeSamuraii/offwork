@@ -10,7 +10,7 @@ import warnings
 import threading
 import collections
 import contextvars
-from typing import Any, Self
+from typing import Self
 from dataclasses import dataclass
 from collections.abc import Callable
 

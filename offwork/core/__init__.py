@@ -1,7 +1,6 @@
 from offwork.core.task import Task, resolve_args
 from offwork.core.errors import Error, RemoteError, WorkerError, DependencyError
 from offwork.core.models import ImportInfo, FunctionNode
-from offwork.core.version import _VERSION
 
 __all__ = [
     "Task",

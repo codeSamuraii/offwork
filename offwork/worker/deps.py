@@ -294,7 +294,7 @@ def _raise_on_failures(failed: dict[str, str]) -> None:
         f"  {module}: {stderr[:200]}" if stderr else f"  {module}"
         for module, stderr in failed.items()
     ]
-    raise DependencyError(f"Failed to install:\n" + "\n".join(parts))
+    raise DependencyError("Failed to install:\n" + "\n".join(parts))
 
 
 async def install_packages(

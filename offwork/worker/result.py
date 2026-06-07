@@ -160,16 +160,19 @@ class _ProgressAwaitable:
 
     async def _stream(self) -> AsyncGenerator[ProgressInfo, None]:
         """Yield each distinct progress update until the task finishes."""
+        backend = self._result._backend
+        task_id = self._result._task_id
         last_raw: str | None = None
         while True:
-            # Check if result arrived
-            check_raw = await self._result._backend.try_get_result(
-                self._result._task_id
+            # Fan out the two reads in parallel — they're independent
+            # and would otherwise serialize one RTT per poll.
+            check_raw, raw = await asyncio.gather(
+                backend.try_get_result(task_id),
+                backend.get_progress(task_id),
             )
             if check_raw is not None:
                 self._result._envelope = ResultEnvelope.from_json(check_raw)
 
-            raw = await self._result._backend.get_progress(self._result._task_id)
             if raw is not None and raw != last_raw:
                 last_raw = raw
                 yield ProgressInfo.from_json(raw)

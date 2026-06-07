@@ -16,7 +16,6 @@ first use, so ``offwork sandbox setup`` is optional (but recommended in
 CI to avoid a cold-start build).
 """
 
-import os
 import shutil
 import asyncio
 import hashlib

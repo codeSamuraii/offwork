@@ -81,8 +81,11 @@ class RedisBackend(Backend):
 
     async def send_result(self, task_id: str, result_json: str) -> None:
         key = f"{self.RESULT_PREFIX}{task_id}"
-        await self._redis.rpush(key, result_json)
-        await self._redis.expire(key, self._result_ttl)
+        # Pipeline RPUSH + EXPIRE into one round-trip.
+        async with self._redis.pipeline(transaction=False) as pipe:
+            pipe.rpush(key, result_json)
+            pipe.expire(key, self._result_ttl)
+            await pipe.execute()
 
     async def get_result(self, task_id: str, timeout: float | None = None) -> str:
         key = f"{self.RESULT_PREFIX}{task_id}"
@@ -192,14 +195,15 @@ class RedisBackend(Backend):
         await pubsub.subscribe(self.NOTIFY_CHANNEL)
         try:
             while True:
+                # Block until a message arrives or the timeout fires;
+                # avoid burning a 10 ms sleep on each empty wakeup.
                 msg = await pubsub.get_message(
                     ignore_subscribe_messages=True, timeout=1.0,
                 )
-                if msg is not None and msg["type"] == "message":
-                    data = msg["data"]
-                    yield data.decode() if isinstance(data, bytes) else data
-                elif msg is None:
-                    await asyncio.sleep(0.01)
+                if msg is None or msg["type"] != "message":
+                    continue
+                data = msg["data"]
+                yield data.decode() if isinstance(data, bytes) else data
         finally:
             await pubsub.unsubscribe(self.NOTIFY_CHANNEL)
             await pubsub.aclose()

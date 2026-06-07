@@ -8,7 +8,6 @@ import ipaddress
 import json
 import pathlib
 import pickle
-import re
 import uuid
 from decimal import Decimal
 from fractions import Fraction

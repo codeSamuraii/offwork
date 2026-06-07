@@ -230,6 +230,51 @@ def _encode_task(task: Task, root_token: bytes | None) -> str:
     )
 
 
+def _resolve_backend(_backend: str | Backend | None) -> Backend:
+    """Resolve a backend selector: explicit instance > URL > global default."""
+    if isinstance(_backend, Backend):
+        return _backend
+    if isinstance(_backend, str):
+        return _create_backend(_backend)
+    return get_backend()
+
+
+def _prepare_submission(
+    func: Callable[..., object],
+    wrapper: Callable[..., object],
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    _backend: str | Backend | None,
+    _root_token: bytes | None,
+    **task_overrides: Any,
+) -> tuple[Backend, Task, bytes | None]:
+    """Shared submission prep: resolve backend, serialize graph, build :class:`Task`."""
+    from offwork.graph.graph import Graph  # circular
+
+    backend = _resolve_backend(_backend)
+    if _root_token is None:
+        _root_token = resolve_root_token("client")
+
+    unwrapped = inspect.unwrap(func)
+    function_name = f"{unwrapped.__module__}.{unwrapped.__qualname__}"
+    logger.debug("Serializing graph for %s", function_name)
+    graph_json = Graph.default().serialize(wrapper)
+
+    opts = getattr(wrapper, "__offwork_options__", {})
+    task = Task(
+        graph_json=graph_json,
+        function_name=function_name,
+        args=args,
+        kwargs=kwargs,
+        timeout=opts.get("timeout"),
+        retries=opts.get("retries", 0),
+        retry_delay=opts.get("retry_delay", 1.0),
+        throttle=opts.get("throttle"),
+        **task_overrides,
+    )
+    return backend, task, _root_token
+
+
 async def submit_remote(
     func: Callable[..., object],
     wrapper: Callable[..., object],
@@ -249,38 +294,12 @@ async def submit_remote(
         per-client HMAC plus an Ed25519 signature bound to this
         machine's stable identity.
     """
-    from offwork.graph.graph import Graph  # circular
-
-    if isinstance(_backend, str):
-        backend = _create_backend(_backend)
-    elif isinstance(_backend, Backend):
-        backend = _backend
-    else:
-        backend = get_backend()
-
-    if _root_token is None:
-        _root_token = resolve_root_token("client")
-
-    unwrapped = inspect.unwrap(func)
-    function_name = f"{unwrapped.__module__}.{unwrapped.__qualname__}"
-    logger.debug("Serializing graph for %s", function_name)
-    graph_json = Graph.default().serialize(wrapper)
-
-    opts = getattr(wrapper, "__offwork_options__", {})
-    task = Task(
-        graph_json=graph_json,
-        function_name=function_name,
-        args=args,
-        kwargs=kwargs,
-        timeout=opts.get("timeout"),
-        retries=opts.get("retries", 0),
-        retry_delay=opts.get("retry_delay", 1.0),
-        throttle=opts.get("throttle"),
+    backend, task, root_token = _prepare_submission(
+        func, wrapper, args, kwargs, _backend, _root_token,
     )
-
-    logger.debug("Submitting task %s → %s", task.task_id[:8], function_name)
-    await backend.submit(_encode_task(task, _root_token))
-    logger.info("Submitted task %s for %s", task.task_id, function_name)
+    logger.debug("Submitting task %s → %s", task.task_id[:8], task.function_name)
+    await backend.submit(_encode_task(task, root_token))
+    logger.info("Submitted task %s for %s", task.task_id, task.function_name)
     return Result(task.task_id, backend)
 
 
@@ -294,44 +313,18 @@ async def submit_remote_scheduled(
     **kwargs: Any,
 ) -> Result:
     """Submit a task scheduled for future execution."""
-    from offwork.graph.graph import Graph  # circular
-
-    if isinstance(_backend, str):
-        backend = _create_backend(_backend)
-    elif isinstance(_backend, Backend):
-        backend = _backend
-    else:
-        backend = get_backend()
-
-    if _root_token is None:
-        _root_token = resolve_root_token("client")
-
-    unwrapped = inspect.unwrap(func)
-    function_name = f"{unwrapped.__module__}.{unwrapped.__qualname__}"
-    logger.debug("Serializing graph for %s", function_name)
-    graph_json = Graph.default().serialize(wrapper)
-
-    opts = getattr(wrapper, "__offwork_options__", {})
-    task = Task(
-        graph_json=graph_json,
-        function_name=function_name,
-        args=args,
-        kwargs=kwargs,
-        timeout=opts.get("timeout"),
-        retries=opts.get("retries", 0),
-        retry_delay=opts.get("retry_delay", 1.0),
-        throttle=opts.get("throttle"),
+    backend, task, root_token = _prepare_submission(
+        func, wrapper, args, kwargs, _backend, _root_token,
         scheduled_at=_scheduled_at,
     )
-
     logger.debug(
         "Submitting scheduled task %s → %s (at %.3f)",
-        task.task_id[:8], function_name, _scheduled_at or 0,
+        task.task_id[:8], task.function_name, _scheduled_at or 0,
     )
-    await backend.submit(_encode_task(task, _root_token))
+    await backend.submit(_encode_task(task, root_token))
     logger.info(
         "Submitted scheduled task %s for %s (at %.0f)",
-        task.task_id, function_name, _scheduled_at or 0,
+        task.task_id, task.function_name, _scheduled_at or 0,
     )
     return Result(task.task_id, backend)
 
@@ -349,37 +342,12 @@ async def submit_recurring(
     **kwargs: Any,
 ) -> ScheduleHandle:
     """Submit a recurring task and return a :class:`ScheduleHandle`."""
-    from offwork.graph.graph import Graph  # circular
-
-    if isinstance(_backend, str):
-        backend = _create_backend(_backend)
-    elif isinstance(_backend, Backend):
-        backend = _backend
-    else:
-        backend = get_backend()
-
-    if _root_token is None:
-        _root_token = resolve_root_token("client")
-
-    unwrapped = inspect.unwrap(func)
-    function_name = f"{unwrapped.__module__}.{unwrapped.__qualname__}"
-    logger.debug("Serializing graph for %s", function_name)
-    graph_json = Graph.default().serialize(wrapper)
-
     schedule_id = uuid.uuid4().hex[:12]
     scheduled_at = _start_at or time.time()
     recur_deadline = scheduled_at + _run_for if _run_for is not None else None
 
-    opts = getattr(wrapper, "__offwork_options__", {})
-    task = Task(
-        graph_json=graph_json,
-        function_name=function_name,
-        args=args,
-        kwargs=kwargs,
-        timeout=opts.get("timeout"),
-        retries=opts.get("retries", 0),
-        retry_delay=opts.get("retry_delay", 1.0),
-        throttle=opts.get("throttle"),
+    backend, task, root_token = _prepare_submission(
+        func, wrapper, args, kwargs, _backend, _root_token,
         scheduled_at=scheduled_at,
         recur_interval=_interval,
         recur_deadline=recur_deadline,
@@ -389,12 +357,12 @@ async def submit_recurring(
 
     logger.debug(
         "Submitting recurring task %s → %s (every %.1fs, schedule=%s)",
-        task.task_id[:8], function_name, _interval, schedule_id,
+        task.task_id[:8], task.function_name, _interval, schedule_id,
     )
-    await backend.submit(_encode_task(task, _root_token))
+    await backend.submit(_encode_task(task, root_token))
     logger.info(
         "Submitted recurring task %s for %s (every %.1fs, schedule=%s)",
-        task.task_id, function_name, _interval, schedule_id,
+        task.task_id, task.function_name, _interval, schedule_id,
     )
     return ScheduleHandle(schedule_id, backend)
 
@@ -548,6 +516,22 @@ def _log_task_result(
         )
 
 
+async def _send_envelope(backend: Backend, envelope: ResultEnvelope) -> None:
+    """Send a result envelope and notify result-waiters."""
+    await backend.send_result(envelope.task_id, envelope.to_json())
+    await backend.notify_result(envelope.task_id)
+
+
+def _extract_task_id(task_json: str) -> str | None:
+    """Best-effort task_id extraction from a malformed/rejected task payload."""
+    try:
+        data = json.loads(task_json)
+    except Exception:
+        return None
+    task_id = data.get("id")
+    return task_id if isinstance(task_id, str) and task_id else None
+
+
 async def _handle_task(
     worker: Worker,
     backend: Backend,
@@ -582,15 +566,9 @@ async def _handle_task(
         # If we can extract a task_id, send an error envelope so the
         # client gets feedback instead of hanging forever.
         logger.warning("Task rejected: %s", exc)
-        try:
-            data = json.loads(task_json)
-            task_id = data.get("id", "unknown")
-        except Exception:
-            task_id = "unknown"
-        if task_id != "unknown":
-            envelope = ResultEnvelope.failure(task_id, exc)
-            await backend.send_result(task_id, envelope.to_json())
-            await backend.notify_result(task_id)
+        task_id = _extract_task_id(task_json)
+        if task_id is not None:
+            await _send_envelope(backend, ResultEnvelope.failure(task_id, exc))
         return
 
     logger.debug("Received task %s: %s", task.task_id, task.function_name)
@@ -608,9 +586,7 @@ async def _handle_task(
         cancelled = await backend.is_cancelled(task.task_id)
     except Exception as exc:
         logger.exception("is_cancelled failed for task %s", task.task_id)
-        envelope = ResultEnvelope.failure(task.task_id, exc)
-        await backend.send_result(task.task_id, envelope.to_json())
-        await backend.notify_result(task.task_id)
+        await _send_envelope(backend, ResultEnvelope.failure(task.task_id, exc))
         return
 
     if cancelled:
@@ -627,15 +603,11 @@ async def _handle_task(
                 "check_throttle failed for task %s (%s)",
                 task.task_id, task.function_name,
             )
-            envelope = ResultEnvelope.failure(task.task_id, exc)
-            await backend.send_result(task.task_id, envelope.to_json())
-            await backend.notify_result(task.task_id)
+            await _send_envelope(backend, ResultEnvelope.failure(task.task_id, exc))
             return
 
         if not allowed:
-            envelope = ResultEnvelope.throttled(task.task_id)
-            await backend.send_result(task.task_id, envelope.to_json())
-            await backend.notify_result(task.task_id)
+            await _send_envelope(backend, ResultEnvelope.throttled(task.task_id))
             logger.info(
                 "%-40s          %s  throttled",
                 task.function_name, task.task_id[:8],
@@ -905,8 +877,6 @@ async def serve(
         Maximum allowed ``|now - iat|`` for signed envelopes, in
         seconds.  Defaults to 300s.
     """
-    from offwork.worker.sandbox import DockerSandbox
-
     resolved = _resolve_url(url)
     auto_tag = "on" if auto_install else "off"
     sandbox_tag = "docker" if sandbox else "off"

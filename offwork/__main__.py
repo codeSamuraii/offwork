@@ -135,8 +135,8 @@ async def _pair_then_serve(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     save_shared_key(result.shared_key, "worker")
-    print(f"  ✓ Paired successfully. Key saved to ~/.offwork/worker.key")
-    print(f"  Starting worker with signing enabled...\n")
+    print("  ✓ Paired successfully. Key saved to ~/.offwork/worker.key")
+    print("  Starting worker with signing enabled...\n")
     await disconnect()
 
     await serve(
@@ -460,7 +460,7 @@ async def _sandbox_status() -> None:
         container = os.environ.get("OFFWORK_SANDBOX_DOCKER_CONTAINER", "offwork-sandbox")
         img_ok = await _image_exists(image)
         print("Docker:")
-        print(f"  docker: installed")
+        print("  docker: installed")
         print(f"  Image '{image}': {'exists' if img_ok else 'not found'}")
         if await _container_exists(container):
             running = await _container_running(container)
@@ -490,8 +490,8 @@ async def _docker_setup() -> None:
     else:
         print(f"Building image '{image}'...")
     await _build_image(image)
-    print(f"Done. Start a sandboxed worker with:")
-    print(f"  offwork worker --backend redis://localhost:6379 --sandbox")
+    print("Done. Start a sandboxed worker with:")
+    print("  offwork worker --backend redis://localhost:6379 --sandbox")
 
 
 async def _docker_teardown() -> None:
@@ -701,7 +701,7 @@ def _cmd_token_generate(args: argparse.Namespace) -> None:
     token_hex = generate_token()
     save_token(token_hex)
 
-    print(f"\n  Token generated and saved to ~/.offwork/token\n")
+    print("\n  Token generated and saved to ~/.offwork/token\n")
     print(f"  Token: {token_hex}\n")
     print("  Set this on both client and worker:")
     print(f"    export OFFWORK_SIGNING_TOKEN={token_hex}\n")
@@ -721,7 +721,7 @@ def _cmd_token_show(_args: argparse.Namespace) -> None:
     else:
         token = load_token()
         if token is not None:
-            print(f"  Source: ~/.offwork/token")
+            print("  Source: ~/.offwork/token")
             print(f"  Token:  {token[:16]}... (truncated)")
         else:
             print("  No signing token configured.")
