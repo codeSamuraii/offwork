@@ -149,6 +149,8 @@ async def _dispatch(
         return {"cancelled": True}
     if op == "is_cancelled":
         return {"cancelled": payload["task_id"] in state.cancelled}
+    if op == "send_log_line":
+        return None
     if op == "send_progress":
         state.progress[payload["task_id"]] = payload["progress_json"]
         return {"ok": True}

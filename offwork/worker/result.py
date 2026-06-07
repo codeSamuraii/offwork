@@ -324,18 +324,24 @@ class Result:
 
         deadline = None if resolved is None else time.monotonic() + resolved
         while True:
-            raw = await self._backend.try_get_result(self._task_id)
-            if raw is not None:
-                self._envelope = ResultEnvelope.from_json(raw)
-                return True
-            if deadline is not None and time.monotonic() >= deadline:
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0:
                 # Timed out waiting for worker confirmation — seed a cancelled
                 # envelope so future reads don't hang forever.
                 env = ResultEnvelope.cancelled(self._task_id)
                 await self._backend.send_result(self._task_id, env.to_json())
                 self._envelope = env
                 return False
-            await asyncio.sleep(0.5)
+            # Long-poll for the worker's confirmation envelope instead of
+            # busy-polling — wakes immediately on push-capable backends.
+            wait_for = 5.0 if remaining is None else min(5.0, remaining)
+            try:
+                raw = await self._backend.get_result(self._task_id, timeout=wait_for)
+            except TimeoutError:
+                raw = None
+            if raw is not None:
+                self._envelope = ResultEnvelope.from_json(raw)
+                return True
 
     # -- awaiting the result ---------------------------------------------------
 

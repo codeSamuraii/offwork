@@ -540,6 +540,7 @@ async def _handle_task(
     known_clients: KnownClients | None = None,
     nonce_lru: NonceLRU | None = None,
     clock_skew: float = DEFAULT_CLOCK_SKEW,
+    sem: asyncio.Semaphore | None = None,
 ) -> None:
     """Process a single task: deserialize, execute with policy, send result.
 
@@ -573,13 +574,32 @@ async def _handle_task(
 
     logger.debug("Received task %s: %s", task.task_id, task.function_name)
 
-    # Wait for scheduled time
+    # Wait for scheduled time *before* acquiring a concurrency slot, so a
+    # task scheduled far in the future does not occupy one of the worker's
+    # limited execution slots while it sleeps.
     if task.scheduled_at is not None:
         delay = task.scheduled_at - time.time()
         if delay > 0:
             logger.debug("Task %s scheduled in %.1fs", task.task_id, delay)
             await asyncio.sleep(delay)
 
+    # Acquire the concurrency slot only for the actual execution phase.
+    slot = sem if sem is not None else contextlib.nullcontext()
+    async with slot:
+        await _execute_task(
+            worker, backend, task,
+            root_token=root_token,
+        )
+
+
+async def _execute_task(
+    worker: Worker,
+    backend: Backend,
+    task: Task,
+    *,
+    root_token: bytes | None = None,
+) -> None:
+    """Run a ready task (scheduled wait already elapsed) and send its result."""
     # Any failure in the backend checks below must still surface to the
     # client, otherwise it would hang forever polling for a result.
     try:
@@ -793,14 +813,17 @@ async def _worker_loop(
             pass
 
     async def bounded_handle(task_json: str) -> None:
-        async with sem:
-            await _handle_task(
-                worker, backend, task_json,
-                root_token=root_token,
-                known_clients=known_clients,
-                nonce_lru=nonce_lru,
-                clock_skew=clock_skew,
-            )
+        # The semaphore is acquired inside _handle_task, *after* any
+        # scheduled-time wait, so far-future tasks don't hold a slot while
+        # sleeping.
+        await _handle_task(
+            worker, backend, task_json,
+            root_token=root_token,
+            known_clients=known_clients,
+            nonce_lru=nonce_lru,
+            clock_skew=clock_skew,
+            sem=sem,
+        )
 
     async def _listen() -> None:
         async for task_json in backend.listen():

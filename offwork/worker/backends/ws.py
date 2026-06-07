@@ -186,6 +186,7 @@ class WebSocketBackend(Backend):
         backoff = _RECONNECT_BACKOFF_MIN
         last_exc: Exception | None = None
         for attempt in range(3):
+            req_id: str | None = None
             try:
                 ws = await self._ensure_connected()
                 req_id = uuid.uuid4().hex
@@ -203,6 +204,10 @@ class WebSocketBackend(Backend):
                     return await future
                 return await asyncio.wait_for(future, timeout=timeout)
             except (ConnectionError, OSError) as exc:
+                # Drop any orphaned pending entry before reconnecting so a
+                # late response can't resolve a future no one awaits.
+                if req_id is not None:
+                    self._pending.pop(req_id, None)
                 last_exc = exc
                 if self._closed:
                     raise
@@ -212,7 +217,8 @@ class WebSocketBackend(Backend):
             except asyncio.TimeoutError:
                 # Drop the pending entry — the response, if it ever
                 # arrives, has no waiter.
-                self._pending.pop(req_id, None)
+                if req_id is not None:
+                    self._pending.pop(req_id, None)
                 raise
         assert last_exc is not None
         raise last_exc
