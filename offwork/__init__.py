@@ -62,6 +62,7 @@ from offwork.core.envelope import (
 from offwork.core.version import _VERSION
 from offwork.core.progress import ProgressInfo
 from offwork.core.progress import progress as progress
+from offwork.core.storage import storage_path as storage_path
 from offwork.core._timeout import TimeoutIn, WaitForever, ReturnImmediately
 from offwork.worker.remote import serve, connect, disconnect, _ConnectionContext
 from offwork.worker.result import Result, ResultEnvelope
@@ -130,6 +131,7 @@ __all__ = [
     "install_package_as",
     "worker_only_import",
     "progress",
+    "storage_path",
     # Timeout types
     "TimeoutIn",
     "WaitForever",

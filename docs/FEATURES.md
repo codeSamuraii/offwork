@@ -210,6 +210,28 @@ offwork worker --backend redis://localhost:6379 --sandbox   # run with isolation
 
 See [Sandbox](SANDBOX.md) for configuration and management.
 
+## Persistent storage
+
+When a worker provides a persistent mount (for example the hosted broker gives each user a private volume), tasks reach it through `offwork.storage_path()`:
+
+```python
+import offwork
+
+@offwork.task
+def cache_model(url: str) -> str:
+    dest = offwork.storage_path("models", "weights.bin")
+    dest.parent.mkdir(parents=True, exist_ok=True)   # subdirectories are yours to create
+    if not dest.exists():
+        download(url, dest)
+    return str(dest)
+```
+
+`storage_path()` returns the storage root, creating it if needed. Passing path
+parts joins them onto the root without creating them. The location comes from
+the `OFFWORK_STORAGE` environment variable, falling back to `./offwork-storage`
+when unset, so the same task code works locally and on a worker with a mounted
+volume.
+
 ## Signing
 
 Pre-shared token or PIN-based pairing + HMAC-SHA256 — workers reject untrusted or tampered tasks:
