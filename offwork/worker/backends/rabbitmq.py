@@ -46,6 +46,7 @@ class RabbitMQBackend(Backend):
     HEARTBEAT_PREFIX = "offwork.hb."
     CANCEL_PREFIX = "offwork.cancel."
     PROGRESS_PREFIX = "offwork.progress."
+    YIELD_PREFIX = "offwork.yield."
     SCHEDULE_PREFIX = "offwork.schedule."
     THROTTLE_PREFIX = "offwork.throttle."
     NOTIFY_EXCHANGE = "offwork.notify"
@@ -80,6 +81,7 @@ class RabbitMQBackend(Backend):
         self._heartbeat_prefix = f"{ns}{self.HEARTBEAT_PREFIX}"
         self._cancel_prefix = f"{ns}{self.CANCEL_PREFIX}"
         self._progress_prefix = f"{ns}{self.PROGRESS_PREFIX}"
+        self._yield_prefix = f"{ns}{self.YIELD_PREFIX}"
         self._schedule_prefix = f"{ns}{self.SCHEDULE_PREFIX}"
         self._throttle_prefix = f"{ns}{self.THROTTLE_PREFIX}"
         self._notify_exchange = f"{ns}{self.NOTIFY_EXCHANGE}"
@@ -328,6 +330,38 @@ class RabbitMQBackend(Backend):
         return await self._kv_get(
             self._progress_prefix, task_id, self.PROGRESS_TTL, peek=True,
         )
+
+    # -- Streaming yields ------------------------------------------------------
+    # Each yield is stored in its own peek-able KV slot keyed by sequence
+    # number (``<prefix><task_id>.<seq>``).  ``get_yields`` peeks consecutive
+    # slots starting at ``after_seq + 1`` until it hits an empty slot, so
+    # consumers can poll repeatedly and always see the contiguous run.
+
+    async def send_yield(self, task_id: str, seq: int, value_json: str) -> None:
+        await self._kv_put(
+            self._yield_prefix, f"{task_id}.{seq}", value_json, self._result_ttl,
+        )
+
+    async def get_yields(
+        self,
+        task_id: str,
+        after_seq: int = -1,
+        timeout: float | None = None,
+    ) -> list[tuple[int, str]]:
+        out: list[tuple[int, str]] = []
+        seq = after_seq + 1
+        while True:
+            raw = await self._kv_get(
+                self._yield_prefix, f"{task_id}.{seq}",
+                self._result_ttl, peek=True,
+            )
+            if raw is None:
+                break
+            out.append((seq, raw))
+            seq += 1
+        if not out and timeout:
+            await asyncio.sleep(min(timeout, 0.05))
+        return out
 
     # -- Schedule cancellation -------------------------------------------------
 

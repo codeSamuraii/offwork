@@ -37,6 +37,7 @@ class RedisBackend(Backend):
     HEARTBEAT_PREFIX = "offwork:heartbeat:"
     CANCEL_PREFIX = "offwork:cancel:"
     PROGRESS_PREFIX = "offwork:progress:"
+    YIELD_PREFIX = "offwork:yields:"
     SCHEDULE_PREFIX = "offwork:schedule:"
     THROTTLE_PREFIX = "offwork:throttle:"
     NOTIFY_CHANNEL = "offwork:notify"
@@ -125,6 +126,32 @@ class RedisBackend(Backend):
         if raw is None:
             return None
         return raw.decode() if isinstance(raw, bytes) else raw
+
+    async def send_yield(self, task_id: str, seq: int, value_json: str) -> None:
+        """Append one streamed value; index in the list equals *seq*."""
+        key = f"{self.YIELD_PREFIX}{task_id}"
+        async with self._redis.pipeline(transaction=False) as pipe:
+            pipe.rpush(key, value_json)
+            pipe.expire(key, self._result_ttl)
+            await pipe.execute()
+
+    async def get_yields(
+        self,
+        task_id: str,
+        after_seq: int = -1,
+        timeout: float | None = None,
+    ) -> list[tuple[int, str]]:
+        """Return ``(seq, value_json)`` pairs with ``seq > after_seq``."""
+        key = f"{self.YIELD_PREFIX}{task_id}"
+        start = after_seq + 1
+        values = await self._redis.lrange(key, start, -1)
+        if not values and timeout:
+            # Avoid busy-looping in the consumer: brief idle wait when empty.
+            await asyncio.sleep(min(timeout, 0.05))
+        return [
+            (start + i, v.decode() if isinstance(v, bytes) else v)
+            for i, v in enumerate(values)
+        ]
 
     async def send_heartbeat(self, task_id: str) -> None:
         key = f"{self.HEARTBEAT_PREFIX}{task_id}"

@@ -318,6 +318,28 @@ class WebSocketBackend(Backend):
         progress_json = body.get("progress_json")
         return progress_json if isinstance(progress_json, str) else None
 
+    async def send_yield(self, task_id: str, seq: int, value_json: str) -> None:
+        await self._request(
+            "send_yield",
+            {"task_id": task_id, "seq": seq, "value_json": value_json},
+        )
+
+    async def get_yields(
+        self,
+        task_id: str,
+        after_seq: int = -1,
+        timeout: float | None = None,
+    ) -> list[tuple[int, str]]:
+        body = await self._request(
+            "get_yields", {"task_id": task_id, "after_seq": after_seq},
+        )
+        items = body.get("yields") if body else None
+        if not items:
+            if timeout:
+                await asyncio.sleep(min(timeout, 0.05))
+            return []
+        return [(int(seq), value) for seq, value in items]
+
     async def cancel_schedule(self, schedule_id: str) -> None:
         await self._request("cancel_schedule", {"schedule_id": schedule_id})
 
