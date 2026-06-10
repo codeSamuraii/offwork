@@ -70,6 +70,7 @@ class _Broker:
         self._cancelled_schedules: set[str] = set()
         self._throttles: dict[str, float] = {}
         self._progress: dict[str, str] = {}
+        self._yields: dict[str, list[str]] = {}
         self._result_subs: list[asyncio.Queue[str]] = []
 
     def _result_slot(self, task_id: str) -> asyncio.Queue[str]:
@@ -151,6 +152,18 @@ class _Broker:
             return {"ok": True}
         if op == "progress_get":
             return {"ok": True, "data": self._progress.get(msg["task_id"])}
+        if op == "yield_put":
+            buf = self._yields.setdefault(msg["task_id"], [])
+            seq = msg["seq"]
+            while len(buf) <= seq:
+                buf.append("")
+            buf[seq] = msg["data"]
+            return {"ok": True}
+        if op == "yield_get":
+            buf = self._yields.get(msg["task_id"], [])
+            after = msg["after_seq"]
+            data = [[i, buf[i]] for i in range(after + 1, len(buf)) if buf[i] != ""]
+            return {"ok": True, "data": data}
         if op == "schedule_cancel":
             self._cancelled_schedules.add(msg["schedule_id"])
             return {"ok": True}
@@ -405,6 +418,26 @@ class LocalBackend(Backend):
     async def get_progress(self, task_id: str) -> str | None:
         resp = await self._request({"op": "progress_get", "task_id": task_id})
         return resp.get("data")
+
+    async def send_yield(self, task_id: str, seq: int, value_json: str) -> None:
+        await self._request({
+            "op": "yield_put", "task_id": task_id, "seq": seq, "data": value_json,
+        })
+
+    async def get_yields(
+        self,
+        task_id: str,
+        after_seq: int = -1,
+        timeout: float | None = None,
+    ) -> list[tuple[int, str]]:
+        resp = await self._request({
+            "op": "yield_get", "task_id": task_id, "after_seq": after_seq,
+        })
+        data = resp.get("data", [])
+        if not data and timeout:
+            # Avoid busy-looping in the consumer: brief idle wait when empty.
+            await asyncio.sleep(min(timeout, 0.05))
+        return [(int(seq), value) for seq, value in data]
 
     async def cancel_schedule(self, schedule_id: str) -> None:
         await self._request({"op": "schedule_cancel", "schedule_id": schedule_id})

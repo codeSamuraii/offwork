@@ -18,6 +18,7 @@ CI to avoid a cold-start build).
 
 import shutil
 import asyncio
+import inspect
 import hashlib
 import logging
 import contextlib
@@ -171,6 +172,58 @@ class DockerSandbox:
         # sentinel encoding so non-JSON-native types (tuples, datetimes,
         # custom classes, etc.) round-trip transparently.
         return _resolve(response.get("result"), {})
+
+    async def execute_stream(
+        self,
+        source: str,
+        function_name: str,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        on_yield: Callable[[int, Any], Any],
+        *,
+        owner_class: str | None = None,
+    ) -> int:
+        """Execute an async-generator in the sandbox, calling *on_yield* per value.
+
+        *on_yield* receives ``(seq, value)`` for each yielded value (with
+        sentinel-encoded values already resolved).  Returns the total
+        number of values yielded.
+        """
+        if not self._started:
+            await self.start()
+
+        request: dict[str, Any] = {
+            "source": source,
+            "function_name": function_name,
+            "args": [_to_jsonable(a) for a in args],
+            "kwargs": {k: _to_jsonable(v) for k, v in kwargs.items()},
+        }
+        if owner_class is not None:
+            request["owner_class"] = owner_class
+
+        progress_cb = _progress_callback.get(None)
+        try:
+            response = await asyncio.wait_for(
+                self._send_stream_request(request, on_yield, progress_cb=progress_cb),
+                timeout=self.timeout,
+            )
+        except asyncio.TimeoutError:
+            raise WorkerError(
+                f"Sandbox streaming of '{function_name}' timed out "
+                f"after {self.timeout}s"
+            ) from None
+        except (asyncio.IncompleteReadError, ConnectionError, OSError) as exc:
+            raise WorkerError(
+                f"Sandbox connection lost while streaming '{function_name}': "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+
+        if response["status"] == "error":
+            raise WorkerError(
+                f"Sandbox error — {response.get('error_type', 'Unknown')}: "
+                f"{response.get('error_message', '')}"
+            )
+        return int(response.get("stream_yields", 0))
 
     async def start(self) -> None:
         """Build the image (if needed), start the container, connect."""
@@ -342,6 +395,60 @@ class DockerSandbox:
         while True:
             msg = await async_recv(self._reader)
             if msg.get("status") == "progress":
+                if progress_cb is not None:
+                    progress_cb(
+                        msg.get("current", 0),
+                        msg.get("total"),
+                        msg.get("message"),
+                    )
+                continue
+            return msg
+
+    async def _send_stream_request(
+        self,
+        request: dict[str, Any],
+        on_yield: Callable[[int, Any], Any],
+        *,
+        progress_cb: Callable[..., Any] | None = None,
+    ) -> dict[str, Any]:
+        async with self._lock:
+            if self._reader is None or self._writer is None:
+                await self._connect()
+            assert self._reader is not None and self._writer is not None
+            success = False
+            try:
+                await async_send(self._writer, request)
+                result = await self._read_stream_response(on_yield, progress_cb)
+                success = True
+                return result
+            finally:
+                if not success:
+                    if self._writer is not None:
+                        self._writer.close()
+                    self._reader = self._writer = None
+
+    async def _read_stream_response(
+        self,
+        on_yield: Callable[[int, Any], Any],
+        progress_cb: Callable[..., Any] | None = None,
+    ) -> dict[str, Any]:
+        """Read yield/progress frames until a terminal response arrives.
+
+        ``{"status": "yield", "seq", "value"}`` frames are decoded and
+        passed to *on_yield*; progress frames forward as usual.
+        """
+        assert self._reader is not None
+        while True:
+            msg = await async_recv(self._reader)
+            status = msg.get("status")
+            if status == "yield":
+                seq = msg.get("seq", 0)
+                value = _resolve(msg.get("value"), {})
+                res = on_yield(seq, value)
+                if inspect.isawaitable(res):
+                    await res
+                continue
+            if status == "progress":
                 if progress_cb is not None:
                     progress_cb(
                         msg.get("current", 0),

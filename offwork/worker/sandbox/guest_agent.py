@@ -530,6 +530,32 @@ async def _execute_request(
 
         func = _extract_callable(namespace, function_name, owner_class)
 
+        if inspect.isasyncgenfunction(func):
+            if writer is None:
+                raise RuntimeError(
+                    "Streaming tasks require a writer for yield frames"
+                )
+            seq = 0
+            agen = func(*args, **kwargs)
+            try:
+                async for value in agen:
+                    await _send(writer, {
+                        "status": "yield",
+                        "seq": seq,
+                        "value": _to_jsonable(value),
+                    })
+                    seq += 1
+            finally:
+                await agen.aclose()
+            await writer.drain()
+            return {"status": "ok", "stream_yields": seq}
+
+        if inspect.isgeneratorfunction(func):
+            raise RuntimeError(
+                "Synchronous generators are not supported (planned for v2); "
+                "use 'async def ... yield' for streaming tasks."
+            )
+
         if inspect.iscoroutinefunction(func):
             result = await func(*args, **kwargs)
         else:

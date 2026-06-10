@@ -145,14 +145,46 @@ def _make_submit_method(
 
 def _make_run_method(
     submit_method: Callable[..., object],
+    is_streaming: bool,
 ) -> Callable[..., object]:
     """Create the ``.run()`` async method that submits and awaits the result."""
 
     async def run(*args: object, **kwargs: object) -> object:
+        if is_streaming:
+            raise TypeError(
+                "This task is an async generator; use '.stream(...)' and "
+                "iterate with 'async for', not '.run(...)'."
+            )
         result = await submit_method(*args, **kwargs)  # type: ignore[misc]
         return await result
 
     return run
+
+
+def _make_stream_method(
+    wrapper: Callable[..., object],
+    func: Callable[..., object],
+    is_streaming: bool,
+) -> Callable[..., object]:
+    """Create the ``.stream()`` method returning a streaming handle.
+
+    The returned object can be used directly with ``async for`` (it
+    submits lazily on first iteration) or ``await``-ed to obtain the
+    underlying :class:`~offwork.worker.result.Stream`.
+    """
+
+    def stream(*args: Any, backend: Any = None, **kwargs: Any) -> object:
+        if not is_streaming:
+            raise TypeError(
+                "This task is not an async generator; '.stream(...)' is only "
+                "available for 'async def ... yield' tasks. Use '.run(...)' or "
+                "'.submit(...)' instead."
+            )
+        from offwork.worker.result import _StreamSubmission  # circular
+
+        return _StreamSubmission(func, wrapper, args, kwargs, backend)
+
+    return stream
 
 
 def _make_map_method(
@@ -178,11 +210,15 @@ def _attach_traced_attrs(
     wrapper: Callable[..., object], func: Callable[..., object]
 ) -> None:
     """Attach offwork metadata and remote-execution methods to a traced wrapper."""
+    unwrapped = inspect.unwrap(func)
+    is_streaming = inspect.isasyncgenfunction(unwrapped)
     wrapper.__offwork_traced__ = True  # type: ignore[attr-defined]
+    wrapper.is_streaming = is_streaming  # type: ignore[attr-defined]
     submit = _make_submit_method(wrapper, func)
     wrapper.submit = submit  # type: ignore[attr-defined]
-    wrapper.run = _make_run_method(submit)  # type: ignore[attr-defined]
+    wrapper.run = _make_run_method(submit, is_streaming)  # type: ignore[attr-defined]
     wrapper.map = _make_map_method(submit)  # type: ignore[attr-defined]
+    wrapper.stream = _make_stream_method(wrapper, func, is_streaming)  # type: ignore[attr-defined]
 
 
 def _get_stdlib_dirs() -> list[str]:

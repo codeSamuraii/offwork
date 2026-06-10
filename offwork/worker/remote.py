@@ -14,7 +14,7 @@ import contextlib
 from typing import TYPE_CHECKING, Any
 from collections.abc import Callable, Awaitable
 
-from offwork.core.task import Task
+from offwork.core.task import Task, _TaskEncoder
 from offwork.core.token import resolve_root_token
 from offwork.core.version import _VERSION
 from offwork.core.clients import KnownClients
@@ -27,7 +27,7 @@ from offwork.core.envelope import (
 from offwork.core.identity import get_client_id, get_identity_seed, get_public_key
 from offwork.core.progress import _progress_callback
 from offwork.core.log_capture import TaskLogHandler, _log_callback
-from offwork.worker.result import Result, ResultEnvelope
+from offwork.worker.result import Result, Stream, ResultEnvelope
 from offwork.worker.worker import Worker
 from offwork.worker.schedule import ScheduleHandle
 from offwork.worker.backends.base import Backend
@@ -264,13 +264,14 @@ def _prepare_submission(
     graph_json = Graph.default().serialize(wrapper)
 
     opts = getattr(wrapper, "__offwork_options__", {})
+    retries = task_overrides.pop("retries", opts.get("retries", 0))
     task = Task(
         graph_json=graph_json,
         function_name=function_name,
         args=args,
         kwargs=kwargs,
         timeout=opts.get("timeout"),
-        retries=opts.get("retries", 0),
+        retries=retries,
         retry_delay=opts.get("retry_delay", 1.0),
         throttle=opts.get("throttle"),
         **task_overrides,
@@ -304,6 +305,29 @@ async def submit_remote(
     await backend.submit(_encode_task(task, root_token))
     logger.info("Submitted task %s for %s", task.task_id, task.function_name)
     return Result(task.task_id, backend)
+
+
+async def submit_remote_stream(
+    func: Callable[..., object],
+    wrapper: Callable[..., object],
+    *args: Any,
+    _backend: str | Backend | None = None,
+    _root_token: bytes | None = None,
+    **kwargs: Any,
+) -> Stream:
+    """Submit a streaming (async-generator) task, returning a :class:`Stream`.
+
+    Streaming tasks have no return value; retries are forced off because a
+    partially-consumed stream cannot be safely replayed.
+    """
+    backend, task, root_token = _prepare_submission(
+        func, wrapper, args, kwargs, _backend, _root_token,
+        retries=0,
+    )
+    logger.debug("Submitting stream %s → %s", task.task_id[:8], task.function_name)
+    await backend.submit(_encode_task(task, root_token))
+    logger.info("Submitted stream %s for %s", task.task_id, task.function_name)
+    return Stream(task.task_id, backend)
 
 
 async def submit_remote_scheduled(
@@ -676,8 +700,28 @@ async def _execute_task(
     root_logger = logging.getLogger()
     root_logger.addHandler(log_handler)
 
+    # Detect streaming (async-generator) tasks up front.  Sync generators
+    # raise WorkerError here, which we surface as an error envelope.
+    try:
+        streaming = await worker.is_streaming(task)
+    except Exception as exc:
+        root_logger.removeHandler(log_handler)
+        _log_callback.reset(log_token)
+        _progress_callback.reset(token)
+        await _send_envelope(backend, ResultEnvelope.failure(task.task_id, exc))
+        return
+
     # Run execution as a task so the heartbeat loop can cancel it
-    exec_task: asyncio.Task[Any] = asyncio.create_task(worker.run_with_policy(task))
+    if streaming:
+        async def _on_yield(seq: int, value: Any) -> None:
+            value_json = json.dumps(value, cls=_TaskEncoder)
+            await backend.send_yield(task.task_id, seq, value_json)
+
+        exec_task: asyncio.Task[Any] = asyncio.create_task(
+            worker.run_stream(task, _on_yield),
+        )
+    else:
+        exec_task = asyncio.create_task(worker.run_with_policy(task))
 
     cancel_event = asyncio.Event()
     hb_task = asyncio.create_task(
@@ -687,7 +731,10 @@ async def _execute_task(
     t0 = time.monotonic()
     try:
         result = await exec_task
-        envelope = ResultEnvelope.success(task.task_id, result)
+        if streaming:
+            envelope = ResultEnvelope.stream_complete(task.task_id, result)
+        else:
+            envelope = ResultEnvelope.success(task.task_id, result)
     except asyncio.CancelledError:
         envelope = ResultEnvelope.cancelled(task.task_id)
     except Exception as exc:

@@ -66,6 +66,20 @@ async for p in future.progress():    # streams each update until done
     print(f"{p.percent:.0f}%")
 ```
 
+## [streaming.py](streaming.py)
+
+An `async def ... yield` task streams each value back as it is produced. Consume it with `async for` via `.stream(...)`:
+
+```python
+@offwork.task
+async def tail_lines(count: int):
+    for i in range(count):
+        yield f"line {i + 1}"
+
+async for line in tail_lines.stream(5):   # values arrive in order
+    print(line)
+```
+
 ## [cancellation.py](cancellation.py)
 
 Cooperative task cancellation. The client cancels a pending or in-flight task; awaiting it raises `TaskCancelled`:

@@ -32,11 +32,22 @@ class ResultEnvelope:
     error_type: str | None = None
     error_message: str | None = None
     error_traceback: str | None = None
+    stream_yields: int | None = None
 
     @classmethod
     def success(cls, task_id: str, result: Any) -> Self:
         """Create an envelope for a successful result."""
         return cls(task_id=task_id, status="ok", result=result)
+
+    @classmethod
+    def stream_complete(cls, task_id: str, yield_count: int) -> Self:
+        """Create the terminal envelope for a completed streaming task.
+
+        A streaming (async-generator) task has no return value; the
+        envelope's ``stream_yields`` records how many values were
+        yielded so the client knows when it has drained the channel.
+        """
+        return cls(task_id=task_id, status="ok", stream_yields=yield_count)
 
     @classmethod
     def cancelled(cls, task_id: str) -> Self:
@@ -71,7 +82,10 @@ class ResultEnvelope:
             "status": self.status,
         }
         if self.status == "ok":
-            d["result"] = self.result
+            if self.stream_yields is not None:
+                d["stream_yields"] = self.stream_yields
+            else:
+                d["result"] = self.result
         elif self.status == "error":
             d["error_type"] = self.error_type
             d["error_message"] = self.error_message
@@ -82,7 +96,8 @@ class ResultEnvelope:
     def from_json(cls, raw: str | bytes) -> Self:
         """Deserialize from a JSON string or bytes."""
         data = json.loads(raw)
-        result = _resolve(data.get("result"), {}) if data.get("status") == "ok" else None
+        is_ok = data.get("status") == "ok"
+        result = _resolve(data.get("result"), {}) if is_ok else None
         return cls(
             task_id=data["task_id"],
             status=data["status"],
@@ -90,6 +105,7 @@ class ResultEnvelope:
             error_type=data.get("error_type"),
             error_message=data.get("error_message"),
             error_traceback=data.get("error_traceback"),
+            stream_yields=data.get("stream_yields"),
         )
 
 
@@ -570,3 +586,123 @@ class Result:
     def __repr__(self) -> str:
         s = "pending" if self._envelope is None else self._envelope.status
         return f"Result(task_id={self._task_id!r}, status={s!r})"
+
+# ---------------------------------------------------------------------------
+# Stream
+# ---------------------------------------------------------------------------
+
+
+class Stream(Result):
+    """Async-iterable handle for a streaming (async-generator) task.
+
+    Returned by :meth:`~offwork.typing.TracedFunction.stream`.  Iterate
+    with ``async for`` to receive each value the remote async generator
+    yields, in order, until it completes:
+
+    .. code-block:: python
+
+        async for chunk in my_gen.stream(url):
+            process(chunk)
+
+    A streaming task has no return value, so ``await``-ing the handle is
+    not supported — use ``async for``.  All :class:`Result` controls
+    (:meth:`cancel`, :meth:`progress`, state queries) still apply.
+
+    Yields are **not** persisted: a consumer that starts iterating after
+    values were already produced only sees values yielded from that point
+    on.  If the task raises, the exception surfaces from the ``async for``.
+    """
+
+    def __aiter__(self) -> AsyncIterator[Any]:
+        return self._stream()
+
+    async def _stream(self) -> AsyncGenerator[Any, None]:
+        backend = self._backend
+        task_id = self._task_id
+        next_seq = 0
+        while True:
+            yields, check_raw = await asyncio.gather(
+                backend.get_yields(task_id, after_seq=next_seq - 1, timeout=1.0),
+                backend.try_get_result(task_id),
+            )
+            for seq, value_json in yields:
+                if seq < next_seq:
+                    continue
+                if seq != next_seq:
+                    raise RuntimeError(
+                        f"Stream gap for task {task_id}: expected seq "
+                        f"{next_seq}, got {seq}"
+                    )
+                next_seq += 1
+                yield _resolve(json.loads(value_json), {})
+
+            if check_raw is not None and self._envelope is None:
+                self._envelope = ResultEnvelope.from_json(check_raw)
+
+            if self._envelope is not None:
+                final = self._envelope.stream_yields
+                if final is None or next_seq >= final:
+                    self._drain_terminal()
+                    return
+                # Terminal envelope arrived before we drained every value;
+                # keep polling until we have consumed all `final` yields.
+
+    def _drain_terminal(self) -> None:
+        """Raise on a non-ok terminal envelope (error / cancel / throttle)."""
+        assert self._envelope is not None
+        if self._envelope.status != "ok":
+            self._unwrap()  # raises the appropriate error
+
+
+class _StreamSubmission:
+    """Lazy handle returned by ``traced_func.stream(...)``.
+
+    Submits the streaming task on first use, supporting two patterns:
+
+    .. code-block:: python
+
+        # Iterate directly — submission happens on the first `async for`
+        async for chunk in my_gen.stream(url):
+            ...
+
+        # Or await to get the underlying Stream handle (for cancel/progress)
+        stream = await my_gen.stream(url)
+        async for chunk in stream:
+            ...
+    """
+
+    def __init__(
+        self,
+        func: Any,
+        wrapper: Any,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        backend: Any,
+    ) -> None:
+        self._func = func
+        self._wrapper = wrapper
+        self._args = args
+        self._kwargs = kwargs
+        self._backend = backend
+        self._stream: Stream | None = None
+
+    async def _ensure(self) -> Stream:
+        if self._stream is None:
+            from offwork.worker.remote import submit_remote_stream  # circular
+
+            self._stream = await submit_remote_stream(
+                self._func, self._wrapper, *self._args,
+                _backend=self._backend, **self._kwargs,
+            )
+        return self._stream
+
+    def __await__(self) -> Generator[Any, None, Stream]:
+        return self._ensure().__await__()
+
+    def __aiter__(self) -> AsyncIterator[Any]:
+        return self._iterate()
+
+    async def _iterate(self) -> AsyncGenerator[Any, None]:
+        stream = await self._ensure()
+        async for value in stream:
+            yield value

@@ -13,11 +13,16 @@ import pytest
 from offwork import pack
 import offwork
 from offwork.core.errors import RemoteError
-from offwork.core.task import Task
+from offwork.core.task import Task, _TaskEncoder
 from offwork.worker.backends.base import Backend
-from offwork.worker.result import Result, ResultEnvelope
+from offwork.worker.result import Result, ResultEnvelope, Stream
 from offwork.worker.worker import Worker
 import offwork.worker.remote as _remote
+
+
+def _encode_yield(value: Any) -> str:
+    """Encode a yielded value the way the worker does before send_yield."""
+    return json.dumps(value, cls=_TaskEncoder)
 
 
 # ---------------------------------------------------------------------------
@@ -31,6 +36,7 @@ class InMemoryBackend(Backend):
     def __init__(self) -> None:
         self._tasks: collections.deque[str] = collections.deque()
         self._results: dict[str, collections.deque[str]] = {}
+        self._yields: dict[str, list[str]] = {}
         self._stop = False
 
     async def submit(self, task_json: str) -> None:
@@ -57,6 +63,22 @@ class InMemoryBackend(Backend):
         if q:
             return q.popleft()
         return None
+
+    async def send_yield(self, task_id: str, seq: int, value_json: str) -> None:
+        buf = self._yields.setdefault(task_id, [])
+        while len(buf) <= seq:
+            buf.append("")
+        buf[seq] = value_json
+
+    async def get_yields(
+        self, task_id: str, after_seq: int = -1, timeout: float | None = None,
+    ) -> list[tuple[int, str]]:
+        buf = self._yields.get(task_id, [])
+        return [
+            (i, buf[i])
+            for i in range(after_seq + 1, len(buf))
+            if buf[i] != ""
+        ]
 
     async def close(self) -> None:
         self._stop = True
@@ -134,6 +156,27 @@ class TestResultEnvelope:
         restored = ResultEnvelope.from_json(raw)
         assert restored.result == "hello"
 
+    def test_stream_complete_roundtrip(self) -> None:
+        env = ResultEnvelope.stream_complete("t6", 3)
+        assert env.status == "ok"
+        assert env.stream_yields == 3
+        assert env.result is None
+
+        restored = ResultEnvelope.from_json(env.to_json())
+        assert restored.status == "ok"
+        assert restored.stream_yields == 3
+        assert restored.result is None
+
+    def test_stream_complete_json_excludes_result(self) -> None:
+        env = ResultEnvelope.stream_complete("t7", 0)
+        data = json.loads(env.to_json())
+        assert data == {
+            "task_id": "t7",
+            "status": "ok",
+            "stream_yields": 0,
+        }
+        assert "result" not in data
+
 
 # ---------------------------------------------------------------------------
 # Result
@@ -190,6 +233,75 @@ class TestResult:
         future = Result("missing", backend)
         with pytest.raises(TimeoutError):
             await future.result(timeout=0.01, stall_timeout=None)
+
+
+# ---------------------------------------------------------------------------
+# Stream (async-generator client handle)
+# ---------------------------------------------------------------------------
+
+
+async def _seed_stream(
+    backend: InMemoryBackend, task_id: str, values: list[Any]
+) -> None:
+    """Populate the backend as a finished streaming task would."""
+    for seq, value in enumerate(values):
+        await backend.send_yield(task_id, seq, _encode_yield(value))
+    env = ResultEnvelope.stream_complete(task_id, len(values))
+    await backend.send_result(task_id, env.to_json())
+
+
+class TestStream:
+    @pytest.mark.asyncio
+    async def test_yields_values_in_order(self, backend: InMemoryBackend) -> None:
+        await _seed_stream(backend, "s1", [0, 10, 20])
+
+        stream = Stream("s1", backend)
+        out = [value async for value in stream]
+        assert out == [0, 10, 20]
+
+    @pytest.mark.asyncio
+    async def test_empty_stream(self, backend: InMemoryBackend) -> None:
+        await _seed_stream(backend, "s2", [])
+
+        stream = Stream("s2", backend)
+        out = [value async for value in stream]
+        assert out == []
+
+    @pytest.mark.asyncio
+    async def test_preserves_sentinel_encoded_values(
+        self, backend: InMemoryBackend
+    ) -> None:
+        await _seed_stream(backend, "s3", [b"bytes", {"k": 1}])
+
+        stream = Stream("s3", backend)
+        out = [value async for value in stream]
+        assert out == [b"bytes", {"k": 1}]
+
+    @pytest.mark.asyncio
+    async def test_error_terminal_raises(self, backend: InMemoryBackend) -> None:
+        await backend.send_yield("s4", 0, _encode_yield(1))
+        env = ResultEnvelope.failure("s4", ValueError("boom"))
+        await backend.send_result("s4", env.to_json())
+
+        stream = Stream("s4", backend)
+        out: list[Any] = []
+        with pytest.raises(RemoteError, match="ValueError: boom"):
+            async for value in stream:
+                out.append(value)
+        assert out == [1]
+
+    @pytest.mark.asyncio
+    async def test_gap_in_sequence_raises(self, backend: InMemoryBackend) -> None:
+        # seq 0 then seq 2 (1 missing), with a terminal envelope of 3 yields
+        await backend.send_yield("s5", 0, _encode_yield("a"))
+        await backend.send_yield("s5", 2, _encode_yield("c"))
+        env = ResultEnvelope.stream_complete("s5", 3)
+        await backend.send_result("s5", env.to_json())
+
+        stream = Stream("s5", backend)
+        with pytest.raises(RuntimeError, match="Stream gap"):
+            async for _ in stream:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -389,6 +501,113 @@ class TestHandleTaskOutput:
         assert "\u2717" in out
         assert "RuntimeError" in out
         assert "intentional" in out
+
+
+# ---------------------------------------------------------------------------
+# Streaming (async-generator) tasks through _handle_task
+# ---------------------------------------------------------------------------
+
+
+class TestStreamingTask:
+    @pytest.mark.asyncio
+    async def test_async_generator_streams_yields(
+        self, backend: InMemoryBackend
+    ) -> None:
+        @offwork.task
+        async def counter(n: int) -> Any:
+            for i in range(n):
+                yield i * 10
+
+        task = pack(counter, 3)
+        await backend.submit(task.to_json())
+
+        worker = Worker(auto_install=False)
+        async for task_json in backend.listen():
+            await _remote._handle_task(worker, backend, task_json)
+
+        # Yields landed in the channel, terminal envelope records the count.
+        stream = Stream(task.task_id, backend)
+        out = [value async for value in stream]
+        assert out == [0, 10, 20]
+
+    @pytest.mark.asyncio
+    async def test_async_generator_terminal_envelope(
+        self, backend: InMemoryBackend
+    ) -> None:
+        @offwork.task
+        async def gen() -> Any:
+            yield "a"
+            yield "b"
+
+        task = pack(gen)
+        await backend.submit(task.to_json())
+
+        worker = Worker(auto_install=False)
+        async for task_json in backend.listen():
+            await _remote._handle_task(worker, backend, task_json)
+
+        raw = await backend.get_result(task.task_id)
+        env = ResultEnvelope.from_json(raw)
+        assert env.status == "ok"
+        assert env.stream_yields == 2
+
+    @pytest.mark.asyncio
+    async def test_async_generator_error_mid_stream(
+        self, backend: InMemoryBackend
+    ) -> None:
+        @offwork.task
+        async def flaky() -> Any:
+            yield 1
+            raise RuntimeError("mid-stream")
+
+        task = pack(flaky)
+        await backend.submit(task.to_json())
+
+        worker = Worker(auto_install=False)
+        async for task_json in backend.listen():
+            await _remote._handle_task(worker, backend, task_json)
+
+        stream = Stream(task.task_id, backend)
+        out: list[Any] = []
+        with pytest.raises(RemoteError, match="RuntimeError: mid-stream"):
+            async for value in stream:
+                out.append(value)
+        assert out == [1]
+
+    @pytest.mark.asyncio
+    async def test_sync_generator_rejected(
+        self, backend: InMemoryBackend
+    ) -> None:
+        @offwork.task
+        def sync_gen() -> Any:
+            yield 1
+
+        task = pack(sync_gen)
+        await backend.submit(task.to_json())
+
+        worker = Worker(auto_install=False)
+        async for task_json in backend.listen():
+            await _remote._handle_task(worker, backend, task_json)
+
+        raw = await backend.get_result(task.task_id)
+        env = ResultEnvelope.from_json(raw)
+        assert env.status == "error"
+
+    @pytest.mark.asyncio
+    async def test_is_streaming_detects_async_generator(
+        self, backend: InMemoryBackend
+    ) -> None:
+        @offwork.task
+        async def agen() -> Any:
+            yield 1
+
+        @offwork.task
+        def plain() -> int:
+            return 1
+
+        worker = Worker(auto_install=False)
+        assert await worker.is_streaming(Task.from_json(pack(agen).to_json())) is True
+        assert await worker.is_streaming(Task.from_json(pack(plain).to_json())) is False
 
 
 # ---------------------------------------------------------------------------

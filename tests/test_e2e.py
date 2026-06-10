@@ -306,6 +306,59 @@ class TestBasicExecution:
         assert '"pid"' in result
 
 
+class TestStreaming:
+    async def test_async_generator_stream(
+        self, worker: subprocess.Popen[bytes]
+    ) -> None:
+        @offwork.task
+        async def counter(n: int) -> Any:
+            for i in range(n):
+                yield i * 10
+
+        collected = [value async for value in counter.stream(4)]
+        assert collected == [0, 10, 20, 30]
+
+    async def test_stream_preserves_types(
+        self, worker: subprocess.Popen[bytes]
+    ) -> None:
+        @offwork.task
+        async def gen() -> Any:
+            yield b"bytes"
+            yield {"k": 1}
+            yield [1, 2, 3]
+
+        collected = [value async for value in gen.stream()]
+        assert collected == [b"bytes", {"k": 1}, [1, 2, 3]]
+
+    async def test_stream_error_propagates(
+        self, worker: subprocess.Popen[bytes]
+    ) -> None:
+        from offwork.core.errors import RemoteError
+
+        @offwork.task
+        async def flaky() -> Any:
+            yield 1
+            raise RuntimeError("mid-stream")
+
+        collected: list[Any] = []
+        with pytest.raises(RemoteError, match="mid-stream"):
+            async for value in flaky.stream():
+                collected.append(value)
+        assert collected == [1]
+
+    async def test_stream_handle_await(
+        self, worker: subprocess.Popen[bytes]
+    ) -> None:
+        @offwork.task
+        async def gen() -> Any:
+            yield "a"
+            yield "b"
+
+        stream = await gen.stream()
+        collected = [value async for value in stream]
+        assert collected == ["a", "b"]
+
+
 class TestProgressAndCancellation:
     async def test_progress_reporting(self, worker: subprocess.Popen[bytes]) -> None:
 

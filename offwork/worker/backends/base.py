@@ -100,6 +100,33 @@ class Backend(abc.ABC):
         """
         return None
 
+    # -- Streaming (async-generator) yields ------------------------------------
+
+    async def send_yield(self, task_id: str, seq: int, value_json: str) -> None:
+        """Append one value yielded by a streaming (async-generator) task.
+
+        *seq* is the zero-based, monotonically increasing index of the
+        value within the task's output sequence; *value_json* is the
+        value encoded with the same sentinel encoder used for results.
+
+        Called by the worker as each ``yield`` is produced.  Yields are
+        ordered and **not** persisted — late subscribers only observe
+        values appended after they begin polling.  The default is a
+        no-op; transports that support streaming override this.
+        """
+
+    async def get_yields(
+        self, task_id: str, after_seq: int = -1, timeout: float | None = None,
+    ) -> list[tuple[int, str]]:
+        """Return yielded values with ``seq`` greater than *after_seq*.
+
+        Each item is ``(seq, value_json)`` in ascending ``seq`` order.
+        Implementations may block up to *timeout* seconds waiting for at
+        least one new value, returning an empty list on timeout.  The
+        default returns an empty list (no streaming support).
+        """
+        return []
+
     # -- Log capture -----------------------------------------------------------
 
     async def send_log_line(self, task_id: str, line: str) -> None:

@@ -8,7 +8,7 @@ import functools
 import contextvars
 from typing import Any
 from dataclasses import field, dataclass
-from collections.abc import Callable
+from collections.abc import Callable, Awaitable
 
 from offwork.core.task import Task, resolve_args
 from offwork.core.errors import WorkerError
@@ -106,6 +106,10 @@ class Worker:
         self._auto_install = auto_install
         self._cache: dict[str, _CachedFunction] = {}
         self._last_build_info: BuildInfo | None = None
+        # When set, the current task already recorded its build info during
+        # pre-execution inspection (``is_streaming``); later cache lookups
+        # for the same task must not overwrite it with a spurious hit.
+        self._build_info_locked = False
 
         if sandbox is True:
             self._sandbox: DockerSandbox | None = DockerSandbox()
@@ -120,7 +124,7 @@ class Worker:
         key = _compute_subgraph_key(store, function_name)
         if key not in self._cache:
             self._cache[key] = await self._build(store, function_name, key)
-        else:
+        elif not self._build_info_locked:
             self._last_build_info = BuildInfo(cache_hit=True)
         return self._cache[key]
 
@@ -137,6 +141,7 @@ class Worker:
         directly and sync functions run in a thread executor.
         """
         cached = await self._get_cached(task.graph_json, task.function_name)
+        self._build_info_locked = False
         logger.debug("Executing %s (cache key: %s)", task.function_name, cached.subgraph_key)
 
         if self.sandboxed:
@@ -155,6 +160,18 @@ class Worker:
 
         args, kwargs = resolve_args(task.args, task.kwargs, cached.namespace)
 
+        if inspect.isasyncgenfunction(cached.func):
+            raise WorkerError(
+                f"Task {task.function_name!r} is an async generator. "
+                "Streaming tasks must be executed via run_stream(), not run()."
+            )
+        if inspect.isgeneratorfunction(cached.func):
+            raise WorkerError(
+                f"Task {task.function_name!r} is a synchronous generator. "
+                "Synchronous generators are not supported (planned for v2); "
+                "use 'async def ... yield' for streaming tasks."
+            )
+
         if inspect.iscoroutinefunction(cached.func):
             return await cached.func(*args, **kwargs)
 
@@ -163,6 +180,73 @@ class Worker:
         return await loop.run_in_executor(
             None, ctx.run, functools.partial(cached.func, *args, **kwargs),
         )
+
+    async def is_streaming(self, task: Task) -> bool:
+        """Return ``True`` if *task*'s target is an async generator.
+
+        Raises :class:`WorkerError` for synchronous generators, which are
+        not supported (planned for v2).
+
+        This is the first cache lookup for a task dispatched through the
+        worker loop, so the build info it records is authoritative.  The
+        lock prevents the subsequent ``run``/``run_stream`` lookup from
+        masking a fresh build with a spurious cache hit.
+        """
+        self._build_info_locked = False
+        cached = await self._get_cached(task.graph_json, task.function_name)
+        self._build_info_locked = True
+        if inspect.isgeneratorfunction(cached.func):
+            raise WorkerError(
+                f"Task {task.function_name!r} is a synchronous generator. "
+                "Synchronous generators are not supported (planned for v2); "
+                "use 'async def ... yield' for streaming tasks."
+            )
+        return inspect.isasyncgenfunction(cached.func)
+
+    async def run_stream(
+        self,
+        task: Task,
+        on_yield: Callable[[int, Any], Awaitable[None]],
+    ) -> int:
+        """Execute an async-generator *task*, invoking *on_yield* per value.
+
+        *on_yield* receives ``(seq, value)`` for each value the generator
+        yields, with *seq* a zero-based monotonically increasing index.
+        Returns the total number of values yielded.  Sandboxed execution
+        of streaming tasks is not yet supported.
+        """
+        cached = await self._get_cached(task.graph_json, task.function_name)
+        self._build_info_locked = False
+
+        if self.sandboxed:
+            assert self._sandbox is not None
+            store = Store.from_json(task.graph_json)
+            target_qname, nodes = store.collect(task.function_name)
+            target_node = nodes[target_qname]
+            return await self._sandbox.execute_stream(
+                cached.source,
+                target_node.name,
+                task.args,
+                task.kwargs,
+                on_yield,
+                owner_class=target_node.owner_class,
+            )
+
+        if not inspect.isasyncgenfunction(cached.func):
+            raise WorkerError(
+                f"Task {task.function_name!r} is not an async generator."
+            )
+
+        args, kwargs = resolve_args(task.args, task.kwargs, cached.namespace)
+        agen = cached.func(*args, **kwargs)
+        seq = 0
+        try:
+            async for value in agen:
+                await on_yield(seq, value)
+                seq += 1
+        finally:
+            await agen.aclose()
+        return seq
 
     async def run_with_policy(self, task: Task) -> Any:
         """Execute a :class:`Task` with retry and timeout enforcement.
