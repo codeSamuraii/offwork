@@ -54,6 +54,7 @@ offwork worker --backend redis://other-machine:6379
 | | |
 |-|-|
 | **Async-native** | `.run()`, `.submit()`, `.map()`, `asyncio.gather` — all coroutines |
+| **Streaming** | `async def ... yield` tasks; consume with `async for v in task.stream(...)` — event-driven, no polling |
 | **Scheduling** | `submit(run_in=delay)`, `submit(run_at=dt)`, `submit(run_every=interval)` with cancellation |
 | **Retry & timeout** | `@offwork.task(timeout=30, retries=3)` with exponential backoff |
 | **Throttling** | `@offwork.task(throttle=timedelta(hours=24)/50)` — rate-limit executions |

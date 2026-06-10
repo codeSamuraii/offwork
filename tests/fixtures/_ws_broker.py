@@ -37,7 +37,12 @@ class _BrokerState:
         self.throttles: dict[str, float] = {}
         self.task_waiters: list[asyncio.Event] = []
         self.result_waiters: dict[str, list[asyncio.Event]] = defaultdict(list)
+        self.yield_waiters: dict[str, list[asyncio.Event]] = defaultdict(list)
         self.lock = asyncio.Lock()
+
+    def _wake_yields(self, task_id: str) -> None:
+        for ev in self.yield_waiters.get(task_id, ()):
+            ev.set()
 
     def _wake_tasks(self) -> None:
         for ev in self.task_waiters:
@@ -93,6 +98,54 @@ class _BrokerState:
     async def store_result(self, task_id: str, result_json: str) -> None:
         self.results[task_id] = result_json
         self._wake_result(task_id)
+        # Wake streaming consumers blocked in get_yields so they re-check
+        # the terminal envelope.
+        self._wake_yields(task_id)
+
+    def put_yield(self, task_id: str, seq: int, value_json: str) -> None:
+        buf = self.yields.setdefault(task_id, [])
+        while len(buf) <= seq:
+            buf.append("")
+        buf[seq] = value_json
+        self._wake_yields(task_id)
+
+    async def get_yields(
+        self, task_id: str, after_seq: int, wait_seconds: float,
+    ) -> list[list[Any]]:
+        deadline = time.monotonic() + wait_seconds
+        event = asyncio.Event()
+        self.yield_waiters[task_id].append(event)
+        try:
+            while True:
+                buf = self.yields.get(task_id, [])
+                items = [
+                    [i, buf[i]]
+                    for i in range(after_seq + 1, len(buf))
+                    if buf[i] != ""
+                ]
+                if items:
+                    return items
+                # Stream finished: the terminal envelope is present and no
+                # further yields will arrive. Return empty so the consumer
+                # proceeds to read the result instead of blocking.
+                if task_id in self.results:
+                    return []
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return []
+                try:
+                    await asyncio.wait_for(event.wait(), timeout=remaining)
+                except asyncio.TimeoutError:
+                    pass
+                event.clear()
+        finally:
+            bucket = self.yield_waiters.get(task_id, [])
+            try:
+                bucket.remove(event)
+            except ValueError:
+                pass
+            if not bucket:
+                self.yield_waiters.pop(task_id, None)
 
     async def get_result(self, task_id: str, wait_seconds: float) -> str | None:
         deadline = time.monotonic() + wait_seconds
@@ -161,20 +214,16 @@ async def _dispatch(
             return {"progress_json": state.progress[tid]}
         return None
     if op == "send_yield":
-        buf = state.yields.setdefault(payload["task_id"], [])
-        seq = int(payload["seq"])
-        while len(buf) <= seq:
-            buf.append("")
-        buf[seq] = payload["value_json"]
+        state.put_yield(
+            payload["task_id"], int(payload["seq"]), payload["value_json"],
+        )
         return {"ok": True}
     if op == "get_yields":
-        buf = state.yields.get(payload["task_id"], [])
-        after = int(payload.get("after_seq", -1))
-        items = [
-            [i, buf[i]]
-            for i in range(after + 1, len(buf))
-            if buf[i] != ""
-        ]
+        items = await state.get_yields(
+            payload["task_id"],
+            int(payload.get("after_seq", -1)),
+            float(payload.get("wait_seconds", 0.0)),
+        )
         return {"yields": items}
     if op == "cancel_schedule":
         state.schedules_cancelled.add(payload["schedule_id"])

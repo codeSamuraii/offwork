@@ -74,11 +74,14 @@ class InMemoryBackend(Backend):
         self, task_id: str, after_seq: int = -1, timeout: float | None = None,
     ) -> list[tuple[int, str]]:
         buf = self._yields.get(task_id, [])
-        return [
+        out = [
             (i, buf[i])
             for i in range(after_seq + 1, len(buf))
             if buf[i] != ""
         ]
+        if not out and timeout:
+            await asyncio.sleep(min(timeout, 0.01))
+        return out
 
     async def close(self) -> None:
         self._stop = True

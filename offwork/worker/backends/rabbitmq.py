@@ -47,6 +47,7 @@ class RabbitMQBackend(Backend):
     CANCEL_PREFIX = "offwork.cancel."
     PROGRESS_PREFIX = "offwork.progress."
     YIELD_PREFIX = "offwork.yield."
+    YIELD_BELL_PREFIX = "offwork.yieldbell."
     SCHEDULE_PREFIX = "offwork.schedule."
     THROTTLE_PREFIX = "offwork.throttle."
     NOTIFY_EXCHANGE = "offwork.notify"
@@ -82,6 +83,7 @@ class RabbitMQBackend(Backend):
         self._cancel_prefix = f"{ns}{self.CANCEL_PREFIX}"
         self._progress_prefix = f"{ns}{self.PROGRESS_PREFIX}"
         self._yield_prefix = f"{ns}{self.YIELD_PREFIX}"
+        self._yield_bell_prefix = f"{ns}{self.YIELD_BELL_PREFIX}"
         self._schedule_prefix = f"{ns}{self.SCHEDULE_PREFIX}"
         self._throttle_prefix = f"{ns}{self.THROTTLE_PREFIX}"
         self._notify_exchange = f"{ns}{self.NOTIFY_EXCHANGE}"
@@ -246,6 +248,9 @@ class RabbitMQBackend(Backend):
                 aio_pika.Message(result_json.encode()),
                 routing_key=name,
             )
+        # Wake a streaming consumer blocked on the yield doorbell so it
+        # re-checks the terminal envelope (no-op for non-streaming tasks).
+        await self._ring_yield_bell(task_id)
 
     async def get_result(self, task_id: str, timeout: float | None = None) -> str:
         channel = await self._new_channel()
@@ -337,16 +342,35 @@ class RabbitMQBackend(Backend):
     # slots starting at ``after_seq + 1`` until it hits an empty slot, so
     # consumers can poll repeatedly and always see the contiguous run.
 
+    def _bell_args(self) -> dict[str, int]:
+        """Queue arguments for a per-task yield doorbell.
+
+        Capped at one message so producers don't pile up signals, and
+        auto-expiring so abandoned streams don't leak queues.
+        """
+        return {
+            "x-message-ttl": self._result_ttl * 1000,
+            "x-max-length": 1,
+            "x-expires": self._result_ttl * 2 * 1000,
+        }
+
+    async def _ring_yield_bell(self, task_id: str) -> None:
+        async with self._lock:
+            channel = await self._ensure_channel()
+            name = f"{self._yield_bell_prefix}{task_id}"
+            await self._declare_queue_robust(channel, name, self._bell_args())
+            await channel.default_exchange.publish(
+                aio_pika.Message(b""), routing_key=name,
+            )
+
     async def send_yield(self, task_id: str, seq: int, value_json: str) -> None:
         await self._kv_put(
             self._yield_prefix, f"{task_id}.{seq}", value_json, self._result_ttl,
         )
+        await self._ring_yield_bell(task_id)
 
-    async def get_yields(
-        self,
-        task_id: str,
-        after_seq: int = -1,
-        timeout: float | None = None,
+    async def _read_yield_run(
+        self, task_id: str, after_seq: int,
     ) -> list[tuple[int, str]]:
         out: list[tuple[int, str]] = []
         seq = after_seq + 1
@@ -359,9 +383,44 @@ class RabbitMQBackend(Backend):
                 break
             out.append((seq, raw))
             seq += 1
-        if not out and timeout:
-            await asyncio.sleep(min(timeout, 0.05))
         return out
+
+    async def get_yields(
+        self,
+        task_id: str,
+        after_seq: int = -1,
+        timeout: float | None = None,
+    ) -> list[tuple[int, str]]:
+        out = await self._read_yield_run(task_id, after_seq)
+        if out or not timeout:
+            return out
+        # Block on the doorbell: send_yield/send_result publish an empty
+        # message here, so we wake the instant new data is available
+        # instead of polling on a sleep.
+        channel = await self._new_channel()
+        try:
+            name = f"{self._yield_bell_prefix}{task_id}"
+            queue = await self._declare_queue_robust(
+                channel, name, self._bell_args(),
+            )
+            future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+
+            async def _on_bell(msg: Any) -> None:
+                await msg.ack()
+                if not future.done():
+                    future.set_result(None)
+
+            tag = await queue.consume(_on_bell)
+            try:
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(future, timeout=timeout)
+            finally:
+                with contextlib.suppress(Exception):
+                    await queue.cancel(tag)
+        finally:
+            with contextlib.suppress(Exception):
+                await channel.close()
+        return await self._read_yield_run(task_id, after_seq)
 
     # -- Schedule cancellation -------------------------------------------------
 

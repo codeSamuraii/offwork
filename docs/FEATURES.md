@@ -199,6 +199,45 @@ Every wait-style method (`result`, `wait`, `check`, `cancel`) accepts a `timeout
 
 The default differs per method: `result(timeout=False)` waits forever; `cancel(timeout=30.0)` waits 30 s; `check(timeout=0.0)` is non-blocking.
 
+## Streaming (async generators)
+
+An `async def ... yield` task streams each value back to the client as it is
+produced. Consume it with `async for` via `.stream(...)`:
+
+```python
+@offwork.task
+async def tail_lines(count: int):
+    for i in range(count):
+        yield f"line {i + 1}"
+
+# Iterate directly — values arrive in order, as soon as the worker yields them
+async for line in tail_lines.stream(5):
+    print(line)
+
+# Or keep a handle (e.g. for the task id), then iterate
+stream = await tail_lines.stream(3)
+print(stream.task_id)
+async for line in stream:
+    print(line)
+```
+
+An exception raised mid-stream surfaces from the `async for` as a `RemoteError`;
+values yielded before the failure are still delivered first.
+
+Streaming is **event-driven on every backend** — the client holds a single
+long-poll request per stream that the broker parks until the next value (or
+completion) is ready, waking it via a doorbell signal. There is no busy
+polling, so thousands of concurrent streams cost one idle waiter each rather
+than a steady stream of requests. The hosted broker (`ws`/`wss`) and the
+`redis` and `amqp` backends all use this push model.
+
+Constraints:
+
+- Streaming tasks have **no return value**; the generator's job is the values.
+- **Retries are forced off** — a partially consumed stream can't be safely replayed.
+- **Synchronous generators are not supported** (planned for v2); use `async def ... yield`.
+- Late joiners can't replay: values are delivered to the live consumer, not persisted for a second reader.
+
 ## Sandbox
 
 Run tasks inside Docker containers — transparent to clients:

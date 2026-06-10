@@ -17,6 +17,12 @@ from offwork.worker.backends.base import Backend
 
 logger = logging.getLogger(__name__)
 
+# How long a streaming consumer asks a backend to block while waiting for
+# the next yield. Backends that support long-polling (ws, cloud) treat this
+# as an upper bound and return early on a doorbell signal; backends without
+# blocking support sleep briefly and return empty.
+_STREAM_POLL_SECONDS = 25.0
+
 
 @dataclass(frozen=True)
 class ResultEnvelope:
@@ -621,9 +627,12 @@ class Stream(Result):
         task_id = self._task_id
         next_seq = 0
         while True:
-            yields, check_raw = await asyncio.gather(
-                backend.get_yields(task_id, after_seq=next_seq - 1, timeout=1.0),
-                backend.try_get_result(task_id),
+            # Long-poll for the next batch of yields. Backends that support
+            # it block up to `timeout` on a doorbell and also wake when the
+            # terminal envelope lands, so this loop is event-driven rather
+            # than busy-polling — one in-flight request per stream.
+            yields = await backend.get_yields(
+                task_id, after_seq=next_seq - 1, timeout=_STREAM_POLL_SECONDS,
             )
             for seq, value_json in yields:
                 if seq < next_seq:
@@ -636,10 +645,25 @@ class Stream(Result):
                 next_seq += 1
                 yield _resolve(json.loads(value_json), {})
 
-            if check_raw is not None and self._envelope is None:
-                self._envelope = ResultEnvelope.from_json(check_raw)
+            # Only check for the terminal envelope when the long-poll came
+            # back empty (timeout or terminal wake). While values keep
+            # arriving we stay in the cheap yield-only path.
+            if yields:
+                continue
+
+            if self._envelope is None:
+                check_raw = await backend.try_get_result(task_id)
+                if check_raw is not None:
+                    self._envelope = ResultEnvelope.from_json(check_raw)
 
             if self._envelope is not None:
+                # The terminal envelope may have raced ahead of the last
+                # yields (especially for error streams where stream_yields
+                # is None). Drain any values still buffered before deciding
+                # to stop.
+                tail = await backend.get_yields(task_id, after_seq=next_seq - 1)
+                if tail:
+                    continue
                 final = self._envelope.stream_yields
                 if final is None or next_seq >= final:
                     self._drain_terminal()

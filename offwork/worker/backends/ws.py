@@ -330,13 +330,20 @@ class WebSocketBackend(Backend):
         after_seq: int = -1,
         timeout: float | None = None,
     ) -> list[tuple[int, str]]:
+        # Long-poll: the broker blocks up to wait_seconds for a new yield
+        # (or the terminal envelope), waking on an AMQP doorbell. No busy
+        # polling — one in-flight request per stream regardless of rate.
+        wait_seconds = (
+            min(float(timeout), _DEFAULT_LONG_POLL_SECONDS)
+            if timeout else 0.0
+        )
         body = await self._request(
-            "get_yields", {"task_id": task_id, "after_seq": after_seq},
+            "get_yields",
+            {"task_id": task_id, "after_seq": after_seq, "wait_seconds": wait_seconds},
+            timeout=(wait_seconds + 10.0) if wait_seconds else None,
         )
         items = body.get("yields") if body else None
         if not items:
-            if timeout:
-                await asyncio.sleep(min(timeout, 0.05))
             return []
         return [(int(seq), value) for seq, value in items]
 

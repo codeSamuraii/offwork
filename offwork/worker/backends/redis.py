@@ -82,10 +82,16 @@ class RedisBackend(Backend):
 
     async def send_result(self, task_id: str, result_json: str) -> None:
         key = f"{self.RESULT_PREFIX}{task_id}"
-        # Pipeline RPUSH + EXPIRE into one round-trip.
+        bell = f"{self.YIELD_PREFIX}{task_id}:bell"
+        # Pipeline RPUSH + EXPIRE into one round-trip. Also ring the yield
+        # doorbell so a streaming consumer blocked in get_yields wakes and
+        # observes the terminal envelope (harmless for non-streaming tasks).
         async with self._redis.pipeline(transaction=False) as pipe:
             pipe.rpush(key, result_json)
             pipe.expire(key, self._result_ttl)
+            pipe.rpush(bell, "1")
+            pipe.ltrim(bell, -1, -1)
+            pipe.expire(bell, self._result_ttl)
             await pipe.execute()
 
     async def get_result(self, task_id: str, timeout: float | None = None) -> str:
@@ -130,9 +136,15 @@ class RedisBackend(Backend):
     async def send_yield(self, task_id: str, seq: int, value_json: str) -> None:
         """Append one streamed value; index in the list equals *seq*."""
         key = f"{self.YIELD_PREFIX}{task_id}"
+        bell = f"{self.YIELD_PREFIX}{task_id}:bell"
         async with self._redis.pipeline(transaction=False) as pipe:
             pipe.rpush(key, value_json)
             pipe.expire(key, self._result_ttl)
+            # Doorbell: a capped list a blocked consumer pops from. Keeps
+            # get_yields event-driven instead of polling on a sleep.
+            pipe.rpush(bell, "1")
+            pipe.ltrim(bell, -1, -1)
+            pipe.expire(bell, self._result_ttl)
             await pipe.execute()
 
     async def get_yields(
@@ -141,13 +153,20 @@ class RedisBackend(Backend):
         after_seq: int = -1,
         timeout: float | None = None,
     ) -> list[tuple[int, str]]:
-        """Return ``(seq, value_json)`` pairs with ``seq > after_seq``."""
+        """Return ``(seq, value_json)`` pairs with ``seq > after_seq``.
+
+        Blocks up to *timeout* seconds on a per-task doorbell list when no
+        new values are available, so consumers don't busy-poll.
+        """
         key = f"{self.YIELD_PREFIX}{task_id}"
+        bell = f"{self.YIELD_PREFIX}{task_id}:bell"
         start = after_seq + 1
         values = await self._redis.lrange(key, start, -1)
         if not values and timeout:
-            # Avoid busy-looping in the consumer: brief idle wait when empty.
-            await asyncio.sleep(min(timeout, 0.05))
+            # BLPOP wakes as soon as send_yield rings the bell (or on the
+            # terminal envelope, which the consumer detects separately).
+            await self._redis.blpop([bell], timeout=max(1, int(timeout)))
+            values = await self._redis.lrange(key, start, -1)
         return [
             (start + i, v.decode() if isinstance(v, bytes) else v)
             for i, v in enumerate(values)
