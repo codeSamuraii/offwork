@@ -32,6 +32,7 @@ class _BrokerState:
         self.heartbeats: dict[str, float] = {}
         self.cancelled: set[str] = set()
         self.progress: dict[str, str] = {}
+        self.yields: dict[str, list[str]] = {}
         self.schedules_cancelled: set[str] = set()
         self.throttles: dict[str, float] = {}
         self.task_waiters: list[asyncio.Event] = []
@@ -159,6 +160,22 @@ async def _dispatch(
         if tid in state.progress:
             return {"progress_json": state.progress[tid]}
         return None
+    if op == "send_yield":
+        buf = state.yields.setdefault(payload["task_id"], [])
+        seq = int(payload["seq"])
+        while len(buf) <= seq:
+            buf.append("")
+        buf[seq] = payload["value_json"]
+        return {"ok": True}
+    if op == "get_yields":
+        buf = state.yields.get(payload["task_id"], [])
+        after = int(payload.get("after_seq", -1))
+        items = [
+            [i, buf[i]]
+            for i in range(after + 1, len(buf))
+            if buf[i] != ""
+        ]
+        return {"yields": items}
     if op == "cancel_schedule":
         state.schedules_cancelled.add(payload["schedule_id"])
         return {"cancelled": True}
