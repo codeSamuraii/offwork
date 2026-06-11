@@ -25,15 +25,15 @@ import asyncio, math, offwork
 
 offwork.connect("local://localhost:9748")
 
-def add(a: float, b: float) -> float:
+def add(a, b):  # plain helper — no @offwork.task
     return a + b
 
-@offwork.task  # only the entry point needs this - add() is captured automatically
-def hypotenuse(a: float, b: float) -> float:
-    return math.sqrt(add(a**2, b**2))
+@offwork.task
+def dot_product(u, v):
+    return sum(a * b for a, b in zip(u, v))  # helper is captured
 
 async def main():
-    print(await hypotenuse.run(3.0, 4.0))  # 5.0
+    print(await dot_product.run([1, 2, 3], [4, 5, 6]))  # runs remotely, prints 32
 
 asyncio.run(main())
 ```
@@ -46,7 +46,10 @@ Swap `local://` for Redis or RabbitMQ to run on a remote worker:
 
 ```bash
 pip install offwork[redis]
-offwork worker --backend redis://other-machine:6379
+offwork worker --backend redis://redis-service.svc:6379
+```
+```python
+offwork.connect("redis://redis-service.svc:6379")
 ```
 
 ## Features
