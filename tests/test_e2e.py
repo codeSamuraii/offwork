@@ -45,6 +45,56 @@ USE_SANDBOX = os.environ.get("OFFWORK_TEST_SANDBOX", "") == "1"
 pytestmark = pytest.mark.skipif(not BACKEND_URL, reason="OFFWORK_TEST_BACKEND not set")
 
 
+# ---------------------------------------------------------------------------
+# Broker reachability check
+# ---------------------------------------------------------------------------
+
+def _broker_reachable(url: str) -> bool:
+    """Return True if a TCP connection to the broker host:port succeeds."""
+    parsed = urlparse(url)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port
+    if not port:
+        return True  # dynamic / unknown — skip the check
+    try:
+        with socket.create_connection((host, port), timeout=2.0):
+            return True
+    except OSError:
+        return False
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _require_broker() -> None:
+    """Fail fast with a clear message if the configured broker is not up.
+
+    Redis and RabbitMQ must be started manually before running E2E tests.
+    The WS broker is launched automatically by the ``ws_broker`` fixture
+    and does not need a pre-existing process.
+    """
+    if not BACKEND_URL:
+        return  # pytestmark will skip all tests
+
+    scheme = BACKEND_URL.split("://", 1)[0].lower()
+
+    if scheme in ("ws", "wss"):
+        return  # started automatically by _start_ws_broker
+
+    broker_names = {"redis": "Redis", "rediss": "Redis", "amqp": "RabbitMQ", "amqps": "RabbitMQ"}
+    broker_name = broker_names.get(scheme, scheme)
+
+    if not _broker_reachable(BACKEND_URL):
+        parsed = urlparse(BACKEND_URL)
+        pytest.exit(
+            f"\n{'=' * 60}\n"
+            f"  E2E tests require {broker_name} but it is not reachable.\n"
+            f"  Expected at {parsed.hostname}:{parsed.port}\n\n"
+            f"  Start it with:\n"
+            f"    {'redis-server  or  brew services start redis' if 'redis' in scheme else 'rabbitmq-server  or  brew services start rabbitmq'}\n"
+            f"{'=' * 60}\n",
+            returncode=1,
+        )
+
+
 def _resolve_dynamic_port(url: str) -> str:
     """Pick a free port for ``ws://host:0`` so worker + client agree on it."""
     if not url:

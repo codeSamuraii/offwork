@@ -42,12 +42,16 @@ jobs:
       fail-fast: false
       matrix:
         backend:
+          - name: websocket
+            url: ws://localhost
+            extras: ws
           - name: redis
             url: redis://localhost:6379
             extras: redis
           - name: rabbitmq
             url: amqp://localhost
             extras: rabbitmq
+
         signing: [false, true]
         sandbox: [false, true]
 
