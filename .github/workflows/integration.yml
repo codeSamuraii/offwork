@@ -43,7 +43,7 @@ jobs:
       matrix:
         backend:
           - name: websocket
-            url: ws://localhost
+            url: ws://localhost:0  # port will be picked automatically
             extras: ws
           - name: redis
             url: redis://localhost:6379
