@@ -35,8 +35,8 @@ try:
     import websockets
 except ImportError:
     raise ImportError(
-        "websockets package is required for RabbitMQBackend. "
-        "Install it with: pip install websockets"
+        "websockets package is required for WebSocketBackend. "
+        "Install it with: pip install offwork[ws]"
     ) from None
 
 from offwork.core.version import _VERSION

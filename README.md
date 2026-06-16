@@ -25,15 +25,15 @@ import asyncio, math, offwork
 
 offwork.connect("local://localhost:9748")
 
-def add(a: float, b: float) -> float:
-    return a + b
+def inverse(x: float) -> float:
+    return 1 / x
 
-@offwork.task  # only the entry point needs this - add() is captured automatically
-def hypotenuse(a: float, b: float) -> float:
-    return math.sqrt(add(a**2, b**2))
+@offwork.task  # only the entry point needs this - inverse() is captured automatically
+def inverse_root(n: float) -> float:
+    return inverse(math.sqrt(n))
 
 async def main():
-    print(await hypotenuse.run(3.0, 4.0))  # 5.0
+    print(await inverse_root.run(4))  # 0.5
 
 asyncio.run(main())
 ```

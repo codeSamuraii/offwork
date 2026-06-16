@@ -321,8 +321,8 @@ When arguments contain class instances, a custom JSON encoder serializes them vi
 {
   "id": "a1b2c3d4e5f6",
   "graph": "{\"version\": \"0.1.2\", \"objects\": {...}, ...}",
-  "function": "mymodule.hypotenuse",
-  "args": [3.0, 4.0],
+  "function": "mymodule.inverse_root",
+  "args": [4],
   "kwargs": {},
   "timeout": 30,
   "retries": 2
@@ -408,16 +408,16 @@ Functions are stored in a content-addressable JSON format. Each function is iden
   "version": "0.1.2",
   "objects": {
     "a1b2...": {
-      "name": "add",
+      "name": "inverse",
       "module": "mymodule",
-      "source": "def add(a: int, b: int) -> int:\n    return a + b",
+      "source": "def inverse(x: float) -> float:\n    return 1 / x",
       "imports": [],
       "owner_class": null
     },
     "c3d4...": {
-      "name": "hypotenuse",
+      "name": "inverse_root",
       "module": "mymodule",
-      "source": "def hypotenuse(a: float, b: float) -> float:\n    ...",
+      "source": "def inverse_root(n: float) -> float:\n    ...",
       "imports": [{"statement": "import math", "bound_name": "math"}],
       "owner_class": null,
       "module_vars": {"PRECISION": "PRECISION = 1e-10"}
@@ -427,8 +427,8 @@ Functions are stored in a content-addressable JSON format. Each function is iden
     "c3d4...": ["a1b2..."]
   },
   "refs": {
-    "mymodule.add": "a1b2...",
-    "mymodule.hypotenuse": "c3d4..."
+    "mymodule.inverse": "a1b2...",
+    "mymodule.inverse_root": "c3d4..."
   }
 }
 ```

@@ -22,22 +22,22 @@ import asyncio, math, offwork
 
 offwork.connect("local://localhost:9748")
 
-def add(a, b):
-    return a + b
+def inverse(x):
+    return 1 / x
 
 @offwork.task
-def hypotenuse(a: float, b: float) -> float:
-    return math.sqrt(add(a**2, b**2))
+def inverse_root(n: float) -> float:
+    return inverse(math.sqrt(n))
 
 async def main():
-    print(await hypotenuse.run(3.0, 4.0))  # 5.0
+    print(await inverse_root.run(4))  # 0.5
 
 asyncio.run(main())
 ```
 
 ```bash
 offwork worker --backend local://localhost:9748 --tmp   # Terminal 1
-python my_script.py                                    # Terminal 2 → 5.0
+python my_script.py                                    # Terminal 2 → 0.5
 ```
 
 `--tmp` runs the worker in an isolated venv, cleaned up on exit. For multi-machine, swap `local://` for `redis://` or `amqp://` and point to the broker's address.
