@@ -210,3 +210,32 @@ class TestWebSocketBackend:
             assert isinstance(ctx.backend, WebSocketBackend)
         finally:
             await _remote.disconnect()
+
+
+class TestApiKeyResolution:
+    def test_key_from_url(self) -> None:
+        backend = WebSocketBackend("ws://host/api/v1/broker/ws?api_key=urlkey")
+        assert backend._api_key == "urlkey"
+        assert "api_key" not in backend._url
+
+    def test_key_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("OFFWORK_API_KEY", "envkey")
+        backend = WebSocketBackend("ws://host/api/v1/broker/ws")
+        assert backend._api_key == "envkey"
+
+    def test_key_kwarg_beats_url_and_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("OFFWORK_API_KEY", "envkey")
+        backend = WebSocketBackend(
+            "ws://host/api/v1/broker/ws?api_key=urlkey", api_key="kwargkey",
+        )
+        assert backend._api_key == "kwargkey"
+
+    def test_url_beats_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("OFFWORK_API_KEY", "envkey")
+        backend = WebSocketBackend("ws://host/api/v1/broker/ws?api_key=urlkey")
+        assert backend._api_key == "urlkey"
+
+    def test_no_key_anywhere(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("OFFWORK_API_KEY", raising=False)
+        backend = WebSocketBackend("ws://host/api/v1/broker/ws")
+        assert backend._api_key is None

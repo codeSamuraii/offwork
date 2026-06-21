@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -45,6 +46,7 @@ from offwork.worker.backends.base import Backend
 logger = logging.getLogger(__name__)
 
 _DEFAULT_BROKER_PATH = "/api/v1/broker/ws"
+_API_KEY_ENV_VAR = "OFFWORK_API_KEY"
 _DEFAULT_LONG_POLL_SECONDS = 30.0
 _PROTOCOL_VERSION = 1
 _RECONNECT_BACKOFF_MIN = 0.5
@@ -62,17 +64,19 @@ class _Pending:
 class WebSocketBackend(Backend):
     """Persistent WebSocket transport for the hosted broker."""
 
-    def __init__(self, url: str, *, role: str = "client") -> None:
+    def __init__(
+        self, url: str, *, role: str = "client", api_key: str | None = None,
+    ) -> None:
         parsed = urlparse(url)
         if parsed.scheme not in {"ws", "wss"}:
             raise ValueError(f"Unsupported WS backend scheme: {parsed.scheme!r}")
 
         query_items = parse_qsl(parsed.query, keep_blank_values=True)
-        api_key = ""
+        url_api_key = ""
         filtered: list[tuple[str, str]] = []
         for key, value in query_items:
-            if key == "api_key" and not api_key:
-                api_key = value
+            if key == "api_key" and not url_api_key:
+                url_api_key = value
                 continue
             filtered.append((key, value))
 
@@ -80,7 +84,11 @@ class WebSocketBackend(Backend):
         if not path.endswith("/ws"):
             path = path.rstrip("/") + "/ws"
         self._url = urlunparse(parsed._replace(path=path, query=urlencode(filtered)))
-        self._api_key = api_key or None
+        # Precedence: explicit kwarg > ?api_key= in the URL > OFFWORK_API_KEY
+        # env var. Keeping the key out of the URL avoids leaking it into
+        # logs, shell history, and browser history.
+        resolved = api_key or url_api_key or os.environ.get(_API_KEY_ENV_VAR, "")
+        self._api_key = resolved or None
         self._role = role
 
         self._lock = asyncio.Lock()

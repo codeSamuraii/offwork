@@ -310,14 +310,18 @@ Or: `export OFFWORK_BACKEND=redis://localhost:6379`
 
 When connecting to a hosted broker such as cloud_poc, use a `ws://` or `wss://`
 URL. `WebSocketBackend` opens one persistent socket per process and multiplexes
-all broker operations over it by request id. Authentication is via
-`?api_key=<key>` in the URL (stripped from the URL and sent in the handshake).
+all broker operations over it by request id. The API key is resolved from, in
+precedence order: an explicit `api_key=` argument, `?api_key=` in the URL, or
+the `OFFWORK_API_KEY` environment variable. However it is supplied, the key is
+stripped from the URL and sent in the handshake. Prefer the env var so the key
+stays out of shell history, logs, and source:
 
 ```python
 import offwork
 
-# URL returned by /api/v1/users/register or /api/v1/users/me
-offwork.connect("wss://example.com/api/v1/broker/ws?api_key=<your key>")
+# export OFFWORK_API_KEY=<your key>
+# Broker URL returned by /api/v1/users/register or /api/v1/users/me
+offwork.connect("wss://example.com/api/v1/broker/ws")
 
 @offwork.task
 def hello(name: str) -> str:
@@ -326,6 +330,8 @@ def hello(name: str) -> str:
 async def main():
     print(await hello.run("world"))  # executes on a cloud worker pod
 ```
+
+The `?api_key=<key>` form is still accepted for simplicity.
 
 Reconnect is automatic with bounded backoff. Mutating ops that were in-flight
 when the socket dropped surface as `ConnectionError` — the caller decides
