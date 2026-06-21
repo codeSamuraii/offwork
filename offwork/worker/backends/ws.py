@@ -2,8 +2,8 @@
 
 One persistent WS connection per process, multiplexed request/response by
 ``request_id``. Reconnects automatically with bounded backoff. The wire
-protocol is documented in ``cloud_poc/docs/WS_PLAN.md`` and implemented
-on the server side in ``backend/app/routes/broker_ws.py``.
+protocol is documented in ``cloud_poc/docs/ALPHA.md`` (Appendix A) and
+implemented on the server side in ``backend/app/routes/broker_ws.py``.
 
 Notes
 -----
