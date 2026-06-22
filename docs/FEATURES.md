@@ -311,10 +311,18 @@ Or: `export OFFWORK_BACKEND=redis://localhost:6379`
 When connecting to a hosted broker such as cloud_poc, use a `ws://` or `wss://`
 URL. `WebSocketBackend` opens one persistent socket per process and multiplexes
 all broker operations over it by request id. The API key is resolved from, in
-precedence order: an explicit `api_key=` argument, `?api_key=` in the URL, or
-the `OFFWORK_API_KEY` environment variable. However it is supplied, the key is
-stripped from the URL and sent in the handshake. Prefer the env var so the key
-stays out of shell history, logs, and source:
+precedence order:
+
+1. an explicit `api_key=` argument,
+2. `?api_key=` in the URL,
+3. the `OFFWORK_API_KEY` environment variable,
+4. an `api_key` file in `./.offwork/` (current directory), then `~/.offwork/`.
+
+The file is one line with the bare key (`#` comments and blank lines are
+ignored) — the convenient persistent option, e.g.
+`echo "<your key>" > ~/.offwork/api_key`. However it is supplied, the key is
+stripped from the URL and sent in the handshake. Prefer the env var or the file
+so the key stays out of shell history, logs, and source:
 
 ```python
 import offwork

@@ -7,6 +7,7 @@ exercise every Backend ABC method without standing up cloud_poc.
 import asyncio
 import json
 import socket
+from pathlib import Path
 from typing import Any
 from collections.abc import AsyncIterator
 
@@ -235,7 +236,60 @@ class TestApiKeyResolution:
         backend = WebSocketBackend("ws://host/api/v1/broker/ws?api_key=urlkey")
         assert backend._api_key == "urlkey"
 
-    def test_no_key_anywhere(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_no_key_anywhere(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
         monkeypatch.delenv("OFFWORK_API_KEY", raising=False)
+        # Isolate from any real ./.offwork or ~/.offwork on the dev machine.
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
         backend = WebSocketBackend("ws://host/api/v1/broker/ws")
         assert backend._api_key is None
+
+    def _write_key_file(self, base: Path, key: str) -> None:
+        d = base / ".offwork"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "api_key").write_text(f"# offwork api key\n{key}\n", encoding="utf-8")
+
+    def test_key_from_cwd_file(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        monkeypatch.delenv("OFFWORK_API_KEY", raising=False)
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+        monkeypatch.chdir(tmp_path)
+        self._write_key_file(tmp_path, "filekey")
+        backend = WebSocketBackend("ws://host/api/v1/broker/ws")
+        assert backend._api_key == "filekey"
+
+    def test_key_from_home_file(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        monkeypatch.delenv("OFFWORK_API_KEY", raising=False)
+        home = tmp_path / "home"
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+        monkeypatch.chdir(tmp_path)  # no ./.offwork here
+        self._write_key_file(home, "homekey")
+        backend = WebSocketBackend("ws://host/api/v1/broker/ws")
+        assert backend._api_key == "homekey"
+
+    def test_cwd_file_beats_home_file(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        monkeypatch.delenv("OFFWORK_API_KEY", raising=False)
+        home = tmp_path / "home"
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+        monkeypatch.chdir(tmp_path)
+        self._write_key_file(home, "homekey")
+        self._write_key_file(tmp_path, "cwdkey")
+        backend = WebSocketBackend("ws://host/api/v1/broker/ws")
+        assert backend._api_key == "cwdkey"
+
+    def test_env_beats_file(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        monkeypatch.setenv("OFFWORK_API_KEY", "envkey")
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+        monkeypatch.chdir(tmp_path)
+        self._write_key_file(tmp_path, "filekey")
+        backend = WebSocketBackend("ws://host/api/v1/broker/ws")
+        assert backend._api_key == "envkey"

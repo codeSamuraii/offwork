@@ -29,6 +29,7 @@ import os
 import time
 import uuid
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
@@ -47,7 +48,33 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_BROKER_PATH = "/api/v1/broker/ws"
 _API_KEY_ENV_VAR = "OFFWORK_API_KEY"
+# Local credential file, looked up (in order) in the current working
+# directory then ``~/.offwork``. One line: the bare API key. Lower
+# precedence than the explicit kwarg / URL / env var.
+_API_KEY_FILE = "api_key"
 _DEFAULT_LONG_POLL_SECONDS = 30.0
+
+
+def _read_api_key_file() -> str:
+    """Return the API key from ``./.offwork/api_key`` or ``~/.offwork/api_key``.
+
+    Checks the current directory first, then the home directory. The file
+    is one line containing the bare key (blank lines and ``#`` comments are
+    ignored). Returns ``""`` when no readable file is found.
+    """
+    candidates = [
+        Path.cwd() / ".offwork" / _API_KEY_FILE,
+        Path.home() / ".offwork" / _API_KEY_FILE,
+    ]
+    for path in candidates:
+        try:
+            for raw in path.read_text(encoding="utf-8").splitlines():
+                line = raw.strip()
+                if line and not line.startswith("#"):
+                    return line
+        except OSError:
+            continue
+    return ""
 _PROTOCOL_VERSION = 1
 _RECONNECT_BACKOFF_MIN = 0.5
 _RECONNECT_BACKOFF_MAX = 30.0
@@ -85,9 +112,15 @@ class WebSocketBackend(Backend):
             path = path.rstrip("/") + "/ws"
         self._url = urlunparse(parsed._replace(path=path, query=urlencode(filtered)))
         # Precedence: explicit kwarg > ?api_key= in the URL > OFFWORK_API_KEY
-        # env var. Keeping the key out of the URL avoids leaking it into
-        # logs, shell history, and browser history.
-        resolved = api_key or url_api_key or os.environ.get(_API_KEY_ENV_VAR, "")
+        # env var > ./.offwork/api_key or ~/.offwork/api_key file. Keeping
+        # the key out of the URL avoids leaking it into logs, shell history,
+        # and browser history; the file is the convenient persistent option.
+        resolved = (
+            api_key
+            or url_api_key
+            or os.environ.get(_API_KEY_ENV_VAR, "")
+            or _read_api_key_file()
+        )
         self._api_key = resolved or None
         self._role = role
 
