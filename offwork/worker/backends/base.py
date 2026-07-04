@@ -193,6 +193,15 @@ class Backend(abc.ABC):
 
     # -- Lifecycle -------------------------------------------------------------
 
+    @property
+    def supports_persistent_storage(self) -> bool:
+        """Return ``True`` when the broker mounts per-user persistent storage.
+
+        Only the hosted WebSocket backend (``ws://`` / ``wss://``) supports
+        ``@offwork.task(storage=True)``. Other backends return ``False``.
+        """
+        return False
+
     @abc.abstractmethod
     async def close(self) -> None:
         """Release resources."""

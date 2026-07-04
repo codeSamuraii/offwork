@@ -14,6 +14,7 @@ import contextlib
 from typing import TYPE_CHECKING, Any
 from collections.abc import Callable, Awaitable
 
+from offwork.core.errors import StorageNotSupportedError
 from offwork.core.task import Task, _TaskEncoder
 from offwork.core.token import resolve_root_token
 from offwork.core.version import _VERSION
@@ -220,6 +221,20 @@ def get_backend() -> Backend:
     return _active_backend  # type: ignore[return-value]
 
 
+def _require_storage_backend(backend: Backend, task: Task) -> None:
+    """Reject ``storage=True`` tasks when the active backend has no volume mount."""
+    if not task.storage:
+        return
+    if backend.supports_persistent_storage:
+        return
+    raise StorageNotSupportedError(
+        "@offwork.task(storage=True) requires a hosted WebSocket broker "
+        "(ws:// or wss://). Redis, RabbitMQ, and local backends do not "
+        "mount per-user persistent storage. Connect with offwork.connect("
+        "'wss://<host>/api/v1/broker/ws') for offwork cloud."
+    )
+
+
 def _encode_task(task: Task, root_token: bytes | None) -> str:
     """Return the wire JSON for *task*, signed if *root_token* is set."""
     if root_token is None:
@@ -274,8 +289,10 @@ def _prepare_submission(
         retries=retries,
         retry_delay=opts.get("retry_delay", 1.0),
         throttle=opts.get("throttle"),
+        storage=bool(opts.get("storage", False)),
         **task_overrides,
     )
+    _require_storage_backend(backend, task)
     return backend, task, _root_token
 
 
@@ -807,6 +824,7 @@ async def _execute_task(
                 retries=task.retries,
                 retry_delay=task.retry_delay,
                 throttle=task.throttle,
+                storage=task.storage,
                 scheduled_at=next_at,
                 recur_interval=task.recur_interval,
                 recur_deadline=task.recur_deadline,

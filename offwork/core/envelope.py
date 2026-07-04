@@ -175,4 +175,5 @@ def verify_task_envelope(
         recur_remaining=data.get("recur_remaining"),
         schedule_id=data.get("schedule_id"),
         throttle=data.get("throttle"),
+        storage=bool(data.get("storage", False)),
     )

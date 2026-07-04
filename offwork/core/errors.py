@@ -75,6 +75,14 @@ class WorkerOnlyError(Error):
     """Raised when a worker-only import stub is used on the client."""
 
 
+class StorageNotSupportedError(Error):
+    """Raised when ``storage=True`` is used with a backend that has no persistent storage.
+
+    Per-user persistent storage is only available on the hosted WebSocket
+    broker (``ws://`` / ``wss://``), e.g. offwork cloud.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Custom excepthook: suppress client traceback for RemoteError
 # ---------------------------------------------------------------------------

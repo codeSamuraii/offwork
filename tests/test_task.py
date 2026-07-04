@@ -46,6 +46,16 @@ class TestTaskSerialization:
         assert restored.kwargs == original.kwargs
         assert restored.task_id == original.task_id
 
+    def test_storage_roundtrip(self) -> None:
+        original = Task(graph_json="{}", function_name="f", storage=True)
+        restored = Task.from_json(original.to_json())
+        assert restored.storage is True
+
+    def test_storage_omitted_when_false(self) -> None:
+        task = Task(graph_json="{}", function_name="f", storage=False)
+        data = json.loads(task.to_json())
+        assert "storage" not in data
+
     def test_to_json_structure(self) -> None:
         task = Task(
             graph_json='{"g": 1}',

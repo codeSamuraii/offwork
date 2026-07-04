@@ -175,3 +175,25 @@ Recurring backup job via `submit(run_every=...)`. The task is small; it delegate
 schedule = await snapshot_directory.submit(source_path, run_every=timedelta(hours=6))
 # runs every 6 hours; call await schedule.cancel() to stop
 ```
+
+## [persistent_storage.py](persistent_storage.py)
+
+Per-user persistent volume on the hosted cloud broker. Opt in with
+`@offwork.task(storage=True)` and read/write via `offwork.storage_path()`.
+State survives across task runs and worker scale-to-zero cycles.
+
+Requires `wss://` (or `ws://`) — `local://`, Redis, and RabbitMQ raise
+`StorageNotSupportedError` if `storage=True`.
+
+```bash
+export OFFWORK_BACKEND=wss://offwork.live/api/v1/broker/ws
+export OFFWORK_API_KEY=<your key>
+python examples/persistent_storage.py
+```
+
+```python
+@offwork.task(storage=True)
+def touch_counter(label: str) -> dict:
+    path = offwork.storage_path("demo_counter.json")
+    ...
+```

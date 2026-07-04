@@ -58,6 +58,7 @@ offwork/
         task.py          Task dataclass (graph_json + name + args + options).
         errors.py        Error hierarchy. All exceptions inherit Error.
         progress.py      ProgressInfo + progress() contextvar callback.
+        log_capture.py   Per-task log capture: ``_log_callback`` ContextVar + ``TaskLogHandler``.
         version.py       _VERSION (resolved from package metadata).
         signing.py       HMAC primitives (compute/verify_signature, derive_key) + NonceLRU.
         ed25519.py       Pure-Python Ed25519 (RFC 8032, stdlib only).
@@ -157,6 +158,15 @@ The `__all__` in [offwork/__init__.py](../offwork/__init__.py) is the public sur
 - **Backend defaults are no-ops.** `Backend` ABC supplies safe defaults for cancellation, progress, throttling, scheduling, notifications. Subclasses override only what they support.
 - **Subgraph cache key.** `Worker` keys cache by SHA-256 of sorted reachable content hashes — not by `task_id`, not by `function_name`.
 - **Result envelope statuses.** `"ok" | "error" | "cancelled" | "throttled"`. Anything else is a bug.
+- **Per-task log capture routes ``logging`` records to the backend via ``send_log_line``.**
+  `_execute_task` in [worker/remote.py](../offwork/worker/remote.py) attaches a
+  `TaskLogHandler` (from [core/log_capture.py](../offwork/core/log_capture.py)) to
+  the root logger for the task's duration and sets `_log_callback` so `emit_log_line`
+  forwards each formatted record to the backend. The root logger defaults to `WARNING`,
+  so the handler also **lowers the root level to `INFO`** while the task runs (restoring
+  it on teardown) — otherwise a user's `logging.getLogger(__name__).info(...)` call
+  would be dropped before reaching the handler. The level is only changed if it was
+  above `INFO`, so explicit user configuration (e.g. `DEBUG`) is respected.
 - **Tests use real backends where reasonable** (e.g. real Redis when available). See `tests/conftest.py`.
 
 ## Where things live (cheat-sheet for common edits)

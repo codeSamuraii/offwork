@@ -251,12 +251,17 @@ See [Sandbox](SANDBOX.md) for configuration and management.
 
 ## Persistent storage
 
-When a worker provides a persistent mount (for example the hosted broker gives each user a private volume), tasks reach it through `offwork.storage_path()`:
+When a worker provides a persistent mount (for example the hosted broker
+mounts a per-user volume when the task uses ``@offwork.task(storage=True)``),
+tasks reach it through `offwork.storage_path()`:
+
+``storage=True`` is only supported on the hosted WebSocket broker
+(``ws://`` / ``wss://``). Other backends raise ``StorageNotSupportedError``.
 
 ```python
 import offwork
 
-@offwork.task
+@offwork.task(storage=True)
 def cache_model(url: str) -> str:
     dest = offwork.storage_path("models", "weights.bin")
     dest.parent.mkdir(parents=True, exist_ok=True)   # subdirectories are yours to create

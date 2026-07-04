@@ -17,7 +17,7 @@ _P = ParamSpec("_P")
 @overload
 def task(func: Callable[_P, _R]) -> TracedFunction[_P, _R]: ...
 @overload
-def task(*, timeout: float | None = ..., retries: int = ..., retry_delay: float = ..., throttle: timedelta | float | None = ...) -> TraceDecorator: ...
+def task(*, timeout: float | None = ..., retries: int = ..., retry_delay: float = ..., throttle: timedelta | float | None = ..., storage: bool = ...) -> TraceDecorator: ...
 
 
 def task(
@@ -27,6 +27,7 @@ def task(
     retries: int = 0,
     retry_delay: float = 1.0,
     throttle: timedelta | float | None = None,
+    storage: bool = False,
 ) -> object:
     """Enable a function for serialization and remote execution.
 
@@ -40,12 +41,21 @@ def task(
 
         @offwork.task(timeout=30, retries=3)
         def flaky(x): ...
+
+        @offwork.task(storage=True)
+        def cache_to_disk(x): ...
     """
     if func is not None:
-        return _apply_trace(func, timeout=timeout, retries=retries, retry_delay=retry_delay, throttle=throttle)
+        return _apply_trace(
+            func, timeout=timeout, retries=retries, retry_delay=retry_delay,
+            throttle=throttle, storage=storage,
+        )
 
     def decorator(f: Callable[_P, _R]) -> object:
-        return _apply_trace(f, timeout=timeout, retries=retries, retry_delay=retry_delay, throttle=throttle)
+        return _apply_trace(
+            f, timeout=timeout, retries=retries, retry_delay=retry_delay,
+            throttle=throttle, storage=storage,
+        )
 
     return decorator
 
@@ -57,6 +67,7 @@ def _apply_trace(
     retries: int = 0,
     retry_delay: float = 1.0,
     throttle: timedelta | float | None = None,
+    storage: bool = False,
 ) -> TracedFunction[_P, _R]:
     if timeout is not None and timeout <= 0:
         raise ValueError(f"timeout must be positive, got {timeout}")
@@ -83,5 +94,6 @@ def _apply_trace(
         "retries": retries,
         "retry_delay": retry_delay,
         "throttle": throttle_seconds,
+        "storage": storage,
     }
     return wrapper

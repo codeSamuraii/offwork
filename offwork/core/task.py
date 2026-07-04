@@ -421,6 +421,7 @@ class Task:
     recur_remaining: int | None = None
     schedule_id: str | None = None
     throttle: float | None = None
+    storage: bool = False
 
     # -- Serialization -------------------------------------------------------
 
@@ -451,6 +452,8 @@ class Task:
             d["schedule_id"] = self.schedule_id
         if self.throttle is not None:
             d["throttle"] = self.throttle
+        if self.storage:
+            d["storage"] = True
         return d
 
     def to_json(self) -> str:
@@ -476,4 +479,5 @@ class Task:
             recur_remaining=data.get("recur_remaining"),
             schedule_id=data.get("schedule_id"),
             throttle=data.get("throttle"),
+            storage=bool(data.get("storage", False)),
         )

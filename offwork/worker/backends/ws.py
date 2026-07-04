@@ -91,6 +91,10 @@ class _Pending:
 class WebSocketBackend(Backend):
     """Persistent WebSocket transport for the hosted broker."""
 
+    @property
+    def supports_persistent_storage(self) -> bool:
+        return True
+
     def __init__(
         self, url: str, *, role: str = "client", api_key: str | None = None,
     ) -> None:

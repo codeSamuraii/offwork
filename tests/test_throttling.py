@@ -128,3 +128,21 @@ class TestTraceThrottleOption:
             @offwork.task(throttle=-1.0)
             def my_func() -> int:
                 return 1
+
+
+class TestTraceStorageOption:
+    def test_storage_default_false(self) -> None:
+        @offwork.task
+        def my_func() -> int:
+            return 1
+
+        opts = my_func.__offwork_options__  # type: ignore[attr-defined]
+        assert opts["storage"] is False
+
+    def test_storage_true_stored(self) -> None:
+        @offwork.task(storage=True)
+        def my_func() -> int:
+            return 1
+
+        opts = my_func.__offwork_options__  # type: ignore[attr-defined]
+        assert opts["storage"] is True
