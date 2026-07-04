@@ -334,7 +334,7 @@ import offwork
 
 # export OFFWORK_API_KEY=<your key>
 # Broker URL returned by /api/v1/users/register or /api/v1/users/me
-offwork.connect("wss://example.com/api/v1/broker/ws")
+offwork.connect("wss://example.com/api/v1/broker/ws", concurrency=4)
 
 @offwork.task
 def hello(name: str) -> str:
@@ -345,6 +345,13 @@ async def main():
 ```
 
 The `?api_key=<key>` form is still accepted for simplicity.
+
+**Worker concurrency** — pass `concurrency=N` to `offwork.connect()` (default
+`4`, max `8` on the hosted broker). The client sends the value in the WS
+`hello` handshake; the control plane stores it on your user record and
+configures your worker pod's `-c` flag and resource limits accordingly.
+Ignored for `redis://`, `local://`, and `amqp://` backends (use
+`offwork worker -c N` locally instead).
 
 Reconnect is automatic with bounded backoff. Mutating ops that were in-flight
 when the socket dropped surface as `ConnectionError` — the caller decides

@@ -32,12 +32,14 @@ class _BrokerState:
         self.schedules: set[str] = set()
         self.throttles: dict[str, float] = {}
         self.api_keys: list[str | None] = []
+        self.hellos: list[dict[str, Any]] = []
 
 
 async def _handle(ws: Any, state: _BrokerState) -> None:
     import time
     hello = json.loads(await ws.recv())
     state.api_keys.append(hello.get("api_key"))
+    state.hellos.append(hello)
     await ws.send(json.dumps({
         "type": "hello_ok", "protocol": 1, "connection_id": "test",
     }))
@@ -159,6 +161,39 @@ async def ws_backend() -> AsyncIterator[tuple[WebSocketBackend, _BrokerState]]:
 
 
 class TestWebSocketBackend:
+    @pytest.mark.asyncio
+    async def test_hello_includes_concurrency_for_client_role(
+        self, ws_backend: tuple[WebSocketBackend, _BrokerState],
+    ) -> None:
+        backend, state = ws_backend
+        await backend.submit('{"task": 1}')
+        assert state.hellos[-1]["concurrency"] == 4
+
+    @pytest.mark.asyncio
+    async def test_custom_concurrency_in_hello(self) -> None:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            host, port = sock.getsockname()
+
+        state = _BrokerState()
+
+        async def _serve(ws: Any) -> None:
+            await _handle(ws, state)
+
+        server = await websockets.serve(_serve, host, port)
+        try:
+            backend = WebSocketBackend(
+                f"ws://{host}:{port}", api_key="k", concurrency=6,
+            )
+            try:
+                await backend.submit("{}")
+                assert state.hellos[-1]["concurrency"] == 6
+            finally:
+                await backend.close()
+        finally:
+            server.close()
+            await server.wait_closed()
+
     @pytest.mark.asyncio
     async def test_submit_and_listen(
         self, ws_backend: tuple[WebSocketBackend, _BrokerState],

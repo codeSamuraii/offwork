@@ -130,10 +130,12 @@ Worker side: `serve` ([worker/remote.py](../offwork/worker/remote.py)) drives th
 The `__all__` in [offwork/__init__.py](../offwork/__init__.py) is the public surface. Anything else is internal and subject to change. Notable exports:
 
 - Decorator: `task`.
-- Lifecycle: `connect(url)`, `disconnect()`, `serve(url, concurrency=, sandbox=, ...)`.
+- Lifecycle: `connect(url, concurrency=4)`, `disconnect()`, `serve(url, concurrency=, sandbox=, ...)`.
   `connect()` accepts `local://`, `redis://`, `rediss://`, `amqp://`, `amqps://`,
   `ws://`, `wss://`. The `ws://` / `wss://` schemes instantiate `WebSocketBackend`
-  (requires `pip install offwork[ws]`).
+  (requires `pip install offwork[ws]`). The `concurrency` argument sets how many
+  tasks the hosted worker runs in parallel (sent in the WS `hello` frame); ignored
+  for other backends.
 - Power-user: `Task`, `Worker`, `Backend`, `serialize`, `reconstruct`, `pack`, `execute`, `get_graph`, `Graph`.
 - Result: `Result`, `ResultEnvelope`, `ProgressInfo`, `progress`.
 - Scheduling: `ScheduleHandle`.

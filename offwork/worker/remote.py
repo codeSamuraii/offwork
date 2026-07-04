@@ -132,7 +132,7 @@ class _ConnectionContext:
         await disconnect()
 
 
-def connect(url: str | None = None, **kwargs: Any) -> _ConnectionContext:
+def connect(url: str | None = None, *, concurrency: int = 4, **kwargs: Any) -> _ConnectionContext:
     """Configure the global transport backend and return a connection handle.
 
     The returned :class:`_ConnectionContext` can be used in three ways:
@@ -162,6 +162,11 @@ def connect(url: str | None = None, **kwargs: Any) -> _ConnectionContext:
 
         When ``None``, the ``OFFWORK_BACKEND`` environment variable is used.
 
+    concurrency
+        Number of tasks the hosted worker may execute in parallel. Only
+        applies to ``ws://`` / ``wss://`` backends; ignored for
+        ``redis://``, ``local://``, and ``amqp://``.
+
     **kwargs
         Passed to the backend constructor.
 
@@ -172,7 +177,14 @@ def connect(url: str | None = None, **kwargs: Any) -> _ConnectionContext:
         ``async with`` context manager.
     """
     global _active_backend, _atexit_registered
+    if concurrency < 1:
+        raise ValueError("concurrency must be >= 1")
     resolved = _resolve_url(url)
+    scheme = resolved.split("://", 1)[0].lower()
+    if scheme in ("ws", "wss"):
+        kwargs["concurrency"] = concurrency
+    else:
+        logger.debug("concurrency=%d ignored for %s backend", concurrency, scheme)
     _active_backend = _create_backend(resolved, **kwargs)
     if not _atexit_registered:
         atexit.register(_sync_disconnect)

@@ -114,7 +114,12 @@ class WebSocketBackend(Backend):
         return True
 
     def __init__(
-        self, url: str, *, role: str = "client", api_key: str | None = None,
+        self,
+        url: str,
+        *,
+        role: str = "client",
+        api_key: str | None = None,
+        concurrency: int = 4,
     ) -> None:
         parsed = urlparse(url)
         if parsed.scheme not in {"ws", "wss"}:
@@ -145,6 +150,7 @@ class WebSocketBackend(Backend):
         )
         self._api_key = resolved or None
         self._role = role
+        self._concurrency = concurrency
 
         self._lock = asyncio.Lock()
         self._ws: Any = None
@@ -173,13 +179,15 @@ class WebSocketBackend(Backend):
             ping_timeout=20.0,
             open_timeout=10.0,
         )
-        hello = {
+        hello: dict[str, Any] = {
             "type": "hello",
             "protocol": _PROTOCOL_VERSION,
             "role": self._role,
             "api_key": self._api_key,
             "agent": f"offwork/{_VERSION}",
         }
+        if self._role == "client":
+            hello["concurrency"] = self._concurrency
         await ws.send(json.dumps(hello))
         try:
             raw = await asyncio.wait_for(ws.recv(), timeout=_HELLO_TIMEOUT)
