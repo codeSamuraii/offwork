@@ -151,7 +151,8 @@ class TestClientServer:
 
 class TestConnectDispatch:
     @pytest.mark.asyncio
-    async def test_connect_local(self) -> None:
+    async def test_connect_local(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("BROKER_URL", raising=False)
         port = _free_port()
         ctx = _remote.connect(f"local://127.0.0.1:{port}")
         try:

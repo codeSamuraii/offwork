@@ -19,6 +19,7 @@ from offwork.core.errors import (
     ThrottleError,
     WorkerOnlyError,
     StorageNotSupportedError,
+    AuthenticationError,
     ClientRevokedError,
     IdentityMismatchError,
 )
@@ -164,6 +165,7 @@ __all__ = [
     "PairingError",
     "WorkerOnlyError",
     "StorageNotSupportedError",
+    "AuthenticationError",
     # Graph
     "get_graph",
     "Graph",

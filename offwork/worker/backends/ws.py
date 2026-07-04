@@ -41,6 +41,7 @@ except ImportError:
         "Install it with: pip install offwork[ws]"
     ) from None
 
+from offwork.core.errors import AuthenticationError
 from offwork.core.version import _VERSION
 from offwork.worker.backends.base import Backend
 
@@ -79,6 +80,23 @@ _PROTOCOL_VERSION = 1
 _RECONNECT_BACKOFF_MIN = 0.5
 _RECONNECT_BACKOFF_MAX = 30.0
 _HELLO_TIMEOUT = 10.0
+# Broker-private close codes (cloud_poc/docs/ALPHA.md Appendix A).
+_BROKER_CLOSE_BAD_HELLO = 4400
+_BROKER_CLOSE_AUTH_FAILED = 4401
+
+_NO_API_KEY_MSG = (
+    "No API key configured for the broker. Set the OFFWORK_API_KEY "
+    "environment variable, write the key to ~/.offwork/api_key, or pass "
+    "api_key= to offwork.connect()."
+)
+_AUTH_REJECTED_MSG = (
+    "Broker rejected the API key (missing or invalid). Check "
+    "OFFWORK_API_KEY or ~/.offwork/api_key."
+)
+_BAD_HELLO_MSG = (
+    "Broker rejected the connection handshake. Check that your offwork "
+    "version is compatible with the broker."
+)
 
 
 class _Pending:
@@ -138,7 +156,16 @@ class WebSocketBackend(Backend):
     # Connection management
     # ------------------------------------------------------------------ #
 
+    def _auth_error_from_close(self, code: int | None) -> AuthenticationError | None:
+        if code == _BROKER_CLOSE_AUTH_FAILED:
+            return AuthenticationError(_AUTH_REJECTED_MSG)
+        if code == _BROKER_CLOSE_BAD_HELLO:
+            return AuthenticationError(_BAD_HELLO_MSG)
+        return None
+
     async def _connect(self) -> Any:
+        if not self._api_key:
+            raise AuthenticationError(_NO_API_KEY_MSG)
         ws = await websockets.connect(
             self._url,
             max_size=None,  # broker payloads (graph_json) can be large
@@ -154,7 +181,17 @@ class WebSocketBackend(Backend):
             "agent": f"offwork/{_VERSION}",
         }
         await ws.send(json.dumps(hello))
-        raw = await asyncio.wait_for(ws.recv(), timeout=_HELLO_TIMEOUT)
+        try:
+            raw = await asyncio.wait_for(ws.recv(), timeout=_HELLO_TIMEOUT)
+        except websockets.ConnectionClosed as exc:
+            auth_err = self._auth_error_from_close(
+                exc.rcvd.code if exc.rcvd is not None else None,
+            )
+            if auth_err is not None:
+                raise auth_err from None
+            raise ConnectionError(
+                f"broker connection closed during hello (code={exc.rcvd.code if exc.rcvd else '?'})",
+            ) from exc
         frame = json.loads(raw)
         if frame.get("type") != "hello_ok" or frame.get("protocol") != _PROTOCOL_VERSION:
             await ws.close()

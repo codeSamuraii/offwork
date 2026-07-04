@@ -83,6 +83,10 @@ class StorageNotSupportedError(Error):
     """
 
 
+class AuthenticationError(Error):
+    """Raised when a hosted broker rejects the API key during the WS handshake."""
+
+
 # ---------------------------------------------------------------------------
 # Custom excepthook: suppress client traceback for RemoteError
 # ---------------------------------------------------------------------------

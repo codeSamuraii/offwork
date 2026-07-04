@@ -42,6 +42,33 @@ BACKEND_URL = os.environ.get("OFFWORK_TEST_BACKEND", "")
 USE_SIGNING = os.environ.get("OFFWORK_TEST_SIGNING", "") == "1"
 USE_SANDBOX = os.environ.get("OFFWORK_TEST_SANDBOX", "") == "1"
 
+# BROKER_URL in the developer shell overrides explicit connect() URLs; strip it
+# so OFFWORK_TEST_BACKEND is authoritative.  WS backends require an API key
+# even when the in-process test broker does not validate it.
+_E2E_WS_API_KEY = "e2e-test-api-key"
+_E2E_UNSET_ENV = frozenset({
+    "BROKER_URL",
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+    "http_proxy", "https_proxy", "all_proxy",
+})
+
+
+def _is_ws_backend(url: str) -> bool:
+    return url.split("://", 1)[0].lower() in {"ws", "wss"}
+
+
+def _e2e_subprocess_env(
+    base: dict[str, str] | None = None,
+    *,
+    backend_url: str = BACKEND_URL,
+) -> dict[str, str]:
+    env = (base or os.environ).copy()
+    for key in _E2E_UNSET_ENV:
+        env.pop(key, None)
+    if _is_ws_backend(backend_url):
+        env.setdefault("OFFWORK_API_KEY", _E2E_WS_API_KEY)
+    return env
+
 pytestmark = pytest.mark.skipif(not BACKEND_URL, reason="OFFWORK_TEST_BACKEND not set")
 
 
@@ -126,7 +153,7 @@ def _start_ws_broker(url: str) -> subprocess.Popen[bytes]:
         "--host", host, "--port", str(port),
     ]
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    env = os.environ.copy()
+    env = _e2e_subprocess_env(backend_url=url)
     env["PYTHONPATH"] = repo_root + os.pathsep + env.get("PYTHONPATH", "")
     proc = subprocess.Popen(
         cmd, cwd=repo_root, env=env,
@@ -171,7 +198,7 @@ def _start_worker(
     if log_level:
         cmd.extend(["--log-level", log_level])
 
-    env = os.environ.copy()
+    env = _e2e_subprocess_env(backend_url=backend)
     if signing_token:
         env["OFFWORK_SIGNING_TOKEN"] = signing_token
 
@@ -271,11 +298,18 @@ def worker(signing_token: str | None, ws_broker: Any) -> Generator[subprocess.Po
 
 
 @pytest.fixture(autouse=True)
-def _connect_backend(signing_token: str | None, ws_broker: Any) -> None:
+def _connect_backend(
+    signing_token: str | None,
+    ws_broker: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Connect the client to the backend before each test."""
-    env = os.environ.copy()
+    for key in _E2E_UNSET_ENV:
+        monkeypatch.delenv(key, raising=False)
+    if _is_ws_backend(BACKEND_URL):
+        monkeypatch.setenv("OFFWORK_API_KEY", _E2E_WS_API_KEY)
     if signing_token:
-        os.environ["OFFWORK_SIGNING_TOKEN"] = signing_token
+        monkeypatch.setenv("OFFWORK_SIGNING_TOKEN", signing_token)
     offwork.connect(BACKEND_URL)
 
 
@@ -610,7 +644,7 @@ if __name__ == "__main__":
         print(f"  {label}")
         print(f"{'=' * 60}\n")
 
-        env = os.environ.copy()
+        env = _e2e_subprocess_env(backend_url=backend_url)
         env["OFFWORK_TEST_BACKEND"] = backend_url
         env["OFFWORK_TEST_SIGNING"] = "1" if signing else "0"
         env["OFFWORK_TEST_SANDBOX"] = "1" if sandbox else "0"

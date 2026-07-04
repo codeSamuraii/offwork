@@ -313,9 +313,22 @@ class TestStream:
 
 
 class TestConnectDisconnect:
-    def test_connect_unknown_scheme_raises(self) -> None:
+    def test_connect_unknown_scheme_raises(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("BROKER_URL", raising=False)
         with pytest.raises(ValueError, match="Unknown backend scheme"):
             _remote.connect("ftp://localhost")
+
+    def test_broker_url_beats_explicit_connect_url(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("BROKER_URL", "wss://example.com/api/v1/broker/ws")
+        assert (
+            _remote._resolve_url("local://127.0.0.1:9")
+            == "wss://example.com/api/v1/broker/ws"
+        )
+        assert _remote._resolve_url(None) == "wss://example.com/api/v1/broker/ws"
 
     @pytest.mark.asyncio
     async def test_disconnect_clears_backend(self, backend: InMemoryBackend) -> None:

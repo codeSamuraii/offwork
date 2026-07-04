@@ -49,7 +49,10 @@ def test_ws_backend_supports_persistent_storage() -> None:
 
 
 @pytest.mark.asyncio
-async def test_storage_task_rejected_on_local_backend() -> None:
+async def test_storage_task_rejected_on_local_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("BROKER_URL", raising=False)
     _remote._active_backend = None
     offwork.connect("local://localhost:9748")
 

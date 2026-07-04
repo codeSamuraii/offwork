@@ -17,6 +17,7 @@ pytest.importorskip("websockets")
 
 import websockets  # noqa: E402
 
+from offwork.core.errors import AuthenticationError  # noqa: E402
 from offwork.worker.backends.ws import WebSocketBackend  # noqa: E402
 import offwork.worker.remote as _remote  # noqa: E402
 
@@ -293,3 +294,36 @@ class TestApiKeyResolution:
         self._write_key_file(tmp_path, "filekey")
         backend = WebSocketBackend("ws://host/api/v1/broker/ws")
         assert backend._api_key == "envkey"
+
+
+class TestBrokerAuthentication:
+    @pytest.mark.asyncio
+    async def test_missing_api_key_fails_before_connect(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        monkeypatch.delenv("OFFWORK_API_KEY", raising=False)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+        backend = WebSocketBackend("ws://host/api/v1/broker/ws")
+        with pytest.raises(AuthenticationError, match="No API key configured"):
+            await backend.submit("{}")
+
+    @pytest.mark.asyncio
+    async def test_rejected_api_key(self) -> None:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            host, port = sock.getsockname()
+
+        async def _reject(ws: Any) -> None:
+            await ws.recv()
+            await ws.close(code=4401)
+
+        server = await websockets.serve(_reject, host, port)
+        backend = WebSocketBackend(f"ws://{host}:{port}", api_key="bad-key")
+        try:
+            with pytest.raises(AuthenticationError, match="rejected the API key"):
+                await backend.submit("{}")
+        finally:
+            await backend.close()
+            server.close()
+            await server.wait_closed()
