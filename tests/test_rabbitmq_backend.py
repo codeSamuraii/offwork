@@ -177,10 +177,11 @@ class TestNotifications:
 
 class TestConnectDispatch:
     @pytest.mark.asyncio
-    async def test_connect_amqp(self) -> None:
+    async def test_connect_amqp(self, monkeypatch: pytest.MonkeyPatch) -> None:
         if not await _rabbitmq_available():
             pytest.skip("RabbitMQ not available")
 
+        monkeypatch.delenv("BROKER_URL", raising=False)
         try:
             ctx = _remote.connect(RABBITMQ_URL)
             assert isinstance(ctx.backend, RabbitMQBackend)
