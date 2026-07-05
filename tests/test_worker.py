@@ -222,6 +222,29 @@ class TestRunWithPolicy:
         worker = Worker(auto_install=False)
         assert await worker.run_with_policy(task) == 15
 
+    async def test_timeout_raises_on_slow_task(self) -> None:
+        store = Store()
+        node = _node(
+            "slow",
+            source=(
+                "def slow():\n"
+                "    import time\n"
+                "    time.sleep(2)\n"
+                "    return 'done'\n"
+            ),
+        )
+        h = store.put(node)
+        store.set_ref("m.slow", h)
+        task = Task(
+            graph_json=store.to_json(),
+            function_name="slow",
+            timeout=0.2,
+            retries=0,
+        )
+        worker = Worker(auto_install=False)
+        with pytest.raises(asyncio.TimeoutError):
+            await worker.run_with_policy(task)
+
 
 # -- BuildInfo tracking -------------------------------------------------------
 

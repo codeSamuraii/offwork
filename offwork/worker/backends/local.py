@@ -307,10 +307,10 @@ class LocalBackend(Backend):
             stderr=subprocess.DEVNULL,
         )
         atexit.register(self._kill_broker)
-        for _ in range(50):  # up to 5 s
+        for _ in range(10):  # up to 5 s
             if self._probe():
                 return
-            time.sleep(0.1)
+            time.sleep(0.5)
         raise ConnectionError(
             f"Broker failed to start on {self._host}:{self._port}"
         )

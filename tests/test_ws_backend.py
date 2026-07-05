@@ -31,6 +31,7 @@ class _BrokerState:
         self.progress: dict[str, str] = {}
         self.schedules: set[str] = set()
         self.throttles: dict[str, float] = {}
+        self.log_lines: dict[str, list[str]] = {}
         self.api_keys: list[str | None] = []
         self.hellos: list[dict[str, Any]] = []
 
@@ -111,6 +112,10 @@ async def _handle(ws: Any, state: _BrokerState) -> None:
             state.throttles[payload["function_name"]] = (
                 time.time() + float(payload["throttle_seconds"])
             )
+            await _respond(req_id, {"ok": True})
+        elif op == "send_log_line":
+            tid = payload["task_id"]
+            state.log_lines.setdefault(tid, []).append(payload["line"])
             await _respond(req_id, {"ok": True})
         else:
             await ws.send(json.dumps({
@@ -213,6 +218,14 @@ class TestWebSocketBackend:
         await backend.send_result("t1", '{"ok": true}')
         assert await backend.try_get_result("t1") == '{"ok": true}'
         assert await backend.get_result("t1", timeout=0.5) == '{"ok": true}'
+
+    @pytest.mark.asyncio
+    async def test_send_log_line(
+        self, ws_backend: tuple[WebSocketBackend, _BrokerState],
+    ) -> None:
+        backend, state = ws_backend
+        await backend.send_log_line("task-logs", "hello from worker")
+        assert state.log_lines["task-logs"] == ["hello from worker"]
 
     @pytest.mark.asyncio
     async def test_heartbeat_cancel_progress_and_throttle(

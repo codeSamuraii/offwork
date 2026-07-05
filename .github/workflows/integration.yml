@@ -51,6 +51,9 @@ jobs:
           - name: rabbitmq
             url: amqp://localhost
             extras: rabbitmq
+          - name: local
+            url: local://127.0.0.1:0
+            extras: ""
 
         signing: [false, true]
         sandbox: [false, true]
@@ -86,7 +89,12 @@ jobs:
       # --- Install --------------------------------------------------------
       - name: Install offwork + backend extras
         run: |
-          pip install -e ".[${{ matrix.backend.extras }}]"
+          EXTRAS="${{ matrix.backend.extras }}"
+          if [ -n "$EXTRAS" ]; then
+            pip install -e ".[$EXTRAS]"
+          else
+            pip install -e .
+          fi
           pip install pytest pytest-asyncio pytest-timeout
 
       # --- Sandbox setup --------------------------------------------------

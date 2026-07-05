@@ -1,11 +1,13 @@
 """End-to-end integration tests.
 
 These tests start real worker processes against real backends (Redis,
-RabbitMQ) and exercise the full client → backend → worker → result path.
+RabbitMQ, WebSocket, local TCP) and exercise the full client → backend →
+worker → result path.
 
 Environment variables
 ---------------------
-OFFWORK_TEST_BACKEND     Backend URL (required).  e.g. redis://localhost:6379
+OFFWORK_TEST_BACKEND     Backend URL (required).  e.g. redis://localhost:6379,
+                         local://127.0.0.1:0, ws://127.0.0.1:0
 OFFWORK_TEST_SIGNING     Set to "1" to enable HMAC-SHA256 task signing.
 OFFWORK_TEST_SANDBOX     Set to "1" to run workers with Docker sandbox.
 
@@ -23,7 +25,8 @@ import sys
 import threading
 import time
 from datetime import timedelta
-from typing import Any, Generator
+from collections.abc import AsyncIterator, Generator
+from typing import Any
 from urllib.parse import urlparse
 
 import pytest
@@ -95,16 +98,16 @@ def _require_broker() -> None:
     """Fail fast with a clear message if the configured broker is not up.
 
     Redis and RabbitMQ must be started manually before running E2E tests.
-    The WS broker is launched automatically by the ``ws_broker`` fixture
-    and does not need a pre-existing process.
+    WS and local brokers are launched automatically by the ``ws_broker`` /
+    ``local_broker`` fixtures and do not need a pre-existing process.
     """
     if not BACKEND_URL:
         return  # pytestmark will skip all tests
 
     scheme = BACKEND_URL.split("://", 1)[0].lower()
 
-    if scheme in ("ws", "wss"):
-        return  # started automatically by _start_ws_broker
+    if scheme in ("ws", "wss", "local"):
+        return  # started automatically by ws_broker / local_broker fixture
 
     broker_names = {"redis": "Redis", "rediss": "Redis", "amqp": "RabbitMQ", "amqps": "RabbitMQ"}
     broker_name = broker_names.get(scheme, scheme)
@@ -123,7 +126,7 @@ def _require_broker() -> None:
 
 
 def _resolve_dynamic_port(url: str) -> str:
-    """Pick a free port for ``ws://host:0`` so worker + client agree on it."""
+    """Pick a free port for ``ws://host:0`` / ``local://host:0`` URLs."""
     if not url:
         return url
     parsed = urlparse(url)
@@ -169,6 +172,31 @@ def _start_ws_broker(url: str) -> subprocess.Popen[bytes]:
             time.sleep(0.05)
     proc.kill()
     raise RuntimeError(f"ws broker did not come up on {host}:{port}")
+
+
+def _start_local_broker(url: str) -> subprocess.Popen[bytes]:
+    parsed = urlparse(url)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 9748
+    cmd = [
+        sys.executable, "-c",
+        "from offwork.worker.backends.local import _broker_main; "
+        f"_broker_main({host!r}, {port})",
+    ]
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.STDOUT,
+    )
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=0.25):
+                return proc
+        except OSError:
+            time.sleep(0.05)
+    proc.kill()
+    raise RuntimeError(f"local broker did not come up on {host}:{port}")
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +318,30 @@ def ws_broker() -> Any:
 
 
 @pytest.fixture(scope="module")
-def worker(signing_token: str | None, ws_broker: Any) -> Generator[subprocess.Popen[bytes], None, None]:
+def local_broker() -> Any:
+    """When the backend is local://, start the TCP broker subprocess."""
+    scheme = BACKEND_URL.split("://", 1)[0].lower() if BACKEND_URL else ""
+    if scheme != "local":
+        yield None
+        return
+    proc = _start_local_broker(BACKEND_URL)
+    try:
+        yield proc
+    finally:
+        proc.send_signal(signal.SIGINT)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+
+
+@pytest.fixture(scope="module")
+def worker(
+    signing_token: str | None,
+    ws_broker: Any,
+    local_broker: Any,
+) -> Generator[subprocess.Popen[bytes], None, None]:
     """Module-scoped worker process."""
     proc = _start_worker(
         BACKEND_URL,
@@ -302,11 +353,12 @@ def worker(signing_token: str | None, ws_broker: Any) -> Generator[subprocess.Po
 
 
 @pytest.fixture(autouse=True)
-def _connect_backend(
+async def _connect_backend(
     signing_token: str | None,
     ws_broker: Any,
+    local_broker: Any,
     monkeypatch: pytest.MonkeyPatch,
-) -> None:
+) -> AsyncIterator[None]:
     """Connect the client to the backend before each test."""
     for key in _E2E_UNSET_ENV:
         monkeypatch.delenv(key, raising=False)
@@ -315,6 +367,11 @@ def _connect_backend(
     if signing_token:
         monkeypatch.setenv("OFFWORK_SIGNING_TOKEN", signing_token)
     offwork.connect(BACKEND_URL)
+    yield
+    import offwork.worker.remote as remote
+
+    if remote._active_backend is not None:
+        await remote.disconnect()
 
 
 # ---------------------------------------------------------------------------
@@ -516,6 +573,18 @@ class TestRetryAndTimeout:
         result = await fails_then_succeeds.run(counter_path, 2)
         assert result == "ok after 3 attempts"
 
+    async def test_task_timeout_enforced(self, worker: subprocess.Popen[bytes]) -> None:
+        """Per-attempt timeout surfaces as a remote error to the client."""
+        from offwork.core.errors import RemoteError
+
+        @offwork.task(timeout=1.0, retries=0)
+        async def slow() -> str:
+            await asyncio.sleep(5.0)
+            return "never"
+
+        with pytest.raises(RemoteError, match="TimeoutError|timed out|timeout"):
+            await slow.run()
+
 
 class TestScheduling:
     async def test_run_in_delay(self, worker: subprocess.Popen[bytes]) -> None:
@@ -538,6 +607,35 @@ class TestScheduling:
         await asyncio.sleep(3)
         await schedule.cancel()
         # If we got here without error, recurring + cancel works
+
+    async def test_run_every_fires_multiple_times(self, worker: subprocess.Popen[bytes]) -> None:
+        """Recurring schedule executes more than once before cancel."""
+        import uuid
+
+        counter_path = f"/tmp/offwork-sched-{uuid.uuid4().hex}.txt"
+
+        @offwork.task
+        def bump(path: str) -> int:
+            import os
+
+            n = 0
+            if os.path.exists(path):
+                with open(path) as f:
+                    n = int(f.read() or "0")
+            n += 1
+            with open(path, "w") as f:
+                f.write(str(n))
+            return n
+
+        schedule = await bump.submit(counter_path, run_every=timedelta(seconds=1))
+        await asyncio.sleep(3.5)
+        await schedule.cancel()
+
+        import os
+
+        with open(counter_path) as f:
+            count = int(f.read() or "0")
+        assert count >= 2, f"expected at least 2 recurring executions, got {count}"
 
 
 class TestThrottling:
@@ -628,6 +726,7 @@ if __name__ == "__main__":
         ("redis", "redis://localhost:6379"),
         ("rabbitmq", "amqp://localhost:5672"),
         ("ws", _pick_ws_url()),
+        ("local", _resolve_dynamic_port("local://127.0.0.1:0")),
     ]
     SIGNING_OPTIONS = [False, True]
     SANDBOX_OPTIONS = [False, True]
