@@ -2,6 +2,7 @@ import importlib
 import logging
 import os
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -47,3 +48,36 @@ def create_module(
 @pytest.fixture(autouse=True)
 def _reset_default_graph() -> None:
     Graph.reset_default()
+
+
+@pytest.fixture(autouse=True)
+def _reset_event_loop_after_sync_test(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Sync tests that call ``asyncio.run`` must not leave a loop for gc to warn on."""
+    yield
+    if request.node.get_closest_marker("asyncio") is not None:
+        return
+    import asyncio
+
+    asyncio.set_event_loop(None)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _disconnect_backend_after_session() -> Iterator[None]:
+    """Close any global backend before interpreter teardown (avoids atexit/gc leaks)."""
+    yield
+    import asyncio
+
+    import offwork.worker.remote as remote
+
+    if remote._active_backend is None:
+        return
+    try:
+        asyncio.run(remote.disconnect())
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(remote.disconnect())
+        finally:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.close()
+    remote._atexit_registered = False

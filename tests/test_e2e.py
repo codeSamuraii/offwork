@@ -241,6 +241,8 @@ def _start_worker(
 def _stop_worker(proc: subprocess.Popen[bytes], timeout: float = 10) -> None:
     """Gracefully stop a worker subprocess."""
     if proc.poll() is not None:
+        if proc.stdout is not None:
+            proc.stdout.close()
         return
     proc.send_signal(signal.SIGINT)
     try:
@@ -248,6 +250,8 @@ def _stop_worker(proc: subprocess.Popen[bytes], timeout: float = 10) -> None:
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait(timeout=5)
+    if proc.stdout is not None:
+        proc.stdout.close()
 
 
 # ---------------------------------------------------------------------------

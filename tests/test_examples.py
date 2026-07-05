@@ -149,6 +149,8 @@ def _spawn_worker(backend: str) -> Iterator[subprocess.Popen[bytes]]:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=5)
+        if proc.stdout is not None:
+            proc.stdout.close()
 
 
 @pytest.fixture(scope="module")

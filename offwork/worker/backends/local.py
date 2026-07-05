@@ -291,12 +291,9 @@ class LocalBackend(Backend):
     def _probe(self) -> bool:
         """Check whether a broker is already accepting connections."""
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.5)
-            s.connect((self._host, self._port))
-            s.close()
-            return True
-        except (ConnectionRefusedError, OSError):
+            with socket.create_connection((self._host, self._port), timeout=1.0):
+                return True
+        except OSError:
             return False
 
     def _start_broker(self) -> None:

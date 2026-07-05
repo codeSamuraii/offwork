@@ -205,12 +205,19 @@ async def disconnect() -> None:
 def _sync_disconnect() -> None:
     """Synchronous atexit handler for disconnect."""
     global _active_backend
-    if _active_backend is not None:
+    if _active_backend is None:
+        return
+    backend = _active_backend
+    _active_backend = None
+    try:
+        asyncio.run(backend.close())
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
         try:
-            asyncio.run(_active_backend.close())
-        except RuntimeError:
-            pass  # event loop already closed
-        _active_backend = None
+            loop.run_until_complete(backend.close())
+        finally:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.close()
 
 
 def get_backend() -> Backend:

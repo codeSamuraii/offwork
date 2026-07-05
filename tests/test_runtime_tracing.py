@@ -2,11 +2,26 @@ import asyncio
 import inspect
 import json
 import warnings
+from collections.abc import Coroutine
 from pathlib import Path
+from typing import Any, TypeVar
 
 from offwork import get_graph, reconstruct, serialize
 from offwork.graph.graph import Graph
 from tests.conftest import create_module
+
+_T = TypeVar("_T")
+
+
+def _asyncio_run(coro: Coroutine[Any, Any, _T]) -> _T:
+    """Run a coroutine without leaving an unclosed loop (pytest-asyncio interaction)."""
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.run_until_complete(loop.shutdown_asyncgens())
+        loop.close()
+        asyncio.set_event_loop(None)
 
 
 def _get_dep_names(data: dict, qname: str) -> list[str]:
@@ -825,7 +840,7 @@ def test_async_wrapper_preserves_behavior(tmp_path: Path) -> None:
             "    return x * 2\n"
         ),
     )
-    assert asyncio.run(mod.double(5)) == 10
+    assert _asyncio_run(mod.double(5)) == 10
 
 
 def test_async_wrapper_preserves_coroutine_flag(tmp_path: Path) -> None:
@@ -876,7 +891,7 @@ def test_async_caller_to_async_callee(tmp_path: Path) -> None:
             "    return await async_helper(x)\n"
         ),
     )
-    assert asyncio.run(mod.async_caller(5)) == 6
+    assert _asyncio_run(mod.async_caller(5)) == 6
 
     graph = Graph.default()
     graph_json = graph.serialize()
@@ -900,7 +915,7 @@ def test_async_caller_to_sync_callee(tmp_path: Path) -> None:
             "    return sync_helper(x)\n"
         ),
     )
-    assert asyncio.run(mod.async_caller(5)) == 6
+    assert _asyncio_run(mod.async_caller(5)) == 6
 
     graph = Graph.default()
     graph_json = graph.serialize()
@@ -927,7 +942,7 @@ def test_async_dep_chain(tmp_path: Path) -> None:
             "    return await step_b(x)\n"
         ),
     )
-    asyncio.run(mod.step_c(1))
+    _asyncio_run(mod.step_c(1))
 
     graph = Graph.default()
     graph_json = graph.serialize()
@@ -950,7 +965,7 @@ def test_async_no_self_dependency(tmp_path: Path) -> None:
             "    return n * await factorial(n - 1)\n"
         ),
     )
-    assert asyncio.run(mod.factorial(5)) == 120
+    assert _asyncio_run(mod.factorial(5)) == 120
 
     graph = Graph.default()
     graph_json = graph.serialize()
@@ -981,7 +996,7 @@ def test_async_runtime_dep_merges_with_static(tmp_path: Path) -> None:
         ),
     )
     w = mod.Worker()
-    asyncio.run(mod.caller(w, 1))
+    _asyncio_run(mod.caller(w, 1))
 
     graph = Graph.default()
     graph_json = graph.serialize()
@@ -1007,7 +1022,7 @@ def test_async_reconstruction(tmp_path: Path) -> None:
             "    return await async_helper(data)\n"
         ),
     )
-    asyncio.run(mod.async_main({"key": "value"}))
+    _asyncio_run(mod.async_main({"key": "value"}))
 
     source = reconstruct(serialize(), "async_main")
     assert "import json" in source
@@ -1043,7 +1058,7 @@ def test_async_concurrent_tasks_isolated(tmp_path: Path) -> None:
     async def main() -> None:
         await asyncio.gather(mod.task_a(1), mod.task_b(2))
 
-    asyncio.run(main())
+    _asyncio_run(main())
 
     graph = Graph.default()
     graph_json = graph.serialize()
@@ -1081,7 +1096,7 @@ def test_async_gen_body_dep_detected(tmp_path: Path) -> None:
     async def main() -> list[int]:
         return [x async for x in mod.async_gen([1, 2, 3])]
 
-    assert asyncio.run(main()) == [2, 3, 4]
+    assert _asyncio_run(main()) == [2, 3, 4]
 
     graph = Graph.default()
     graph_json = graph.serialize()
@@ -1106,7 +1121,7 @@ def test_async_gen_caller_dep_detected(tmp_path: Path) -> None:
             "    return [x async for x in async_gen([1, 2, 3])]\n"
         ),
     )
-    assert asyncio.run(mod.caller()) == [1, 2, 3]
+    assert _asyncio_run(mod.caller()) == [1, 2, 3]
 
     graph = Graph.default()
     graph_json = graph.serialize()
@@ -1133,7 +1148,7 @@ def test_async_gen_preserves_values(tmp_path: Path) -> None:
     async def main() -> list[int]:
         return [x async for x in mod.countdown(5)]
 
-    assert asyncio.run(main()) == [5, 4, 3, 2, 1]
+    assert _asyncio_run(main()) == [5, 4, 3, 2, 1]
 
 
 def test_async_gen_asend(tmp_path: Path) -> None:
@@ -1167,7 +1182,7 @@ def test_async_gen_asend(tmp_path: Path) -> None:
         except StopAsyncIteration:
             pass
 
-    asyncio.run(main())
+    _asyncio_run(main())
 
     graph = Graph.default()
     graph_json = graph.serialize()
@@ -1201,7 +1216,7 @@ def test_async_gen_athrow(tmp_path: Path) -> None:
         await gen.__anext__()  # prime
         return await gen.athrow(ValueError("bad"))
 
-    result = asyncio.run(main())
+    result = _asyncio_run(main())
     assert result == 0
 
     graph = Graph.default()
@@ -1235,7 +1250,7 @@ def test_async_gen_aclose(tmp_path: Path) -> None:
         await gen.__anext__()
         await gen.aclose()
 
-    asyncio.run(main())
+    _asyncio_run(main())
     assert mod.closed is True
 
 
@@ -1278,7 +1293,7 @@ def test_async_gen_nested_chain(tmp_path: Path) -> None:
     async def main() -> list[int]:
         return [x async for x in mod.outer()]
 
-    assert asyncio.run(main()) == [10, 20]
+    assert _asyncio_run(main()) == [10, 20]
 
     graph = Graph.default()
     graph_json = graph.serialize()
@@ -1307,7 +1322,7 @@ def test_async_gen_reconstruction(tmp_path: Path) -> None:
     async def main() -> list[int]:
         return [x async for x in mod.gen_doubles([1, 2])]
 
-    asyncio.run(main())
+    _asyncio_run(main())
 
     source = reconstruct(serialize(), "gen_doubles")
     assert "def double(x):" in source

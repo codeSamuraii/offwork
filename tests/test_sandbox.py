@@ -22,6 +22,11 @@ from offwork.worker.sandbox.guest_agent import _execute_request
 from offwork.worker.worker import Worker
 
 
+async def _close_writer(writer: asyncio.StreamWriter) -> None:
+    writer.close()
+    await writer.wait_closed()
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -79,7 +84,7 @@ class TestProtocol:
             msg = await async_recv(reader)
             received.append(msg)
             await async_send(writer, {"echo": msg})
-            writer.close()
+            await _close_writer(writer)
 
         server = await asyncio.start_server(_server, "127.0.0.1", 0)
         addr = server.sockets[0].getsockname()
@@ -88,7 +93,7 @@ class TestProtocol:
         await async_send(writer, {"test": "data"})
         resp = await async_recv(reader)
 
-        writer.close()
+        await _close_writer(writer)
         server.close()
         await server.wait_closed()
 
@@ -262,7 +267,7 @@ class TestGuestAgentServer:
             assert resp["status"] == "ok"
             assert resp["result"] == 7
 
-            writer.close()
+            await _close_writer(writer)
         finally:
             agent_server.close()
             await agent_server.wait_closed()
@@ -485,7 +490,7 @@ class TestGuestAgentProgress:
                 if msg["status"] != "progress":
                     break
 
-            writer.close()
+            await _close_writer(writer)
         finally:
             agent_server.close()
             await agent_server.wait_closed()
@@ -531,7 +536,7 @@ class TestGuestAgentProgress:
                 if msg["status"] != "progress":
                     break
 
-            writer.close()
+            await _close_writer(writer)
         finally:
             agent_server.close()
             await agent_server.wait_closed()
@@ -598,7 +603,7 @@ class TestDockerSandboxProgressForwarding:
             await async_send(writer, {"status": "progress", "current": 1, "total": 3})
             await async_send(writer, {"status": "progress", "current": 2, "total": 3, "message": "half"})
             await async_send(writer, {"status": "ok", "result": 42})
-            writer.close()
+            await _close_writer(writer)
 
         server = await asyncio.start_server(_fake_agent, "127.0.0.1", 0)
         port = server.sockets[0].getsockname()[1]
@@ -614,6 +619,8 @@ class TestDockerSandboxProgressForwarding:
                 progress_cb=_on_progress,
             )
         finally:
+            if sb._writer is not None:
+                await _close_writer(sb._writer)
             server.close()
             await server.wait_closed()
 
