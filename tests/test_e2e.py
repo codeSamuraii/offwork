@@ -609,33 +609,30 @@ class TestScheduling:
         # If we got here without error, recurring + cancel works
 
     async def test_run_every_fires_multiple_times(self, worker: subprocess.Popen[bytes]) -> None:
-        """Recurring schedule executes more than once before cancel."""
-        import uuid
+        """Recurring schedule executes more than once before exhausting."""
+        import offwork.worker.remote as remote
+        from offwork.worker.backends.base import Backend
 
-        counter_path = f"/tmp/offwork-sched-{uuid.uuid4().hex}.txt"
+        backend = remote._active_backend
+        assert isinstance(backend, Backend)
 
         @offwork.task
-        def bump(path: str) -> int:
-            import os
-
-            n = 0
-            if os.path.exists(path):
-                with open(path) as f:
-                    n = int(f.read() or "0")
-            n += 1
-            with open(path, "w") as f:
-                f.write(str(n))
+        def tick(n: int) -> int:
             return n
 
-        schedule = await bump.submit(counter_path, run_every=timedelta(seconds=1))
-        await asyncio.sleep(3.5)
-        await schedule.cancel()
-
-        import os
-
-        with open(counter_path) as f:
-            count = int(f.read() or "0")
-        assert count >= 2, f"expected at least 2 recurring executions, got {count}"
+        schedule = await tick.submit(
+            42,
+            run_every=timedelta(seconds=0.5),
+            max_runs=2,
+        )
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            if await backend.is_schedule_cancelled(schedule.schedule_id):
+                break
+            await asyncio.sleep(0.1)
+        assert await backend.is_schedule_cancelled(schedule.schedule_id), (
+            "expected schedule to auto-cancel after max_runs"
+        )
 
 
 class TestThrottling:
